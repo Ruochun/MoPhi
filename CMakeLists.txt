@@ -32,6 +32,11 @@ option(MOPHI_BUILD_TLFEA_DEM "Build the TLFEA + DEM-Engine co-simulation solver"
 option(MOPHI_BUILD_PYTHON_BINDINGS "Build Python bindings via pybind11" ON)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Options: demos
+# ─────────────────────────────────────────────────────────────────────────────
+option(MOPHI_BUILD_DEMOS "Build demonstration programs" ON)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Infrastructure
 # ─────────────────────────────────────────────────────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -52,4 +57,11 @@ add_subdirectory(src)
 # ─────────────────────────────────────────────────────────────────────────────
 if(MOPHI_BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
+endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Demos
+# ─────────────────────────────────────────────────────────────────────────────
+if(MOPHI_BUILD_DEMOS)
+    add_subdirectory(demo)
 endif()
