@@ -29,23 +29,23 @@ namespace mophi {
 /// data-exchange logic (force/displacement mapping, time-step synchronization,
 /// etc.).
 class TLFEADEMCoupler {
-public:
+  public:
     TLFEADEMCoupler();
     ~TLFEADEMCoupler();
 
     // Non-copyable, movable.
-    TLFEADEMCoupler(const TLFEADEMCoupler&)            = delete;
+    TLFEADEMCoupler(const TLFEADEMCoupler&) = delete;
     TLFEADEMCoupler& operator=(const TLFEADEMCoupler&) = delete;
-    TLFEADEMCoupler(TLFEADEMCoupler&&)                 = default;
-    TLFEADEMCoupler& operator=(TLFEADEMCoupler&&)      = default;
+    TLFEADEMCoupler(TLFEADEMCoupler&&) = default;
+    TLFEADEMCoupler& operator=(TLFEADEMCoupler&&) = default;
 
     /// @brief Initialize both solvers.
     /// @param tlfea_config   Configuration/mesh file forwarded to TLFEA.
     /// @param dem_config     Configuration/scene file forwarded to DEM-Engine.
     /// @param num_gpus       Number of GPUs to hand to DEM-Engine (default 1).
     void initialize(const std::string& tlfea_config = "",
-                    const std::string& dem_config   = "",
-                    unsigned int       num_gpus     = 1);
+                    const std::string& dem_config = "",
+                    unsigned int num_gpus = 1);
 
     /// @brief Advance both solvers by one co-simulation time step.
     void step();
@@ -53,9 +53,9 @@ public:
     /// @brief Finalize both solvers and release all resources.
     void finalize();
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace mophi
+}  // namespace mophi

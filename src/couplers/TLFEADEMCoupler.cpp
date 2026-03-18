@@ -35,14 +35,13 @@ struct TLFEADEMCoupler::Impl {
     /// When a real FEA driver exists, step() will call fea->Solve().
     std::unique_ptr<tlfea::SolverBase> fea;
 
-    bool   initialized{false};
+    bool initialized{false};
     double time_step{1e-4};  ///< Co-simulation time step [s].
 };
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
-TLFEADEMCoupler::TLFEADEMCoupler()
-    : impl_(std::make_unique<Impl>()) {
+TLFEADEMCoupler::TLFEADEMCoupler() : impl_(std::make_unique<Impl>()) {
     std::cout << "[MoPhi] TLFEADEMCoupler: created\n";
 }
 
@@ -55,8 +54,8 @@ TLFEADEMCoupler::~TLFEADEMCoupler() {
 // ── Public interface ──────────────────────────────────────────────────────────
 
 void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
-                                  const std::string& dem_config,
-                                  unsigned int       num_gpus) {
+                                 const std::string& dem_config,
+                                 unsigned int num_gpus) {
     std::cout << "[MoPhi] TLFEADEMCoupler: initializing ...\n";
 
     // ── DEM-Engine ────────────────────────────────────────────────────────────
@@ -65,8 +64,7 @@ void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
     // object and then call impl_->dem->Initialize() before the time-stepping loop.
     impl_->dem = std::make_unique<deme::DEMSolver>(num_gpus);
     std::cout << "[MoPhi] TLFEADEMCoupler: deme::DEMSolver created (nGPUs=" << num_gpus << ")"
-              << (dem_config.empty() ? "" : " (config: " + dem_config + ")")
-              << "\n";
+              << (dem_config.empty() ? "" : " (config: " + dem_config + ")") << "\n";
 
     // ── TLFEA ─────────────────────────────────────────────────────────────────
     // TLFEA solvers require an ElementBase* (mesh + DOF data) in their
@@ -74,8 +72,7 @@ void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
     // pointer is left null as a placeholder.
     impl_->fea = nullptr;
     std::cout << "[MoPhi] TLFEADEMCoupler: tlfea::SolverBase placeholder ready"
-              << (tlfea_config.empty() ? "" : " (config: " + tlfea_config + ")")
-              << "\n";
+              << (tlfea_config.empty() ? "" : " (config: " + tlfea_config + ")") << "\n";
 
     impl_->initialized = true;
     std::cout << "[MoPhi] TLFEADEMCoupler: initialized\n";
@@ -104,4 +101,4 @@ void TLFEADEMCoupler::finalize() {
     std::cout << "[MoPhi] TLFEADEMCoupler: finalized\n";
 }
 
-} // namespace mophi
+}  // namespace mophi
