@@ -7,8 +7,10 @@
 #   1. Add <NewCoupler>.h / .cpp to this directory.
 #   2. Add a new if(MOPHI_BUILD_<NAME>) block below that:
 #      a) Calls mophi_require_externals() to abort at CMake time if any
-#         required external has not been fetched.
-#      b) Defines the library and links it into mophi_couplers.
+#         required external has not been registered.
+#      b) Defines the library, links it against the mophi_ext_* IMPORTED
+#         targets (which also carry the correct include directories), and
+#         adds it to mophi_couplers.
 #   3. Add the corresponding option() in the root CMakeLists.txt.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -18,8 +20,9 @@ add_library(mophi_couplers INTERFACE)
 
 # ── TLFEA + DEM-Engine co-simulation solver ───────────────────────────────────
 if(MOPHI_BUILD_TLFEA_DEM)
-    # Both externals must be present at configure time.  mophi_require_externals
-    # emits a FATAL_ERROR with actionable instructions if either is missing.
+    # Both externals must be registered (fetched) at configure time.
+    # mophi_require_externals emits a FATAL_ERROR with actionable instructions
+    # if either external was not enabled via -DMOPHI_FETCH_*=ON.
     mophi_require_externals(TLFEADEMCoupler TLFEA DEMEngine)
 
     add_library(mophi_coupler_tlfea_dem STATIC
@@ -36,17 +39,21 @@ if(MOPHI_BUILD_TLFEA_DEM)
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
             $<INSTALL_INTERFACE:include/mophi/couplers>
-        PRIVATE
-            # DEM-Engine public headers live under src/DEM/ inside the repo.
-            "${CMAKE_SOURCE_DIR}/external/DEMEngine/src"
-            # TLFEA public headers live under src/ inside the repo.
-            "${CMAKE_SOURCE_DIR}/external/TLFEA/src"
     )
 
-    # Link the solver libraries once they expose CMake targets.
-    # Uncomment and adjust when DEM-Engine / TLFEA provide installable targets:
-    # target_link_libraries(mophi_coupler_tlfea_dem PUBLIC DEM-Engine tlfea)
+    # Link against the IMPORTED targets created by mophi_fetch_external().
+    # Each target carries:
+    #   - INTERFACE_INCLUDE_DIRECTORIES pointing to <external>/install/include
+    #     (which contains all generated and source headers after the external
+    #     has been built and installed)
+    #   - IMPORTED_LOCATION pointing to the installed static library
+    # The add_dependencies() inside mophi_fetch_external() ensures the
+    # external is fully built before this coupler is compiled.
+    target_link_libraries(mophi_coupler_tlfea_dem
+        PRIVATE
+            mophi_ext_DEMEngine
+            mophi_ext_TLFEA
+    )
 
     target_link_libraries(mophi_couplers INTERFACE mophi_coupler_tlfea_dem)
 endif()
-
