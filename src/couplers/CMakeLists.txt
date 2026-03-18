@@ -49,8 +49,14 @@ if(MOPHI_BUILD_TLFEA_DEM)
     #   - IMPORTED_LOCATION pointing to the installed static library
     # The add_dependencies() inside mophi_fetch_external() ensures the
     # external is fully built before this coupler is compiled.
+    #
+    # PUBLIC (not PRIVATE) is required here because mophi_coupler_tlfea_dem is
+    # a static library: its object files do not absorb the symbols from the
+    # external libraries.  Any executable or shared library that links against
+    # mophi_coupler_tlfea_dem must also receive the external libraries on its
+    # own link line — PUBLIC propagates them automatically.
     target_link_libraries(mophi_coupler_tlfea_dem
-        PRIVATE
+        PUBLIC
             mophi_ext_DEMEngine
             mophi_ext_TLFEA
     )
