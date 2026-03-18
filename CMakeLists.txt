@@ -37,6 +37,16 @@ option(MOPHI_BUILD_PYTHON_BINDINGS "Build Python bindings via pybind11" ON)
 option(MOPHI_BUILD_DEMOS "Build demonstration programs" ON)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CUDA Toolkit
+#
+# Searched once here so the result is available to all sub-directories.
+# Co-simulation solvers that depend on CUDA (e.g. TLFEADEMCoupler) emit a
+# CMake FATAL_ERROR at configure time when CUDAToolkit is not found rather
+# than deferring the failure to a cryptic link-time "undefined reference".
+# ─────────────────────────────────────────────────────────────────────────────
+find_package(CUDAToolkit QUIET)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Infrastructure
 # ─────────────────────────────────────────────────────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
