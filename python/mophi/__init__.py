@@ -2,9 +2,10 @@
 mophi — multi-physics co-simulation framework
 
 This package exposes the C++ core (mophi_core) under a clean Python namespace.
-All co-simulation solvers and solver wrappers are re-exported here.
+Co-simulation solvers are available only when the corresponding external
+projects have been fetched and the solver was built (MOPHI_BUILD_* options).
 
-Example usage::
+Example usage (requires -DMOPHI_BUILD_TLFEA_DEM=ON at CMake configure time)::
 
     import mophi
     coupler = mophi.TLFEADEMCoupler()
@@ -13,18 +14,13 @@ Example usage::
     coupler.finalize()
 """
 
-from .mophi_core import (          # noqa: F401 — public API
-    TLFEAWrapper,
-    DEMEngineWrapper,
-    TLFEADEMCoupler,
-    tlfea_available,
-    dem_engine_available,
-)
+from . import mophi_core  # noqa: F401 — make the C++ module accessible
 
-__all__ = [
-    "TLFEAWrapper",
-    "DEMEngineWrapper",
-    "TLFEADEMCoupler",
-    "tlfea_available",
-    "dem_engine_available",
-]
+__all__ = []
+
+# TLFEADEMCoupler is only present when built with MOPHI_BUILD_TLFEA_DEM=ON.
+try:
+    from .mophi_core import TLFEADEMCoupler  # noqa: F401
+    __all__.append("TLFEADEMCoupler")
+except ImportError:
+    pass

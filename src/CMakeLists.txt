@@ -2,5 +2,4 @@
 # src/CMakeLists.txt
 # ─────────────────────────────────────────────────────────────────────────────
 
-add_subdirectory(wrappers)
 add_subdirectory(couplers)

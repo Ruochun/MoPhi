@@ -20,11 +20,11 @@ option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" O
 # Options: co-simulation solvers to build
 #
 # Each option enables compilation of a specific multi-physics co-simulation
-# solver.  The solver is always compiled (even as a stub) so the Python
-# bindings remain available; this flag is reserved for future use when solver
-# selection should control compilation of heavyweight components.
+# solver.  The corresponding external projects must have been fetched first
+# (via the MOPHI_FETCH_* options above); CMake emits a FATAL_ERROR at configure
+# time if a required external is missing.
 # ─────────────────────────────────────────────────────────────────────────────
-option(MOPHI_BUILD_TLFEA_DEM "Build the TLFEA + DEM-Engine co-simulation solver" ON)
+option(MOPHI_BUILD_TLFEA_DEM "Build the TLFEA + DEM-Engine co-simulation solver" OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: Python bindings
@@ -43,7 +43,7 @@ include(MoPhiExternalUtils)
 add_subdirectory(external)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Core library (wrappers + co-simulation couplers)
+# Core library (co-simulation couplers)
 # ─────────────────────────────────────────────────────────────────────────────
 add_subdirectory(src)
 

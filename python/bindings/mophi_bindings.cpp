@@ -1,9 +1,12 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+// TLFEADEMCoupler is only registered when the library was compiled with
+// MOPHI_BUILD_TLFEA_DEM=ON (both external projects fetched and built).
+// The CMake target sets MOPHI_HAS_TLFEA_DEM_COUPLER when that is the case.
+#ifdef MOPHI_HAS_TLFEA_DEM_COUPLER
 #include "TLFEADEMCoupler.h"
-#include "TLFEAWrapper.h"
-#include "DEMEngineWrapper.h"
+#endif
 
 namespace py = pybind11;
 
@@ -18,51 +21,23 @@ namespace py = pybind11;
 PYBIND11_MODULE(mophi_core, m) {
     m.doc() = "MoPhi — multi-physics co-simulation framework (C++ core)";
 
-    // ── Version / availability helpers ──────────────────────────────────────
-    m.def("tlfea_available",      &mophi::TLFEAWrapper::isAvailable,
-          "Return True if MoPhi was built with the TLFEA back-end.");
-    m.def("dem_engine_available", &mophi::DEMEngineWrapper::isAvailable,
-          "Return True if MoPhi was built with the DEM-Engine back-end.");
-
-    // ── TLFEAWrapper ─────────────────────────────────────────────────────────
-    py::class_<mophi::TLFEAWrapper>(m, "TLFEAWrapper",
-        "Wrapper around the TLFEA finite-element solver.")
-        .def(py::init<>())
-        .def("initialize", &mophi::TLFEAWrapper::initialize,
-             py::arg("config_file") = "",
-             "Initialize the TLFEA solver.")
-        .def("step",     &mophi::TLFEAWrapper::step,
-             "Advance the simulation by one time step.")
-        .def("finalize", &mophi::TLFEAWrapper::finalize,
-             "Finalize the solver and release resources.")
-        .def_static("is_available", &mophi::TLFEAWrapper::isAvailable,
-             "Return True if TLFEA is compiled in.");
-
-    // ── DEMEngineWrapper ──────────────────────────────────────────────────────
-    py::class_<mophi::DEMEngineWrapper>(m, "DEMEngineWrapper",
-        "Wrapper around the DEM-Engine discrete-element solver.")
-        .def(py::init<>())
-        .def("initialize", &mophi::DEMEngineWrapper::initialize,
-             py::arg("config_file") = "",
-             "Initialize the DEM-Engine solver.")
-        .def("step",     &mophi::DEMEngineWrapper::step,
-             "Advance the simulation by one time step.")
-        .def("finalize", &mophi::DEMEngineWrapper::finalize,
-             "Finalize the solver and release resources.")
-        .def_static("is_available", &mophi::DEMEngineWrapper::isAvailable,
-             "Return True if DEM-Engine is compiled in.");
-
+#ifdef MOPHI_HAS_TLFEA_DEM_COUPLER
     // ── TLFEADEMCoupler ───────────────────────────────────────────────────────
     py::class_<mophi::TLFEADEMCoupler>(m, "TLFEADEMCoupler",
-        "Placeholder co-simulation solver coupling TLFEA and DEM-Engine.\n\n"
-        "Use initialize() / step() / finalize() to drive the coupled simulation.")
+        "Co-simulation solver coupling TLFEA (FEA) and DEM-Engine (DEM).\n\n"
+        "Use initialize() / step() / finalize() to drive the coupled simulation.\n\n"
+        "Impl holds deme::DEMSolver and tlfea::SolverBase directly; no wrapper\n"
+        "layer sits between this coupler and the solver APIs.")
         .def(py::init<>())
         .def("initialize", &mophi::TLFEADEMCoupler::initialize,
              py::arg("tlfea_config") = "",
              py::arg("dem_config")   = "",
-             "Initialize both solvers.")
+             py::arg("num_gpus")     = 1u,
+             "Initialize both solvers.  num_gpus controls how many GPUs "
+             "are handed to the DEM-Engine solver.")
         .def("step",     &mophi::TLFEADEMCoupler::step,
              "Advance both solvers by one co-simulation time step.")
         .def("finalize", &mophi::TLFEADEMCoupler::finalize,
              "Finalize both solvers and release all resources.");
+#endif
 }

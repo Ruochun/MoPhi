@@ -30,15 +30,20 @@ pybind11_add_module(mophi_core
 
 target_link_libraries(mophi_core
     PRIVATE
-        mophi_couplers   # brings in mophi_wrappers transitively
+        mophi_couplers
 )
 
-# Include co-sim coupler headers (TLFEADEMCoupler.h) and wrapper headers.
+# TLFEADEMCoupler.h is in src/couplers/ — needed by the binding file.
 target_include_directories(mophi_core
     PRIVATE
         "${CMAKE_SOURCE_DIR}/src/couplers"
-        "${CMAKE_SOURCE_DIR}/src/wrappers"
 )
+
+# When the TLFEA + DEM co-simulation solver has been compiled, enable its
+# Python binding via a compile-time definition.
+if(MOPHI_BUILD_TLFEA_DEM)
+    target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_TLFEA_DEM_COUPLER)
+endif()
 
 # Place the compiled .so next to the Python package so the package __init__.py
 # can import it with `from .mophi_core import ...`.
