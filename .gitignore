@@ -1,3 +1,36 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+_build/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+# Generated CMake package config files (not source files)
+*Config.cmake
+*ConfigVersion.cmake
+*Targets.cmake
+
+# External projects downloaded by FetchContent / mophi_fetch_external
+external/TLFEA/
+external/DEMEngine/
+
+# Compiled Python extension module (placed in python/mophi/ at build time)
+python/mophi/mophi_core*.so
+python/mophi/mophi_core*.pyd
+
+# Python packaging artifacts
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+
 # Prerequisites
 *.d
 
