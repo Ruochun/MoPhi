@@ -26,11 +26,17 @@
 # DEM-Engine has proper CMake install rules that install headers and the static
 # library, so no HEADER_SRC override is needed.  The static library is named
 # "simulator_multi_gpu".
+#
+# DEM-Engine also installs a companion shared library, DEMERuntimeDataHelper,
+# which provides the runtime data path (kernel sources, data files, etc.).
+# simulator_multi_gpu links against it PUBLIC, so every consumer of MoPhi's
+# coupler must also link it — EXTRA_LIB_NAMES handles this automatically.
 mophi_register_external(
-    NAME     DEMEngine
-    URL      "https://github.com/projectchrono/DEM-Engine"
-    TAG      "main"
-    LIB_NAME "simulator_multi_gpu"
+    NAME           DEMEngine
+    URL            "https://github.com/projectchrono/DEM-Engine"
+    TAG            "main"
+    LIB_NAME       "simulator_multi_gpu"
+    EXTRA_LIB_NAMES "DEMERuntimeDataHelper"
 )
 
 # TLFEA does not yet ship CMake install rules.  HEADER_SRC causes

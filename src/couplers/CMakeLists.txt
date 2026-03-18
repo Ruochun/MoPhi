@@ -72,13 +72,16 @@ if(MOPHI_BUILD_TLFEA_DEM)
     #
     # CUDA::cudart provides the CUDA runtime (cudaMalloc, cudaMemcpy, …)
     # that DEM-Engine's static library depends on.  CUDA::cuda_driver covers
-    # any driver-API symbols.  Both are propagated PUBLIC for the same reason.
+    # driver-API symbols.  CUDA::nvrtc is required for DEM-Engine's JIT kernel
+    # compilation (nvrtcGetLoweredName, nvrtcCompileProgram, etc.).
+    # All three are propagated PUBLIC for the same reason.
     target_link_libraries(mophi_coupler_tlfea_dem
         PUBLIC
             mophi_ext_DEMEngine
             mophi_ext_TLFEA
             CUDA::cudart
             CUDA::cuda_driver
+            CUDA::nvrtc
     )
 
     target_link_libraries(mophi_couplers INTERFACE mophi_coupler_tlfea_dem)
