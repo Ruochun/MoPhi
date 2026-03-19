@@ -11,7 +11,7 @@ namespace mophi {
 ///
 /// TLFEANewtonCoupler holds TLFEA's C++ FEA solver on the C++ side.  Newton is a
 /// pure Python physics engine (GPU-accelerated, built on NVIDIA Warp).  The coupling
-/// is orchestrated by the Python binding (PyTLFEANewtonCoupler in mophi_bindings.cpp),
+/// is orchestrated by PyTLFEANewtonCoupler (src/couplers/tlfea_newton/PyTLFEANewtonCoupler.h),
 /// which owns Newton objects (model, solver, states) as py::object alongside this class.
 ///
 /// Data exchange coupling points:

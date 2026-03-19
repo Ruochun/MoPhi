@@ -35,10 +35,16 @@ MoPhi/
 │   └── MoPhiEssentials/         # Required git submodule — always present
 │                                #   Provides Logger, Real3, and other utilities
 ├── src/
-│   └── couplers/                # One .h + .cpp per co-simulation solver
-│       ├── CMakeLists.txt       # Builds mophi_coupler_* libraries; adds them to
+│   └── couplers/                # One sub-directory per co-simulation coupler
+│       ├── CMakeLists.txt       # Dispatches to per-coupler add_subdirectory; creates
 │       │                        #   the aggregate mophi_couplers INTERFACE target
-│       └── TLFEADEMCoupler.{h,cpp}
+│       ├── tlfea_dem/           # TLFEA + DEM-Engine coupler
+│       │   ├── CMakeLists.txt
+│       │   └── TLFEADEMCoupler.{h,cpp}
+│       └── tlfea_newton/        # TLFEA + Newton coupler
+│           ├── CMakeLists.txt
+│           ├── TLFEANewtonCoupler.{h,cpp}
+│           └── PyTLFEANewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
 ├── python/
 │   ├── CMakeLists.txt           # pybind11 extension (fetched automatically)
 │   ├── bindings/
@@ -319,7 +325,9 @@ If the new solver requires a system package (CUDA, Eigen, OpenCL, …), add the 
 
 ### 2. Write the coupler header and source
 
-`src/couplers/MyCoupler.h` — follow the structure of `TLFEADEMCoupler.h`:
+Create a new directory `src/couplers/<name>/` and add these files:
+
+`src/couplers/<name>/MyCoupler.h` — follow the structure of `TLFEADEMCoupler.h`:
 
 - `#pragma once`
 - Doxygen `///` class comment that names the external solvers owned and the pimpl members
@@ -327,56 +335,43 @@ If the new solver requires a system package (CUDA, Eigen, OpenCL, …), add the 
 - Private `struct Impl; std::unique_ptr<Impl> impl_;`
 - Delete copy, default move
 
-`src/couplers/MyCoupler.cpp`:
+`src/couplers/<name>/MyCoupler.cpp`:
 
 - Include the coupler header first, then `<core/Logger.hpp>`, then external solver headers
 - Implement `Impl` with `std::unique_ptr<ExternalSolverClass>` members
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` for all output — do **not** use `std::cout` directly
 - Destructor calls `finalize()` when `impl_->initialized` is `true`
 
+If the new solver requires a Python-side component (like Newton), add a
+`PyMyCoupler.h` in the same directory.  This header-only file uses pybind11
+types (`pybind11::object`) to bridge the C++ coupler with the Python library.
+It is compiled as part of `mophi_core` (not as a standalone library).
+
 After writing source files, **run `.format_all`** before committing.
 
 ### 3. Register the coupler in the build system
 
-In `src/couplers/CMakeLists.txt`, add an `if(MOPHI_BUILD_MY_COUPLER)` block:
+Create `src/couplers/<name>/CMakeLists.txt` (see `tlfea_dem/CMakeLists.txt` as
+reference) with the `mophi_require_externals()` call, prerequisite guards, and
+the `add_library` / `target_link_libraries` block.
+
+In `src/couplers/CMakeLists.txt`, add an `add_subdirectory` call:
 
 ```cmake
 if(MOPHI_BUILD_MY_COUPLER)
-    mophi_require_externals(MyCoupler MySolver)
-
-    # Guard any system-level dependencies required only by this coupler:
-    if(NOT SomePkg_FOUND)
-        message(FATAL_ERROR "MoPhi: Building MyCoupler requires SomePkg ...")
-    endif()
-
-    add_library(mophi_coupler_my STATIC MyCoupler.cpp)
-    set_target_properties(mophi_coupler_my PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_compile_features(mophi_coupler_my PUBLIC cxx_std_17)
-    target_include_directories(mophi_coupler_my
-        PUBLIC
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-            $<INSTALL_INTERFACE:include/mophi/couplers>
-    )
-    target_link_libraries(mophi_coupler_my
-        PUBLIC
-            mophi_essentials
-            mophi_ext_MySolver
-            # … additional system library IMPORTED targets …
-    )
-    target_link_libraries(mophi_couplers INTERFACE mophi_coupler_my)
+    add_subdirectory(<name>)
 endif()
 ```
 
-Use `PUBLIC` (not `PRIVATE`) linkage on the static coupler library so that the link dependencies
-propagate to the Python extension module and demo executables.
-
 ### 4. Expose the coupler in Python bindings
 
-In `python/bindings/mophi_bindings.cpp`:
+In `python/bindings/mophi_bindings.cpp`, include the coupler header (and
+`PyMyCoupler.h` if the coupler has a Python-facing wrapper):
 
 ```cpp
 #ifdef MOPHI_HAS_MY_COUPLER
     #include "MyCoupler.h"
+    // #include "PyMyCoupler.h"   // if a Python-facing wrapper exists
 #endif
 
 // Inside PYBIND11_MODULE:
@@ -389,10 +384,11 @@ In `python/bindings/mophi_bindings.cpp`:
 #endif
 ```
 
-In `python/CMakeLists.txt`, add the compile definition:
+In `python/CMakeLists.txt`, add the include path and compile definition together:
 
 ```cmake
 if(MOPHI_BUILD_MY_COUPLER)
+    target_include_directories(mophi_core PRIVATE "${CMAKE_SOURCE_DIR}/src/couplers/<name>")
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_MY_COUPLER)
 endif()
 ```
@@ -438,11 +434,14 @@ Update `README.md` to document:
 - [ ] `if(MOPHI_FETCH_*) mophi_fetch_external() endif()` in `external/CMakeLists.txt`
 - [ ] `option(MOPHI_FETCH_*)` and `option(MOPHI_BUILD_*)` in root `CMakeLists.txt`
 - [ ] `find_package(... QUIET)` for any new system deps in root `CMakeLists.txt`
+- [ ] Create `src/couplers/<name>/` directory
 - [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, lifecycle methods, delete copy / default move
 - [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle methods implemented
-- [ ] `if(MOPHI_BUILD_*)` block in `src/couplers/CMakeLists.txt` with FATAL_ERROR guards for missing system deps
+- [ ] `PyNewCoupler.h` (optional) — Python-facing wrapper when one solver is Python-only
+- [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards, `add_library`, `target_link_libraries`
+- [ ] `if(MOPHI_BUILD_*) add_subdirectory(<name>) endif()` in `src/couplers/CMakeLists.txt`
 - [ ] `#ifdef MOPHI_HAS_*` binding block in `python/bindings/mophi_bindings.cpp`
-- [ ] `target_compile_definitions` for `MOPHI_HAS_*` in `python/CMakeLists.txt`
+- [ ] `target_include_directories` and `target_compile_definitions` for `MOPHI_HAS_*` in `python/CMakeLists.txt`
 - [ ] `try/except ImportError` in `python/mophi/__init__.py`
 - [ ] Demo executable under `demo/<name>/`
 - [ ] `README.md` updated
