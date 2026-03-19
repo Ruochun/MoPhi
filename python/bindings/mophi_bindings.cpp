@@ -8,6 +8,13 @@
     #include "TLFEADEMCoupler.h"
 #endif
 
+// TLFEANewtonCoupler is only registered when the library was compiled with
+// MOPHI_BUILD_TLFEA_NEWTON=ON (TLFEA external fetched and built).
+// Newton itself is a pure Python package and is not linked into this module.
+#ifdef MOPHI_HAS_TLFEA_NEWTON_COUPLER
+    #include "TLFEANewtonCoupler.h"
+#endif
+
 namespace py = pybind11;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,5 +42,21 @@ PYBIND11_MODULE(mophi_core, m) {
              "are handed to the DEM-Engine solver.")
         .def("step", &mophi::TLFEADEMCoupler::step, "Advance both solvers by one co-simulation time step.")
         .def("finalize", &mophi::TLFEADEMCoupler::finalize, "Finalize both solvers and release all resources.");
+#endif
+
+#ifdef MOPHI_HAS_TLFEA_NEWTON_COUPLER
+    // ── TLFEANewtonCoupler ────────────────────────────────────────────────────
+    py::class_<mophi::TLFEANewtonCoupler>(
+        m, "TLFEANewtonCoupler",
+        "Co-simulation coupler coupling TLFEA (FEA) and Newton (Python GPU physics).\n\n"
+        "The C++ side holds tlfea::FEASolver.  Newton runs as a pure Python package\n"
+        "(GPU-accelerated via NVIDIA Warp) and is managed directly in the Python\n"
+        "driver script alongside this coupler.\n\n"
+        "Use initialize() / step() / finalize() to drive the TLFEA side.")
+        .def(py::init<>())
+        .def("initialize", &mophi::TLFEANewtonCoupler::initialize, py::arg("tlfea_config") = "",
+             "Initialize the TLFEA solver.")
+        .def("step", &mophi::TLFEANewtonCoupler::step, "Advance the TLFEA solver by one co-simulation time step.")
+        .def("finalize", &mophi::TLFEANewtonCoupler::finalize, "Finalize the TLFEA solver and release all resources.");
 #endif
 }

@@ -47,3 +47,15 @@ mophi_register_external(
     TAG      "main"
     LIB_NAME "tlfea_lib"
 )
+
+# Newton is a pure Python physics engine (GPU-accelerated, built on NVIDIA Warp).
+# It has no CMake build system and carries no C++ library to link against.
+# When MOPHI_FETCH_NEWTON=ON, Newton is installed as a Python package via pip
+# rather than being compiled by ExternalProject_Add.  The mophi_register_external
+# entry records its URL for documentation and summary purposes only; the actual
+# installation is handled separately in external/CMakeLists.txt.
+mophi_register_external(
+    NAME Newton
+    URL  "https://github.com/newton-physics/newton"
+    TAG  "main"
+)
