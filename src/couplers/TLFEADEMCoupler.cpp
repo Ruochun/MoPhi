@@ -82,9 +82,7 @@ void TLFEADEMCoupler::step() {
     // impl_->dem->DoDynamicsThenSync(impl_->time_step);
 
     // FEA step: advance the TLFEA simulation by one time step.
-    if (impl_->fea) {
-        impl_->fea->Solve();
-    }
+    // impl_->fea->Solve();
 }
 
 void TLFEADEMCoupler::finalize() {
