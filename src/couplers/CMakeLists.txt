@@ -15,10 +15,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Aggregate interface target — always created so that downstream targets
-# (Python bindings, etc.) can link against it unconditionally.
-# mophi_essentials is linked here so every coupler automatically has access
-# to Logger and other MoPhiEssentials utilities without repeating the
-# dependency in each coupler's target_link_libraries() call.
+# (Python bindings, demos, etc.) can link against it unconditionally.
+# mophi_essentials is also linked here so that any consumer of mophi_couplers
+# (e.g. the Python extension module) automatically inherits access to
+# Logger and other MoPhiEssentials utilities.
+# Note: individual coupler libraries must also link mophi_essentials directly
+# in their own target_link_libraries() so that their own .cpp compilation has
+# access to <core/Logger.hpp>.
 add_library(mophi_couplers INTERFACE)
 target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 
@@ -93,6 +96,7 @@ if(MOPHI_BUILD_TLFEA_DEM)
     # All three are propagated PUBLIC for the same reason.
     target_link_libraries(mophi_coupler_tlfea_dem
         PUBLIC
+            mophi_essentials
             mophi_ext_DEMEngine
             mophi_ext_TLFEA
             Eigen3::Eigen

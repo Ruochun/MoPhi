@@ -359,6 +359,7 @@ if(MOPHI_BUILD_MY_COUPLER)
     )
     target_link_libraries(mophi_coupler_my
         PUBLIC
+            mophi_essentials
             mophi_ext_MySolver
             # … additional system library IMPORTED targets …
     )
