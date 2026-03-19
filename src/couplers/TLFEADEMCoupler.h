@@ -18,8 +18,7 @@ namespace mophi {
 ///
 /// Impl holds:
 ///   - std::unique_ptr<deme::DEMSolver>      — DEM-Engine's main solver class
-///   - std::unique_ptr<tlfea::SolverBase>    — TLFEA's solver interface
-///     (placeholder nullptr until TLFEA gains a top-level simulation driver)
+///   - std::unique_ptr<tlfea::FEASolver>     — TLFEA's top-level simulation driver
 ///
 /// Building this class requires both the TLFEA and DEMEngine external projects
 /// to have been fetched.  CMake emits a FATAL_ERROR at configure time if either

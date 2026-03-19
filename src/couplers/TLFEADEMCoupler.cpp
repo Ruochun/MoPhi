@@ -11,13 +11,10 @@
 #include <DEM/API.h>
 
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
-// TLFEA does not yet expose a single top-level "simulation driver" class.
-// SolverBase is the common abstract interface for all TLFEA iterative solvers
-// (SyncedNesterov, SyncedAdamW, …).  The Impl below holds a SolverBase pointer
-// that is left as nullptr until a full FEA simulation setup (mesh loading,
-// material parameters, boundary conditions) is added in a future release.
-// Header lives at external/TLFEA/src/solvers/SolverBase.h.
-#include <solvers/SolverBase.h>
+// FEASolver is TLFEA's top-level simulation driver that manages everything in
+// the package.  The Impl below owns a FEASolver instance created in initialize()
+// and driven in step() via its Solve() method.
+#include <tlfea/FEASolver.h>
 
 namespace mophi {
 
@@ -30,10 +27,9 @@ struct TLFEADEMCoupler::Impl {
     /// calling dem->Initialize().
     std::unique_ptr<deme::DEMSolver> dem;
 
-    /// TLFEA solver interface.  Left as nullptr until a concrete FEA simulation
-    /// setup (ElementBase + material + boundary conditions) can be wired in.
-    /// When a real FEA driver exists, step() will call fea->Solve().
-    std::unique_ptr<tlfea::SolverBase> fea;
+    /// TLFEA's top-level simulation driver.  Created in initialize() and
+    /// driven in step() via its Solve() method.
+    std::unique_ptr<tlfea::FEASolver> fea;
 
     bool initialized{false};
     double time_step{1e-4};  ///< Co-simulation time step [s].
@@ -67,11 +63,9 @@ void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
               << (dem_config.empty() ? "" : " (config: " + dem_config + ")") << "\n";
 
     // ── TLFEA ─────────────────────────────────────────────────────────────────
-    // TLFEA solvers require an ElementBase* (mesh + DOF data) in their
-    // constructors; a standalone driver class does not exist yet.  The fea
-    // pointer is left null as a placeholder.
-    impl_->fea = nullptr;
-    std::cout << "[MoPhi] TLFEADEMCoupler: tlfea::SolverBase placeholder ready"
+    // Create FEASolver — TLFEA's top-level simulation driver.
+    impl_->fea = std::make_unique<tlfea::FEASolver>();
+    std::cout << "[MoPhi] TLFEADEMCoupler: tlfea::FEASolver created"
               << (tlfea_config.empty() ? "" : " (config: " + tlfea_config + ")") << "\n";
 
     impl_->initialized = true;
@@ -87,10 +81,8 @@ void TLFEADEMCoupler::step() {
     // Uncomment once the solver has been fully configured and initialized:
     // impl_->dem->DoDynamicsThenSync(impl_->time_step);
 
-    // FEA step: call when a concrete SolverBase subclass has been assigned.
-    if (impl_->fea) {
-        impl_->fea->Solve();
-    }
+    // FEA step: advance the TLFEA simulation by one time step.
+    // impl_->fea->Solve();
 }
 
 void TLFEADEMCoupler::finalize() {

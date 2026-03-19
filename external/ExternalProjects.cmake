@@ -39,13 +39,11 @@ mophi_register_external(
     EXTRA_LIB_NAMES "DEMERuntimeDataHelper"
 )
 
-# TLFEA does not yet ship CMake install rules.  HEADER_SRC causes
-# mophi_fetch_external to copy src/ → install/include/ manually.
-# The static library is named "tlfea_lib".
+# TLFEA ships CMake install rules that install headers and the static library,
+# so no HEADER_SRC override is needed.  The static library is named "tlfea_lib".
 mophi_register_external(
-    NAME       TLFEA
-    URL        "https://github.com/Ruochun/TLFEA"
-    TAG        "main"
-    LIB_NAME   "tlfea_lib"
-    HEADER_SRC "src"
+    NAME     TLFEA
+    URL      "https://github.com/Ruochun/TLFEA"
+    TAG      "main"
+    LIB_NAME "tlfea_lib"
 )
