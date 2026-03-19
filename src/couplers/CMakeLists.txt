@@ -39,6 +39,18 @@ if(MOPHI_BUILD_TLFEA_DEM)
             "  • Set CUDAToolkit_ROOT to the CUDA installation directory.\n")
     endif()
 
+    # TLFEA is an Eigen-based FEA library — it uses Eigen heavily for linear
+    # algebra (matrices, vectors, sparse solvers).  Catch a missing Eigen
+    # installation here with an actionable message rather than letting the build
+    # fail later with cryptic "file not found" errors for Eigen headers.
+    if(NOT Eigen3_FOUND)
+        message(FATAL_ERROR
+            "MoPhi: Building TLFEADEMCoupler requires Eigen3 "
+            "(TLFEA is an Eigen-based FEA library), but CMake could not find it.\n\n"
+            "  • Install Eigen3 (e.g. 'apt install libeigen3-dev' on Debian/Ubuntu), or\n"
+            "  • Set Eigen3_DIR to the directory containing Eigen3Config.cmake.\n")
+    endif()
+
     add_library(mophi_coupler_tlfea_dem STATIC
         TLFEADEMCoupler.cpp
     )
@@ -79,6 +91,7 @@ if(MOPHI_BUILD_TLFEA_DEM)
         PUBLIC
             mophi_ext_DEMEngine
             mophi_ext_TLFEA
+            Eigen3::Eigen
             CUDA::cudart
             CUDA::cuda_driver
             CUDA::nvrtc

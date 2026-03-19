@@ -47,6 +47,15 @@ option(MOPHI_BUILD_DEMOS "Build demonstration programs" ON)
 find_package(CUDAToolkit QUIET)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Eigen3
+#
+# Searched once here so the result is available to all sub-directories.
+# Co-simulation solvers that depend on Eigen (e.g. TLFEADEMCoupler via TLFEA)
+# emit a CMake FATAL_ERROR at configure time when Eigen3 is not found.
+# ─────────────────────────────────────────────────────────────────────────────
+find_package(Eigen3 QUIET)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Infrastructure
 # ─────────────────────────────────────────────────────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
