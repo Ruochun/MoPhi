@@ -79,9 +79,38 @@ cmake -B build \
       -DMOPHI_BUILD_TLFEA_NEWTON=ON
 cmake --build build
 
-# Run the Python demo (shows TLFEA solver + Newton double-pendulum together)
+# Run the Python demo (TLFEA solver + Newton double-pendulum as one coupled system)
 PYTHONPATH=python python3 demo/tlfea_newton/demo_tlfea_newton.py
 ```
+
+The `TLFEANewtonCoupler` bridges C++ (TLFEA) and Python (Newton) inside a single
+`step()` call.  Pass the Newton model and solver at initialization time; the coupler
+manages states, forward-kinematics setup, and the per-step coupling data exchange:
+
+```python
+import mophi, newton, warp as wp
+
+wp.init()
+builder = newton.ModelBuilder()
+# ... configure rigid-body scene ...
+model  = builder.finalize()
+solver = newton.solvers.SolverXPBD(model)
+
+coupler = mophi.TLFEANewtonCoupler()
+coupler.initialize(newton_model=model, newton_solver=solver, sim_dt=1e-3)
+
+for _ in range(steps):
+    coupler.step()   # advances TLFEA, exchanges data, advances Newton
+
+coupler.finalize()
+```
+
+**Coupling data exchange** (TLFEA ↔ Newton) is handled by two methods on the C++ side:
+
+| Method | Direction | Purpose |
+|--------|-----------|---------|
+| `get_node_positions()` | TLFEA → Newton | Deformed FEA node positions forwarded to Newton geometry |
+| `set_node_forces(forces)` | Newton → TLFEA | Contact/body forces from Newton applied as TLFEA external loads |
 
 Newton is installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_NEWTON=ON`.  You can also install it manually beforehand:
@@ -115,6 +144,29 @@ For example, `TLFEADEMCoupler::Impl` owns:
 The coupler's `initialize()`, `step()`, and `finalize()` methods call the
 solver APIs directly (`dem->Initialize()`, `dem->DoStepDynamics()`,
 `fea->Solve()`, etc.).
+
+### Coupling a C++ solver with a Python solver (TLFEA + Newton)
+
+When one solver is pure C++ (TLFEA) and the other is a pure Python package
+(Newton), the coupling cannot be done entirely in C++.  MoPhi's solution is a
+**thin Python-facing wrapper struct** (`PyTLFEANewtonCoupler`) defined in
+`python/bindings/mophi_bindings.cpp`.  This wrapper:
+
+1. Owns the C++ `TLFEANewtonCoupler` as a struct member.
+2. Stores the Newton model, solver, states, control, and contacts as
+   `py::object` members (reference-counted Python objects).
+3. Exposes a unified `initialize() / step() / finalize()` interface to Python.
+4. Inside `step()`, drives the full coupling cycle:
+   - Advances TLFEA via `coupler.step()`.
+   - Reads `coupler.get_node_positions()` → forwards to Newton (TODO: update
+     Newton geometry / anchor points).
+   - Advances Newton (clear forces → collide → step → swap states).
+   - Reads Newton forces → applies via `coupler.set_node_forces()` (TODO).
+
+The C++ `TLFEANewtonCoupler` class itself remains free of Python dependencies.
+The two data-exchange methods (`get_node_positions`, `set_node_forces`) document
+the coupling points and will be wired to the real TLFEA API calls once the
+solver is fully configured.
 
 ---
 

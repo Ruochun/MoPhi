@@ -53,8 +53,9 @@ void TLFEANewtonCoupler::initialize(const std::string& tlfea_config) {
     MOPHI_INFO("TLFEANewtonCoupler: tlfea::FEASolver created%s", fea_suffix.c_str());
 
     // Newton runs in Python; no C++ initialization is needed here.
-    // The Python driver script creates and manages the Newton session directly.
-    MOPHI_INFO("TLFEANewtonCoupler: Newton session is managed by the Python driver");
+    // The Python binding (PyTLFEANewtonCoupler) owns the Newton objects and
+    // drives Newton steps alongside this C++ coupler.
+    MOPHI_INFO("TLFEANewtonCoupler: Newton session is managed by PyTLFEANewtonCoupler (binding layer)");
 
     impl_->initialized = true;
     MOPHI_INFO("TLFEANewtonCoupler: initialized");
@@ -69,9 +70,9 @@ void TLFEANewtonCoupler::step() {
     // Uncomment once the solver has been fully configured and initialized:
     // impl_->fea->Solve();
 
-    // Newton step is driven from Python; this C++ method advances only TLFEA.
-    // In a full co-simulation the Python layer would call this method and then
-    // advance the Newton solver, exchanging forces/displacements between the two.
+    // The Python binding (PyTLFEANewtonCoupler) calls this method as part of its
+    // own step(), which also drives Newton and performs data exchange via
+    // get_node_positions() and set_node_forces().
 }
 
 void TLFEANewtonCoupler::finalize() {
@@ -79,6 +80,30 @@ void TLFEANewtonCoupler::finalize() {
     impl_->fea.reset();
     impl_->initialized = false;
     MOPHI_INFO("TLFEANewtonCoupler: finalized");
+}
+
+std::vector<std::array<double, 3>> TLFEANewtonCoupler::get_node_positions() const {
+    if (!impl_->initialized) {
+        return {};
+    }
+    // TODO: Return actual deformed node positions from TLFEA once the solver is
+    // fully configured, e.g.:
+    //   return impl_->fea->GetNodePositions();
+    // For now this is a placeholder that returns an empty vector.
+    return {};
+}
+
+void TLFEANewtonCoupler::set_node_forces(const std::vector<std::array<double, 3>>& forces) {
+    if (!impl_->initialized) {
+        MOPHI_ERROR("TLFEANewtonCoupler::set_node_forces() called before initialize().");
+    }
+    if (forces.empty()) {
+        return;
+    }
+    // TODO: Apply external forces to TLFEA nodes once the solver is fully configured,
+    // e.g.:
+    //   impl_->fea->SetExternalForces(forces);
+    // For now this is a placeholder.
 }
 
 }  // namespace mophi
