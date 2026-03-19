@@ -14,6 +14,7 @@ MoPhi/
 ├── cmake/
 │   └── MoPhiExternalUtils.cmake # Macros for registering / fetching external solvers
 ├── external/
+│   ├── MoPhiEssentials/         # Required git submodule — Logger, Real3, utilities
 │   ├── ExternalProjects.cmake   # ← add new solver URLs here
 │   └── CMakeLists.txt           # Fetches selected external projects
 ├── src/
@@ -43,9 +44,12 @@ MoPhi/
 ## Quick start
 
 ```bash
-# 1. Clone MoPhi
-git clone https://github.com/Ruochun/MoPhi.git
+# 1. Clone MoPhi (--recurse-submodules is required for MoPhiEssentials)
+git clone --recurse-submodules https://github.com/Ruochun/MoPhi.git
 cd MoPhi
+
+# If you already cloned without --recurse-submodules, initialise the submodule manually:
+#   git submodule update --init
 
 # 2. Configure with the required external solvers and enable the co-sim solver
 cmake -B build \
