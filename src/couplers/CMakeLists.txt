@@ -16,7 +16,11 @@
 
 # Aggregate interface target — always created so that downstream targets
 # (Python bindings, etc.) can link against it unconditionally.
+# mophi_essentials is linked here so every coupler automatically has access
+# to Logger and other MoPhiEssentials utilities without repeating the
+# dependency in each coupler's target_link_libraries() call.
 add_library(mophi_couplers INTERFACE)
+target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 
 # ── TLFEA + DEM-Engine co-simulation solver ───────────────────────────────────
 if(MOPHI_BUILD_TLFEA_DEM)

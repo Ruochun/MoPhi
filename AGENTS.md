@@ -25,12 +25,15 @@ MoPhi/
 ├── README.md                    # User-facing documentation
 ├── .clang-format                # Formatting rules (Chromium base, 120-col, 4-space indent)
 ├── .format_all                  # Shell script that applies clang-format to the whole repo
+├── .gitmodules                  # Git submodule declarations (MoPhiEssentials)
 ├── cmake/
 │   └── MoPhiExternalUtils.cmake # mophi_register_external / mophi_fetch_external /
 │                                #   mophi_require_externals macros
 ├── external/
 │   ├── ExternalProjects.cmake   # One mophi_register_external() call per known external
-│   └── CMakeLists.txt           # Activates registered externals when MOPHI_FETCH_*=ON
+│   ├── CMakeLists.txt           # Activates registered externals when MOPHI_FETCH_*=ON
+│   └── MoPhiEssentials/         # Required git submodule — always present
+│                                #   Provides Logger, Real3, and other utilities
 ├── src/
 │   └── couplers/                # One .h + .cpp per co-simulation solver
 │       ├── CMakeLists.txt       # Builds mophi_coupler_* libraries; adds them to
@@ -109,6 +112,44 @@ There are no nested namespaces at this time.
 
 ---
 
+## MoPhiEssentials submodule
+
+MoPhiEssentials (`external/MoPhiEssentials`) is a **required, always-on git submodule**.
+It provides foundational utilities shared across all MoPhi-compatible solvers, including:
+
+- `mophi::Logger` — thread-safe singleton logger with verbosity levels
+- `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` macros — printf-style logging
+- `MOPHI_STATUS(identifier, ...)` — keyed status-line messages
+- `mophi::Real3<T>` — 3D vector template class (CPU + GPU compatible)
+- Memory management helpers, GPU utilities, and more
+
+MoPhiEssentials is integrated as a header-only INTERFACE CMake target (`mophi_essentials`) in
+CPU-only mode.  CUDA is explicitly disabled inside MoPhiEssentials when it is built as a submodule
+of MoPhi (`MOPHI_ENABLE_CUDA=OFF FORCE`), because MoPhi manages CUDA resources per-coupler through
+the `MOPHI_FETCH_*` / `MOPHI_BUILD_*` mechanism.  No separate build step is required.
+
+The `mophi_essentials` target is linked transitively to the `mophi_couplers` aggregate INTERFACE
+target, so every coupler automatically has access to `#include <core/Logger.hpp>` (and all other
+MoPhiEssentials headers) without any additional `target_link_libraries` calls.
+
+### Does MoPhiEssentials interfere with solvers that also use it internally?
+
+No.  Solvers like TLFEA that carry MoPhiEssentials as their own submodule are built via
+`ExternalProject_Add` in a **completely isolated build environment** — they have no CMake target
+visibility into MoPhi's parent build.  The two copies of MoPhiEssentials are completely independent
+and do not conflict.
+
+### Verbosity defaults
+
+The default verbosity is `VERBOSITY_WARNING` (level 2).  `MOPHI_INFO` messages are stored in the
+log but are not printed to stdout unless the caller raises the verbosity:
+
+```cpp
+mophi::Logger::GetInstance().SetVerbosity(mophi::VERBOSITY_INFO);
+```
+
+---
+
 ## C++ coding conventions
 
 | Item | Rule |
@@ -120,7 +161,7 @@ There are no nested namespaces at this time.
 | Line length | 120 characters (enforced by `.clang-format`) |
 | Indentation | 4 spaces (enforced by `.clang-format`) |
 | Braces | Chromium style (`BasedOnStyle: Chromium` in `.clang-format`) |
-| Output | Use `std::cout` prefixed with `[MoPhi] ClassName:` for status messages |
+| Logging | Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` from `<core/Logger.hpp>` — do **not** use `std::cout` directly |
 
 ### Code formatting
 
@@ -228,12 +269,13 @@ available for linking.
 It carries `INTERFACE_INCLUDE_DIRECTORIES` pointing to the external's installed headers.
 When `LIB_NAME` is given it also carries `IMPORTED_LOCATION` for the static library.
 
-### ExternalProject_Add vs FetchContent
+### ExternalProject_Add vs FetchContent vs git submodule
 
 | Use case | Tool |
 |----------|------|
 | Third-party solvers (TLFEA, DEM-Engine, …) | `ExternalProject_Add` via `mophi_fetch_external` |
 | Pure build helpers with no generated headers (pybind11) | `FetchContent` |
+| Required always-on utilities shared across all solvers (MoPhiEssentials) | git submodule + `add_subdirectory` |
 
 `ExternalProject_Add` builds the external in isolation and guarantees that generated headers
 (e.g., `core/ApiVersion.h` from DEM-Engine) exist before any MoPhi source file is compiled.
@@ -287,9 +329,9 @@ If the new solver requires a system package (CUDA, Eigen, OpenCL, …), add the 
 
 `src/couplers/MyCoupler.cpp`:
 
-- Include the coupler header first, then system headers, then external solver headers
+- Include the coupler header first, then `<core/Logger.hpp>`, then external solver headers
 - Implement `Impl` with `std::unique_ptr<ExternalSolverClass>` members
-- Use `std::cout << "[MoPhi] MyCoupler: ..."` for status messages
+- Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` for all output — do **not** use `std::cout` directly
 - Destructor calls `finalize()` when `impl_->initialized` is `true`
 
 After writing source files, **run `.format_all`** before committing.
