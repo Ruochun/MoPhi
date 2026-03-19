@@ -45,6 +45,12 @@ if(MOPHI_BUILD_TLFEA_DEM)
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_TLFEA_DEM_COUPLER)
 endif()
 
+# When the TLFEA + Newton co-simulation coupler has been compiled, enable its
+# Python binding via a compile-time definition.
+if(MOPHI_BUILD_TLFEA_NEWTON)
+    target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_TLFEA_NEWTON_COUPLER)
+endif()
+
 # Place the compiled .so next to the Python package so the package __init__.py
 # can import it with `from .mophi_core import ...`.
 set_target_properties(mophi_core PROPERTIES

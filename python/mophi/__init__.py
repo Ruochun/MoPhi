@@ -24,3 +24,10 @@ try:
     __all__.append("TLFEADEMCoupler")
 except ImportError:
     pass
+
+# TLFEANewtonCoupler is only present when built with MOPHI_BUILD_TLFEA_NEWTON=ON.
+try:
+    from .mophi_core import TLFEANewtonCoupler  # noqa: F401
+    __all__.append("TLFEANewtonCoupler")
+except ImportError:
+    pass

@@ -28,6 +28,58 @@ if(MOPHI_FETCH_TLFEA)
     mophi_fetch_external(TLFEA)
 endif()
 
+# ── Newton (Python package) ───────────────────────────────────────────────────
+# Newton is a pure Python physics engine — it has no CMake build system and
+# cannot be handled with mophi_fetch_external / ExternalProject_Add.  When
+# MOPHI_FETCH_NEWTON=ON, MoPhi installs Newton via pip at configure time so
+# that it is immediately importable in the Python demo and any user scripts.
+#
+# Note: this pip install uses whatever Python interpreter CMake finds first
+# (the same one that will build the pybind11 extension module).  Users running
+# inside a virtual environment should activate it before invoking CMake.
+if(MOPHI_FETCH_NEWTON)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    message(STATUS "MoPhi: Installing Newton Python package via pip ...")
+    execute_process(
+        COMMAND           ${Python3_EXECUTABLE} -m pip install newton
+        RESULT_VARIABLE   _newton_install_result
+        OUTPUT_VARIABLE   _newton_install_output
+        ERROR_VARIABLE    _newton_install_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_STRIP_TRAILING_WHITESPACE
+    )
+    if(_newton_install_result EQUAL 0)
+        message(STATUS "MoPhi: Newton Python package installed successfully")
+        set(MOPHI_EXTERNAL_Newton_AVAILABLE TRUE
+            CACHE INTERNAL "Newton Python package available")
+    else()
+        message(WARNING
+            "MoPhi: pip install newton failed (exit code ${_newton_install_result}):\n"
+            "${_newton_install_error}\n"
+            "Newton will not be available for the demo.  "
+            "Install it manually with:  pip install newton")
+    endif()
+else()
+    # Even without MOPHI_FETCH_NEWTON, detect a pre-installed Newton so the
+    # summary line below reports the correct status.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_FOUND)
+        execute_process(
+            COMMAND         ${Python3_EXECUTABLE} -c "import newton"
+            RESULT_VARIABLE _newton_check_result
+            OUTPUT_QUIET
+            ERROR_QUIET
+        )
+        if(_newton_check_result EQUAL 0)
+            set(MOPHI_EXTERNAL_Newton_AVAILABLE TRUE
+                CACHE INTERNAL "Newton Python package available")
+        else()
+            set(MOPHI_EXTERNAL_Newton_AVAILABLE FALSE
+                CACHE INTERNAL "Newton Python package not available")
+        endif()
+    endif()
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────

@@ -19,7 +19,8 @@ MoPhi/
 │   └── CMakeLists.txt           # Fetches selected external projects
 ├── src/
 │   └── couplers/                # Multi-physics co-simulation solvers
-│       └── TLFEADEMCoupler.{h,cpp}  # Direct coupling of TLFEA + DEM-Engine
+│       ├── TLFEADEMCoupler.{h,cpp}    # Direct coupling of TLFEA + DEM-Engine
+│       └── TLFEANewtonCoupler.{h,cpp} # TLFEA (C++) + Newton (Python) coupling
 └── python/
     ├── CMakeLists.txt           # pybind11 module — fetched automatically
     ├── bindings/
@@ -68,6 +69,27 @@ c.finalize()
 "
 ```
 
+### TLFEA + Newton (Python-based GPU physics)
+
+```bash
+# Configure: fetch TLFEA, install Newton via pip, and build the coupler
+cmake -B build \
+      -DMOPHI_FETCH_TLFEA=ON \
+      -DMOPHI_FETCH_NEWTON=ON \
+      -DMOPHI_BUILD_TLFEA_NEWTON=ON
+cmake --build build
+
+# Run the Python demo (shows TLFEA solver + Newton double-pendulum together)
+PYTHONPATH=python python3 demo/tlfea_newton/demo_tlfea_newton.py
+```
+
+Newton is installed by MoPhi via pip at configure time when
+`-DMOPHI_FETCH_NEWTON=ON`.  You can also install it manually beforehand:
+
+```bash
+pip install newton
+```
+
 If you try to enable the co-simulation solver without first fetching the
 required externals, CMake will emit a clear error:
 
@@ -105,6 +127,7 @@ Control which ones are fetched with the following options:
 |--------|---------|--------|
 | `-DMOPHI_FETCH_TLFEA=ON` | OFF | Download TLFEA FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
+| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
 
 ### Adding a new external solver
 
@@ -131,6 +154,7 @@ Control which ones are fetched with the following options:
 | Option | Default | Required externals | Effect |
 |--------|---------|-------------------|--------|
 | `-DMOPHI_BUILD_TLFEA_DEM=ON` | OFF | TLFEA + DEMEngine | Build TLFEA + DEM-Engine coupler |
+| `-DMOPHI_BUILD_TLFEA_NEWTON=ON` | OFF | TLFEA + Newton (pip) | Build TLFEA + Newton coupler |
 
 If a required external is not fetched, CMake emits a `FATAL_ERROR` at
 configure time with instructions on how to resolve the problem.
@@ -170,17 +194,20 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 |--------|---------|--------|
 | `MOPHI_FETCH_TLFEA` | OFF | Download TLFEA into `external/TLFEA/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
+| `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
 | `MOPHI_BUILD_TLFEA_DEM` | OFF | Build the TLFEA+DEM co-simulation solver |
+| `MOPHI_BUILD_TLFEA_NEWTON` | OFF | Build the TLFEA+Newton co-simulation coupler |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
 
 ---
 
 ## External solvers
 
-| Name | URL | Role |
-|------|-----|------|
-| TLFEA | https://github.com/Ruochun/TLFEA | Total-Lagrangian FEA |
-| DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM |
+| Name | URL | Role | Type |
+|------|-----|------|------|
+| TLFEA | https://github.com/Ruochun/TLFEA | Total-Lagrangian FEA | C++ (CMake) |
+| DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM | C++ / CUDA (CMake) |
+| Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
 
 ---
 

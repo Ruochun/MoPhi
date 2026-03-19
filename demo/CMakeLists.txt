@@ -15,3 +15,8 @@
 if(MOPHI_BUILD_TLFEA_DEM)
     add_subdirectory(tlfea_dem)
 endif()
+
+# ── TLFEA + Newton demo ───────────────────────────────────────────────────────
+if(MOPHI_BUILD_TLFEA_NEWTON)
+    add_subdirectory(tlfea_newton)
+endif()
