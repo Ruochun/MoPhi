@@ -154,7 +154,7 @@ Control which ones are fetched with the following options:
 | Option | Default | Required externals | Effect |
 |--------|---------|-------------------|--------|
 | `-DMOPHI_BUILD_TLFEA_DEM=ON` | OFF | TLFEA + DEMEngine | Build TLFEA + DEM-Engine coupler |
-| `-DMOPHI_BUILD_TLFEA_NEWTON=ON` | OFF | TLFEA + Newton (pip) | Build TLFEA + Newton coupler |
+| `-DMOPHI_BUILD_TLFEA_NEWTON=ON` | OFF | TLFEA + Newton (pip) + CUDA Toolkit | Build TLFEA + Newton coupler |
 
 If a required external is not fetched, CMake emits a `FATAL_ERROR` at
 configure time with instructions on how to resolve the problem.

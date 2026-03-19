@@ -15,13 +15,14 @@ namespace mophi {
 /// Impl holds:
 ///   - std::unique_ptr<tlfea::FEASolver>  — TLFEA's top-level simulation driver
 ///
-/// Unlike TLFEADEMCoupler, no CUDA Toolkit is required at C++ build time: Newton
-/// manages its own GPU resources through Warp and is never linked into a C++
-/// translation unit.
+/// TLFEA is a CUDA-based FEA library — its headers contain CUDA annotations
+/// (__host__/__device__) that require the CUDA Toolkit to compile.  Building
+/// this class therefore requires the CUDA Toolkit even though DEM-Engine is not
+/// involved.
 ///
-/// Building this class requires only the TLFEA external project to have been
-/// fetched.  CMake emits a FATAL_ERROR at configure time if TLFEA is missing
-/// and MOPHI_BUILD_TLFEA_NEWTON=ON is requested.
+/// Building this class requires the TLFEA external project to have been fetched.
+/// CMake emits a FATAL_ERROR at configure time if TLFEA is missing and
+/// MOPHI_BUILD_TLFEA_NEWTON=ON is requested.
 class TLFEANewtonCoupler {
   public:
     TLFEANewtonCoupler();

@@ -2,6 +2,13 @@
 
 #include <core/Logger.hpp>
 
+// ── CUDA runtime ──────────────────────────────────────────────────────────────
+// Must be included before any TLFEA header.  TLFEA is a CUDA-based library
+// whose headers annotate functions with __host__ and __device__.  These
+// keywords are only defined once cuda_runtime.h has been included; without this
+// include the plain C++ compiler would report "__host__ does not name a type".
+#include <cuda_runtime.h>
+
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
 // FEASolver is TLFEA's top-level simulation driver that manages everything in
 // the package.  The Impl below owns a FEASolver instance created in initialize()
