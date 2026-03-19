@@ -14,7 +14,7 @@
 // FEASolver is TLFEA's top-level simulation driver that manages everything in
 // the package.  The Impl below owns a FEASolver instance created in initialize()
 // and driven in step() via its Solve() method.
-#include <FEASolver.h>
+#include <tlfea/FEASolver.h>
 
 namespace mophi {
 
