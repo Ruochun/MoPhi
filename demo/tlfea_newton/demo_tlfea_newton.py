@@ -102,8 +102,14 @@ if _newton_available:
     state_1 = model.state()
     control = model.control()
 
-    # Use the Featherstone articulated-body solver.
-    newton_solver = newton.solvers.FeatherstoneSolver(model)
+    # Evaluate forward kinematics once to populate initial state.
+    newton.eval_fk(model, model.joint_q, model.joint_qd, state_0)
+
+    # Broad-phase collision contacts used by the solver.
+    contacts = model.contacts()
+
+    # Use the XPBD solver (the default solver in Newton's own examples).
+    newton_solver = newton.solvers.SolverXPBD(model)
 
     sim_dt = 1.0 / 1000.0  # 1 ms time step
     print(f"[Newton] Double-pendulum model built ({model.body_count} bodies).\n")
@@ -121,7 +127,9 @@ for i in range(num_steps):
 
     # ── Newton step ───────────────────────────────────────────────────────────
     if _newton_available:
-        newton_solver.step(model, state_0, state_1, control, None, sim_dt)
+        state_0.clear_forces()
+        model.collide(state_0, contacts)
+        newton_solver.step(state_0, state_1, control, contacts, sim_dt)
         # Swap states for next iteration.
         state_0, state_1 = state_1, state_0
         print(f"  step {step_num}/{num_steps}  [Newton] advanced one physics step (dt={sim_dt:.4f} s)")
