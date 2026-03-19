@@ -1,7 +1,6 @@
 #include "TLFEADEMCoupler.h"
 
-#include <iostream>
-#include <stdexcept>
+#include <core/Logger.hpp>
 
 // ── DEM-Engine ────────────────────────────────────────────────────────────────
 // Header lives at external/DEMEngine/src/DEM/API.h, added to the include path
@@ -38,7 +37,7 @@ struct TLFEADEMCoupler::Impl {
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
 TLFEADEMCoupler::TLFEADEMCoupler() : impl_(std::make_unique<Impl>()) {
-    std::cout << "[MoPhi] TLFEADEMCoupler: created\n";
+    MOPHI_INFO("TLFEADEMCoupler: created");
 }
 
 TLFEADEMCoupler::~TLFEADEMCoupler() {
@@ -52,29 +51,29 @@ TLFEADEMCoupler::~TLFEADEMCoupler() {
 void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
                                  const std::string& dem_config,
                                  unsigned int num_gpus) {
-    std::cout << "[MoPhi] TLFEADEMCoupler: initializing ...\n";
+    MOPHI_INFO("TLFEADEMCoupler: initializing ...");
 
     // ── DEM-Engine ────────────────────────────────────────────────────────────
     // Create DEMSolver with the requested number of GPUs.  In a real simulation
     // the user would configure domain, materials, and clump templates on this
     // object and then call impl_->dem->Initialize() before the time-stepping loop.
     impl_->dem = std::make_unique<deme::DEMSolver>(num_gpus);
-    std::cout << "[MoPhi] TLFEADEMCoupler: deme::DEMSolver created (nGPUs=" << num_gpus << ")"
-              << (dem_config.empty() ? "" : " (config: " + dem_config + ")") << "\n";
+    const std::string dem_suffix = dem_config.empty() ? "" : (" (config: " + dem_config + ")");
+    MOPHI_INFO("TLFEADEMCoupler: deme::DEMSolver created (nGPUs=%u)%s", num_gpus, dem_suffix.c_str());
 
     // ── TLFEA ─────────────────────────────────────────────────────────────────
     // Create FEASolver — TLFEA's top-level simulation driver.
     impl_->fea = std::make_unique<tlfea::FEASolver>();
-    std::cout << "[MoPhi] TLFEADEMCoupler: tlfea::FEASolver created"
-              << (tlfea_config.empty() ? "" : " (config: " + tlfea_config + ")") << "\n";
+    const std::string fea_suffix = tlfea_config.empty() ? "" : (" (config: " + tlfea_config + ")");
+    MOPHI_INFO("TLFEADEMCoupler: tlfea::FEASolver created%s", fea_suffix.c_str());
 
     impl_->initialized = true;
-    std::cout << "[MoPhi] TLFEADEMCoupler: initialized\n";
+    MOPHI_INFO("TLFEADEMCoupler: initialized");
 }
 
 void TLFEADEMCoupler::step() {
     if (!impl_->initialized) {
-        throw std::runtime_error("TLFEADEMCoupler::step() called before initialize().");
+        MOPHI_ERROR("TLFEADEMCoupler::step() called before initialize().");
     }
 
     // DEM step: advance by one co-simulation time step.
@@ -86,11 +85,11 @@ void TLFEADEMCoupler::step() {
 }
 
 void TLFEADEMCoupler::finalize() {
-    std::cout << "[MoPhi] TLFEADEMCoupler: finalizing ...\n";
+    MOPHI_INFO("TLFEADEMCoupler: finalizing ...");
     impl_->fea.reset();
     impl_->dem.reset();
     impl_->initialized = false;
-    std::cout << "[MoPhi] TLFEADEMCoupler: finalized\n";
+    MOPHI_INFO("TLFEADEMCoupler: finalized");
 }
 
 }  // namespace mophi

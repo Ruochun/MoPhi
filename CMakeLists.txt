@@ -62,6 +62,26 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(MoPhiExternalUtils)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MoPhiEssentials submodule (required, always on)
+#
+# MoPhiEssentials provides foundational utilities — Logger, Real3, memory
+# helpers — shared across all MoPhi-compatible solvers.  It is a required
+# git submodule (external/MoPhiEssentials) and is always included.
+#
+# CUDA is explicitly disabled here: MoPhi manages CUDA resources per-coupler
+# via the MOPHI_FETCH_* / MOPHI_BUILD_* mechanism.  The CPU-only build of
+# MoPhiEssentials produces a header-only INTERFACE target (mophi_essentials)
+# that carries the correct include directories and requires no separate build
+# step.
+#
+# Does not interfere with solvers that also use MoPhiEssentials internally
+# (e.g. TLFEA) — those are built in complete isolation via ExternalProject_Add
+# and have no CMake target visibility into this parent build.
+# ─────────────────────────────────────────────────────────────────────────────
+set(MOPHI_ENABLE_CUDA OFF CACHE BOOL "Disable CUDA inside the MoPhiEssentials submodule (MoPhi manages CUDA per-coupler)" FORCE)
+add_subdirectory(external/MoPhiEssentials)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # External projects
 # ─────────────────────────────────────────────────────────────────────────────
 add_subdirectory(external)

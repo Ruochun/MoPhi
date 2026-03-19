@@ -1,0 +1,3 @@
+[submodule "external/MoPhiEssentials"]
+	path = external/MoPhiEssentials
+	url = https://github.com/Ruochun/MoPhiEssentials.git
