@@ -158,7 +158,10 @@ PYBIND11_MODULE(mophi_core, m) {
              "The list has one entry per Newton body (model.body_count).\n"
              "Returns an empty list when Newton has not been initialized.")
         .def_readwrite("newton_control", &PyNewtonXLBDEMCoupler::newton_control,
-                       "The Newton control object.  Write joint_target values here before\n"
-                       "calling step() to drive the robot's joints.");
+                       "The Newton control object.  Write joint_target_pos values here before\n"
+                       "calling step() to drive the robot's joints.")
+        .def_readwrite("newton_state_0", &PyNewtonXLBDEMCoupler::newton_state_0,
+                       "The current Newton state (after the most recent step()).\n"
+                       "Pass this to newton.viewer.ViewerGL.log_state() to visualize the scene.");
 #endif
 }

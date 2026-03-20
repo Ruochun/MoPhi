@@ -102,9 +102,9 @@ wp.init()
 #   • A ground plane for contact.
 #
 # Joint motors use position control: target_ke (stiffness) and target_kd
-# (damping) cause the joint to track the control target angle.  The demo
-# updates the control targets with sinusoidal trot-gait signals before each
-# coupler.step() call.
+# (damping) cause the joint to track the control target angle set in
+# control.joint_target_pos.  The demo updates those targets with sinusoidal
+# trot-gait signals before each coupler.step() call.
 
 print("[Newton] Building quadruped walking-robot model ...")
 
@@ -137,8 +137,8 @@ LEG_OFFSETS = [
 # Trot gait: diagonal pairs (FL, RR) share phase 0; (FR, RL) share phase π.
 LEG_PHASES = [0.0, math.pi, math.pi, 0.0]
 
-hip_joint_indices = []
-knee_joint_indices = []
+hip_joint_dof_indices = []   # DOF index of each hip joint in joint_target_pos
+knee_joint_dof_indices = []  # DOF index of each knee joint in joint_target_pos
 all_joints = [torso_joint]
 
 for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
@@ -190,8 +190,8 @@ for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
         limit_upper=0.1,
     )
 
-    hip_joint_indices.append(hip)
-    knee_joint_indices.append(knee)
+    hip_joint_dof_indices.append(hip)
+    knee_joint_dof_indices.append(knee)
     all_joints.extend([hip, knee])
 
 # Group all joints into a single articulation (one connected kinematic tree).
@@ -203,7 +203,7 @@ newton_solver = newton.solvers.SolverXPBD(newton_model)
 
 print(
     f"[Newton] Quadruped model built: {newton_model.body_count} bodies, "
-    f"{len(hip_joint_indices)} hip joints, {len(knee_joint_indices)} knee joints.\n"
+    f"{len(hip_joint_dof_indices)} hip joints, {len(knee_joint_dof_indices)} knee joints.\n"
 )
 
 # ─── 6. Build the XLB placeholder scene (if XLB is available) ─────────────────
@@ -241,7 +241,24 @@ coupler.initialize(
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
-# ─── 8. Walking control helper ────────────────────────────────────────────────
+# ─── 8. Set up Newton's OpenGL visualization window ───────────────────────────
+# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
+# render path: begin_frame() / log_state() / end_frame() update the display each
+# step while the simulation continues to advance.  The window can be closed by
+# the user at any time; viewer.is_running() returns False once the window is
+# dismissed, which will end the co-simulation loop early.
+try:
+    viewer = newton.viewer.ViewerGL()
+    viewer.set_model(newton_model)
+    _viewer_available = True
+    print("[Viewer] Newton OpenGL visualization window opened.\n")
+except Exception as exc:
+    viewer = None
+    _viewer_available = False
+    print(f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
+          "         The simulation will run without visualization.")
+
+# ─── 9. Walking control helper ────────────────────────────────────────────────
 WALK_FREQ = 1.5   # Gait cycle frequency [Hz]
 HIP_AMP   = 0.45  # Hip swing amplitude [rad]
 KNEE_AMP  = 0.40  # Knee flexion amplitude [rad]
@@ -256,64 +273,85 @@ def update_walking_control(control, step: int, dt: float) -> None:
 
     Hip joints swing forward/back (sinusoidal).
     Knee joints flex on the swing phase (cosine-based, always < 0).
+
+    Targets are written to control.joint_target_pos which is the per-DOF
+    position target array used by the XPBD solver's joint motor.
     """
     t = step * dt
 
-    # Read the current control targets from GPU, modify, and write back.
-    targets = control.joint_target.numpy().copy()
+    # joint_target_pos is a Warp GPU array of shape (joint_dof_count,).
+    # Copy to CPU, update, then write back.
+    targets = control.joint_target_pos.numpy().copy()
 
-    for i, (hip_j, knee_j, phase) in enumerate(
-        zip(hip_joint_indices, knee_joint_indices, LEG_PHASES)
-    ):
+    for hip_dof_idx, knee_dof_idx, phase in zip(hip_joint_dof_indices, knee_joint_dof_indices, LEG_PHASES):
         hip_angle  = HIP_AMP  * math.sin(2.0 * math.pi * WALK_FREQ * t + phase)
         knee_angle = -KNEE_AMP * (1.0 + math.cos(2.0 * math.pi * WALK_FREQ * t + phase)) / 2.0
-        targets[hip_j]  = hip_angle
-        targets[knee_j] = knee_angle
+        targets[hip_dof_idx]  = hip_angle
+        targets[knee_dof_idx] = knee_angle
 
-    control.joint_target.assign(
-        wp.from_numpy(targets, dtype=wp.float32, device="cuda")
+    control.joint_target_pos.assign(
+        wp.from_numpy(targets, dtype=wp.float32, device=control.joint_target_pos.device)
     )
 
 
-# ─── 9. Co-simulation loop ────────────────────────────────────────────────────
-NUM_STEPS = 20
+# ─── 10. Co-simulation loop ───────────────────────────────────────────────────
+NUM_STEPS = 500  # ~1 s of simulation at 500 Hz (or until the viewer is closed)
+sim_time = 0.0
 
-print(f"Running {NUM_STEPS} co-simulation step(s) (dt={SIM_DT*1000:.1f} ms each) ...\n")
+print(f"Running up to {NUM_STEPS} co-simulation step(s) (dt={SIM_DT*1000:.1f} ms each) ...\n")
 print(f"{'Step':>5}  {'Torso X [m]':>12}  {'Torso Y [m]':>12}  {'Torso Z [m]':>12}  Representation")
 print("-" * 72)
 
 for i in range(NUM_STEPS):
+    # Stop early if the viewer window has been closed by the user.
+    if _viewer_available and not viewer.is_running():
+        print(f"\n[Viewer] Window closed by user after step {i}.")
+        break
+
     # Update joint control targets to drive the walking gait.
     update_walking_control(coupler.newton_control, i, SIM_DT)
 
     # Advance all three solvers by one co-simulation step.
     coupler.step()
+    sim_time += SIM_DT
 
     # Extract the robot's spatial representation: one [px, py, pz, qx, qy, qz, qw]
     # per Newton body (torso + 8 leg segments = 9 entries for this quadruped).
     transforms = coupler.get_robot_body_transforms()
 
-    if transforms:
-        # The torso body is the first body added (index 0).
-        torso_transform = transforms[0]
-        px, py, pz = torso_transform[0], torso_transform[1], torso_transform[2]
-        qx, qy, qz, qw = (
-            torso_transform[3],
-            torso_transform[4],
-            torso_transform[5],
-            torso_transform[6],
-        )
-        print(
-            f"{i + 1:>5}  {px:>12.4f}  {py:>12.4f}  {pz:>12.4f}  "
-            f"[{newton_model.body_count} bodies, "
-            f"torso quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})]"
-        )
-    else:
-        print(f"{i + 1:>5}  (Newton not available — no transforms)")
+    # Update the visualization window.
+    if _viewer_available:
+        viewer.begin_frame(sim_time)
+        # log_state reads body_q and body_qd from the state stored inside the coupler.
+        # We access the live Newton state through the coupler's newton_state_0 attribute.
+        viewer.log_state(coupler.newton_state_0)
+        viewer.end_frame()
+
+    # Print a status line every 50 steps to avoid flooding the console.
+    if (i + 1) % 50 == 0 or i == 0:
+        if transforms:
+            torso_transform = transforms[0]
+            px, py, pz = torso_transform[0], torso_transform[1], torso_transform[2]
+            qx, qy, qz, qw = (
+                torso_transform[3],
+                torso_transform[4],
+                torso_transform[5],
+                torso_transform[6],
+            )
+            print(
+                f"{i + 1:>5}  {px:>12.4f}  {py:>12.4f}  {pz:>12.4f}  "
+                f"[{newton_model.body_count} bodies, "
+                f"torso quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})]"
+            )
+        else:
+            print(f"{i + 1:>5}  (Newton not available — no transforms)")
 
 print()
 
-# ─── 10. Finalize ─────────────────────────────────────────────────────────────
+# ─── 11. Finalize ─────────────────────────────────────────────────────────────
+if _viewer_available:
+    viewer.close()
+
 print("[Coupler] Finalizing NewtonXLBDEMCoupler ...")
 coupler.finalize()
 print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
@@ -332,3 +370,4 @@ print(
     "  Format: [px, py, pz, qx, qy, qz, qw]  (position [m] + quaternion).\n"
     "  Future work: feed these transforms to DEM-Engine and XLB for full coupling."
 )
+
