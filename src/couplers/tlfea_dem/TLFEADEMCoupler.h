@@ -13,7 +13,7 @@ namespace mophi {
 ///   1. Own instances of the participating single-physics solvers directly
 ///      (via pimpl), using each solver's own public API without an intervening
 ///      wrapper layer.
-///   2. Provide initialize() / step() / finalize() lifecycle methods.
+///   2. Provide Initialize() / Step() / Finalize() lifecycle methods.
 ///   3. Expose a Python binding via the python/ sub-directory.
 ///
 /// Impl holds:
@@ -24,7 +24,7 @@ namespace mophi {
 /// to have been fetched.  CMake emits a FATAL_ERROR at configure time if either
 /// is missing and MOPHI_BUILD_TLFEA_DEM=ON is requested.
 ///
-/// Later, initialize(), step(), and finalize() will be filled in with real
+/// Later, Initialize(), Step(), and Finalize() will be filled in with real
 /// data-exchange logic (force/displacement mapping, time-step synchronization,
 /// etc.).
 class TLFEADEMCoupler {
@@ -42,15 +42,15 @@ class TLFEADEMCoupler {
     /// @param tlfea_config   Configuration/mesh file forwarded to TLFEA.
     /// @param dem_config     Configuration/scene file forwarded to DEM-Engine.
     /// @param num_gpus       Number of GPUs to hand to DEM-Engine (default 1).
-    void initialize(const std::string& tlfea_config = "",
+    void Initialize(const std::string& tlfea_config = "",
                     const std::string& dem_config = "",
                     unsigned int num_gpus = 1);
 
     /// @brief Advance both solvers by one co-simulation time step.
-    void step();
+    void Step();
 
     /// @brief Finalize both solvers and release all resources.
-    void finalize();
+    void Finalize();
 
   private:
     struct Impl;

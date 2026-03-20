@@ -11,8 +11,8 @@
 
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
 // FEASolver is TLFEA's top-level simulation driver that manages everything in
-// the package.  The Impl below owns a FEASolver instance created in initialize()
-// and driven in step() via its Solve() method.
+// the package.  The Impl below owns a FEASolver instance created in Initialize()
+// and driven in Step() via its Solve() method.
 #include <tlfea/FEASolver.h>
 
 namespace mophi {
@@ -20,14 +20,14 @@ namespace mophi {
 // ── Pimpl ────────────────────────────────────────────────────────────────────
 
 struct TLFEADEMCoupler::Impl {
-    /// DEM-Engine's main solver.  Created (not yet initialized) in initialize(),
-    /// torn down in finalize().  In a real co-simulation the user would configure
+    /// DEM-Engine's main solver.  Created (not yet initialized) in Initialize(),
+    /// torn down in Finalize().  In a real co-simulation the user would configure
     /// domain size, materials, and particle templates on this object before
     /// calling dem->Initialize().
     std::unique_ptr<deme::DEMSolver> dem;
 
-    /// TLFEA's top-level simulation driver.  Created in initialize() and
-    /// driven in step() via its Solve() method.
+    /// TLFEA's top-level simulation driver.  Created in Initialize() and
+    /// driven in Step() via its Solve() method.
     std::unique_ptr<tlfea::FEASolver> fea;
 
     bool initialized{false};
@@ -42,13 +42,13 @@ TLFEADEMCoupler::TLFEADEMCoupler() : impl_(std::make_unique<Impl>()) {
 
 TLFEADEMCoupler::~TLFEADEMCoupler() {
     if (impl_ && impl_->initialized) {
-        finalize();
+        Finalize();
     }
 }
 
 // ── Public interface ──────────────────────────────────────────────────────────
 
-void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
+void TLFEADEMCoupler::Initialize(const std::string& tlfea_config,
                                  const std::string& dem_config,
                                  unsigned int num_gpus) {
     MOPHI_INFO("TLFEADEMCoupler: initializing ...");
@@ -71,9 +71,9 @@ void TLFEADEMCoupler::initialize(const std::string& tlfea_config,
     MOPHI_INFO("TLFEADEMCoupler: initialized");
 }
 
-void TLFEADEMCoupler::step() {
+void TLFEADEMCoupler::Step() {
     if (!impl_->initialized) {
-        MOPHI_ERROR("TLFEADEMCoupler::step() called before initialize().");
+        MOPHI_ERROR("TLFEADEMCoupler::Step() called before Initialize().");
     }
 
     // DEM step: advance by one co-simulation time step.
@@ -84,7 +84,7 @@ void TLFEADEMCoupler::step() {
     // impl_->fea->Solve();
 }
 
-void TLFEADEMCoupler::finalize() {
+void TLFEADEMCoupler::Finalize() {
     MOPHI_INFO("TLFEADEMCoupler: finalizing ...");
     impl_->fea.reset();
     impl_->dem.reset();

@@ -24,7 +24,7 @@
 //   3. TODO: update Newton collision geometry / anchor points with the TLFEA positions.
 //   4. Advance Newton by one time step (clear forces -> collide -> step -> swap).
 //   5. TODO: extract contact / body forces from Newton state.
-//   6. TODO: apply those forces to TLFEA via set_node_forces() for the next step.
+//   6. TODO: apply those forces to TLFEA via SetNodeForces() for the next step.
 //
 // Lives in src/couplers/tlfea_newton/.  The declaration is compiled as part of
 // the mophi_core Python extension module (not as a standalone library) because
@@ -38,11 +38,11 @@ struct PyTLFEANewtonCoupler {
     std::unique_ptr<TLFEAImpl> fea_;
 
     // Newton objects owned on the Python side and kept alive here via reference
-    // counting.  All are initialized to None and populated in initialize().
+    // counting.  All are initialized to None and populated in Initialize().
     pybind11::object newton_model;
     pybind11::object newton_solver;
-    pybind11::object newton_state_0;  ///< "current" Newton state (input to step())
-    pybind11::object newton_state_1;  ///< "scratch"  Newton state (output of step())
+    pybind11::object newton_state_0;  ///< "current" Newton state (input to Step())
+    pybind11::object newton_state_1;  ///< "scratch"  Newton state (output of Step())
     pybind11::object newton_control;
     pybind11::object newton_contacts;
     double sim_dt{1.0 / 1000.0};  ///< Newton integration time step [s]
@@ -62,23 +62,23 @@ struct PyTLFEANewtonCoupler {
     /// @param newton_solver  A Newton solver instance, e.g. newton.solvers.SolverXPBD
     ///                       (or None to skip Newton).
     /// @param dt             Newton integration time step [s].
-    void initialize(const std::string& tlfea_config,
+    void Initialize(const std::string& tlfea_config,
                     pybind11::object newton_model_in,
                     pybind11::object newton_solver_in,
                     double dt);
 
     /// @brief Advance one co-simulation step (TLFEA + data exchange + Newton).
-    void step();
+    void Step();
 
     /// @brief Finalize both solvers and release all resources.
-    void finalize();
+    void Finalize();
 
     /// @brief Return deformed positions of all TLFEA simulation nodes.
     ///
     /// Primary coupling output: the Python layer reads these positions after
     /// every TLFEA step and forwards them to Newton (e.g. as collision geometry
     /// or as rigid-body anchor points).
-    std::vector<std::array<double, 3>> get_node_positions() const;
+    std::vector<std::array<double, 3>> GetNodePositions() const;
 
     /// @brief Apply external forces to TLFEA simulation nodes (e.g. from Newton).
     ///
@@ -86,5 +86,5 @@ struct PyTLFEANewtonCoupler {
     /// step to feed contact or body forces back into TLFEA before the next advance.
     ///
     /// @param forces  One {fx, fy, fz} entry per simulation node.
-    void set_node_forces(const std::vector<std::array<double, 3>>& forces);
+    void SetNodeForces(const std::vector<std::array<double, 3>>& forces);
 };
