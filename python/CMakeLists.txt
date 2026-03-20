@@ -33,21 +33,28 @@ target_link_libraries(mophi_core
         mophi_couplers
 )
 
-# TLFEADEMCoupler.h is in src/couplers/ — needed by the binding file.
-target_include_directories(mophi_core
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/src/couplers"
-)
-
-# When the TLFEA + DEM co-simulation solver has been compiled, enable its
-# Python binding via a compile-time definition.
+# TLFEADEMCoupler.h is in src/couplers/tlfea_dem/ — needed by the binding file.
 if(MOPHI_BUILD_TLFEA_DEM)
+    target_include_directories(mophi_core
+        PRIVATE
+            "${CMAKE_SOURCE_DIR}/src/couplers/tlfea_dem"
+    )
+    # Enable the TLFEADEMCoupler Python binding via a compile-time definition.
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_TLFEA_DEM_COUPLER)
 endif()
 
-# When the TLFEA + Newton co-simulation coupler has been compiled, enable its
-# Python binding via a compile-time definition.
+# PyTLFEANewtonCoupler.h and PyTLFEANewtonCoupler.cpp are in
+# src/couplers/tlfea_newton/.  The .cpp must be compiled directly into
+# mophi_core (not as a standalone static library) because it includes
+# pybind11 types that are only available in the pybind11 module build context.
+# The include directory and link requirements are propagated via the
+# mophi_coupler_tlfea_newton INTERFACE target (→ mophi_couplers → mophi_core).
 if(MOPHI_BUILD_TLFEA_NEWTON)
+    target_sources(mophi_core
+        PRIVATE
+            "${CMAKE_SOURCE_DIR}/src/couplers/tlfea_newton/PyTLFEANewtonCoupler.cpp"
+    )
+    # Enable the TLFEANewtonCoupler Python binding via a compile-time definition.
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_TLFEA_NEWTON_COUPLER)
 endif()
 

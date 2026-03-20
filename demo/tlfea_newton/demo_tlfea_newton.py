@@ -1,10 +1,16 @@
 """demo/tlfea_newton/demo_tlfea_newton.py
 
-Demonstrates TLFEA's FEA solver running alongside a Newton physics session.
+Demonstrates the TLFEA + Newton co-simulation via MoPhi's TLFEANewtonCoupler.
 
-TLFEA is accessed through MoPhi's Python bindings (TLFEANewtonCoupler).
-Newton is a pure Python GPU-accelerated physics engine (built on NVIDIA Warp)
-and is imported directly — no C++ linking is needed.
+Both solvers are managed entirely through the coupler:
+  • TLFEANewtonCoupler.initialize() accepts the Newton model and solver directly.
+  • TLFEANewtonCoupler.step() advances TLFEA, exchanges coupling data (TLFEA node
+    positions → Newton geometry; Newton forces → TLFEA loads), and advances Newton —
+    all in one call.
+  • TLFEANewtonCoupler.finalize() tears down both solvers.
+
+The demo script only builds the Newton model (describing the rigid-body physics scene)
+and then delegates all time-stepping to the coupler.
 
 Prerequisites
 -------------
@@ -14,7 +20,7 @@ Prerequisites
 
 Running
 -------
-From the MoPhi build tree (after `cmake --build`):
+From the MoPhi build tree (after ``cmake --build``):
 
     python demo/tlfea_newton/demo_tlfea_newton.py
 
@@ -53,16 +59,12 @@ except ImportError:
           "The TLFEA side will still be demonstrated;\n"
           "         install Newton with:  pip install newton")
 
-# ─── 3. Instantiate TLFEA via MoPhi ──────────────────────────────────────────
+# ─── 3. Build the Newton scene (if Newton is available) ───────────────────────
 print("=== MoPhi TLFEA + Newton co-simulation demo ===\n")
 
-coupler = mophi.TLFEANewtonCoupler()
+newton_model = None
+newton_solver = None
 
-print("[TLFEA] Initializing TLFEANewtonCoupler ...")
-coupler.initialize()
-print("[TLFEA] TLFEANewtonCoupler initialized.\n")
-
-# ─── 4. Set up a minimal Newton simulation ────────────────────────────────────
 if _newton_available:
     print("[Newton] Setting up a simple double-pendulum simulation ...")
 
@@ -97,49 +99,38 @@ if _newton_available:
     builder.add_articulation([j0, j1], label="pendulum")
     builder.add_ground_plane()
 
-    model = builder.finalize()
-    state_0 = model.state()
-    state_1 = model.state()
-    control = model.control()
+    newton_model = builder.finalize()
+    newton_solver = newton.solvers.SolverXPBD(newton_model)
 
-    # Evaluate forward kinematics once to populate initial state.
-    newton.eval_fk(model, model.joint_q, model.joint_qd, state_0)
+    print(f"[Newton] Double-pendulum model built ({newton_model.body_count} bodies).\n")
 
-    # Broad-phase collision contacts used by the solver.
-    contacts = model.contacts()
+# ─── 4. Initialize the coupler (passes Newton objects in) ────────────────────
+coupler = mophi.TLFEANewtonCoupler()
 
-    # Use the XPBD solver (the default solver in Newton's own examples).
-    newton_solver = newton.solvers.SolverXPBD(model)
-
-    sim_dt = 1.0 / 1000.0  # 1 ms time step
-    print(f"[Newton] Double-pendulum model built ({model.body_count} bodies).\n")
+print("[Coupler] Initializing TLFEANewtonCoupler ...")
+coupler.initialize(
+    newton_model=newton_model,
+    newton_solver=newton_solver,
+    sim_dt=1.0 / 1000.0,
+)
+print("[Coupler] TLFEANewtonCoupler initialized.\n")
 
 # ─── 5. Co-simulation loop ────────────────────────────────────────────────────
 num_steps = 5
 print(f"Running {num_steps} co-simulation step(s) ...\n")
 
 for i in range(num_steps):
-    step_num = i + 1
-
-    # ── TLFEA step ────────────────────────────────────────────────────────────
+    # A single coupler.step() call advances TLFEA, exchanges coupling data
+    # (TLFEA node positions → Newton; Newton forces → TLFEA), and advances Newton.
     coupler.step()
-    print(f"  step {step_num}/{num_steps}  [TLFEA] advanced one FEA step")
+    print(f"  step {i + 1}/{num_steps}  [Coupler] advanced co-simulation step")
 
-    # ── Newton step ───────────────────────────────────────────────────────────
-    if _newton_available:
-        state_0.clear_forces()
-        model.collide(state_0, contacts)
-        newton_solver.step(state_0, state_1, control, contacts, sim_dt)
-        # Swap states for next iteration.
-        state_0, state_1 = state_1, state_0
-        print(f"  step {step_num}/{num_steps}  [Newton] advanced one physics step (dt={sim_dt:.4f} s)")
-
-    print()
+print()
 
 # ─── 6. Finalize ──────────────────────────────────────────────────────────────
-print("[TLFEA] Finalizing TLFEANewtonCoupler ...")
+print("[Coupler] Finalizing TLFEANewtonCoupler ...")
 coupler.finalize()
-print("[TLFEA] TLFEANewtonCoupler finalized.\n")
+print("[Coupler] TLFEANewtonCoupler finalized.\n")
 
 print("Demo completed successfully.")
 if _newton_available:
