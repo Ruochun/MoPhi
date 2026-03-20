@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(MOPHI_FETCH_TLFEA     "Download/update the TLFEA external project"     OFF)
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
 option(MOPHI_FETCH_NEWTON    "Install the Newton Python package (pip install newton)" OFF)
+option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install xlb)"       OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: co-simulation solvers to build
@@ -27,6 +28,7 @@ option(MOPHI_FETCH_NEWTON    "Install the Newton Python package (pip install new
 # ─────────────────────────────────────────────────────────────────────────────
 option(MOPHI_BUILD_TLFEA_DEM    "Build the TLFEA + DEM-Engine co-simulation solver" OFF)
 option(MOPHI_BUILD_TLFEA_NEWTON "Build the TLFEA + Newton co-simulation coupler"     OFF)
+option(MOPHI_BUILD_NEWTON_XLB_DEM "Build the Newton + XLB + DEM-Engine three-way co-simulation coupler" OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: Python bindings

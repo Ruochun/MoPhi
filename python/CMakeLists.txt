@@ -58,6 +58,21 @@ if(MOPHI_BUILD_TLFEA_NEWTON)
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_TLFEA_NEWTON_COUPLER)
 endif()
 
+# PyNewtonXLBDEMCoupler.h and PyNewtonXLBDEMCoupler.cpp are in
+# src/couplers/newton_xlb_dem/.  The .cpp must be compiled directly into
+# mophi_core (not as a standalone static library) because it includes
+# pybind11 types that are only available in the pybind11 module build context.
+# The include directory and link requirements are propagated via the
+# mophi_coupler_newton_xlb_dem INTERFACE target (→ mophi_couplers → mophi_core).
+if(MOPHI_BUILD_NEWTON_XLB_DEM)
+    target_sources(mophi_core
+        PRIVATE
+            "${CMAKE_SOURCE_DIR}/src/couplers/newton_xlb_dem/PyNewtonXLBDEMCoupler.cpp"
+    )
+    # Enable the NewtonXLBDEMCoupler Python binding via a compile-time definition.
+    target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_NEWTON_XLB_DEM_COUPLER)
+endif()
+
 # Place the compiled .so next to the Python package so the package __init__.py
 # can import it with `from .mophi_core import ...`.
 set_target_properties(mophi_core PROPERTIES

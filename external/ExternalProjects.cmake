@@ -59,3 +59,16 @@ mophi_register_external(
     URL  "https://github.com/newton-physics/newton"
     TAG  "main"
 )
+
+# XLB (jax-Lattice-Boltzmann) is a pure Python LBM fluid solver (GPU-accelerated
+# via JAX).  It has no CMake build system and carries no C++ library to link
+# against.  When MOPHI_FETCH_XLB=ON, XLB is installed as a Python package via
+# pip rather than being compiled by ExternalProject_Add.  The
+# mophi_register_external entry records its URL for documentation and summary
+# purposes only; the actual installation is handled separately in
+# external/CMakeLists.txt.
+mophi_register_external(
+    NAME XLB
+    URL  "https://github.com/Autodesk/XLB"
+    TAG  "main"
+)

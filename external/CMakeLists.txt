@@ -80,6 +80,53 @@ else()
     endif()
 endif()
 
+# ── XLB (Python package) ──────────────────────────────────────────────────────
+# XLB (jax-Lattice-Boltzmann) is a pure Python LBM solver — it has no CMake
+# build system and cannot be handled with mophi_fetch_external.  When
+# MOPHI_FETCH_XLB=ON, MoPhi installs XLB via pip at configure time.
+if(MOPHI_FETCH_XLB)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    message(STATUS "MoPhi: Installing XLB Python package via pip ...")
+    execute_process(
+        COMMAND           ${Python3_EXECUTABLE} -m pip install xlb
+        RESULT_VARIABLE   _xlb_install_result
+        OUTPUT_VARIABLE   _xlb_install_output
+        ERROR_VARIABLE    _xlb_install_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_STRIP_TRAILING_WHITESPACE
+    )
+    if(_xlb_install_result EQUAL 0)
+        message(STATUS "MoPhi: XLB Python package installed successfully")
+        set(MOPHI_EXTERNAL_XLB_AVAILABLE TRUE
+            CACHE INTERNAL "XLB Python package available")
+    else()
+        message(WARNING
+            "MoPhi: pip install xlb failed (exit code ${_xlb_install_result}):\n"
+            "${_xlb_install_error}\n"
+            "XLB will not be available for the demo.  "
+            "Install it manually with:  pip install xlb")
+    endif()
+else()
+    # Even without MOPHI_FETCH_XLB, detect a pre-installed XLB so the
+    # summary line below reports the correct status.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_FOUND)
+        execute_process(
+            COMMAND         ${Python3_EXECUTABLE} -c "import xlb"
+            RESULT_VARIABLE _xlb_check_result
+            OUTPUT_QUIET
+            ERROR_QUIET
+        )
+        if(_xlb_check_result EQUAL 0)
+            set(MOPHI_EXTERNAL_XLB_AVAILABLE TRUE
+                CACHE INTERNAL "XLB Python package available")
+        else()
+            set(MOPHI_EXTERNAL_XLB_AVAILABLE FALSE
+                CACHE INTERNAL "XLB Python package not available")
+        endif()
+    endif()
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
