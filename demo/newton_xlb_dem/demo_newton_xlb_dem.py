@@ -115,12 +115,26 @@ torso = builder.add_link()
 builder.add_shape_box(torso, hx=0.3, hy=0.15, hz=0.2)
 
 # Free joint: lets the torso translate and rotate freely relative to the world.
-# The initial position places the robot 0.55 m above the ground so the legs
-# clear the floor at the default pose.
+#
+# Initial height budget (all joints at 0 angle → legs straight down).
+# child_xform y=+0.12 means the joint frame is 0.12 m *above* the body origin,
+# so each child body's origin sits 0.12 m *below* its incoming joint.
+#
+#   Torso origin                              =  h
+#   − hip parent_xform y offset (oy = −0.12) = −0.12  →  hip joint at h−0.12
+#   − upper-leg child_xform y (0.12 above)   = −0.12  →  upper-leg origin at h−0.24
+#   − knee parent_xform y (−0.12 below)      = −0.12  →  knee joint at h−0.36
+#   − lower-leg child_xform y (0.12 above)   = −0.12  →  lower-leg origin at h−0.48
+#   − lower-leg shape half-height (hy=0.12)  = −0.12  →  foot bottom at h−0.60
+#
+# Minimum torso height for feet to just touch y=0:  h = 0.60 m.
+# We add 5 cm of clearance (h = 0.65 m) so the robot falls gently onto the
+# floor under gravity instead of starting in ground penetration, which would
+# trigger a large corrective impulse and launch the robot skyward.
 torso_joint = builder.add_joint_free(
     parent=-1,
     child=torso,
-    parent_xform=wp.transform(p=wp.vec3(0.0, 0.55, 0.0), q=wp.quat_identity()),
+    parent_xform=wp.transform(p=wp.vec3(0.0, 0.65, 0.0), q=wp.quat_identity()),
     child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
 )
 
