@@ -1,9 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # src/couplers/tlfea_newton/CMakeLists.txt
 #
-# Builds the TLFEA + Newton co-simulation coupler library.
+# Registers the TLFEA + Newton co-simulation coupler.
 # This file is only included when MOPHI_BUILD_TLFEA_NEWTON=ON (guarded in the
 # parent CMakeLists.txt).
+#
+# There is no static library to build here: the coupler logic lives in
+# PyTLFEANewtonCoupler.{h,cpp} and is compiled directly into the mophi_core
+# Python extension module by python/CMakeLists.txt.  This CMakeLists.txt
+# only performs prerequisite checks and creates an INTERFACE target that
+# propagates the required link and include requirements to mophi_core.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # TLFEA must be registered (fetched) at configure time.
@@ -37,32 +43,20 @@ if(NOT Eigen3_FOUND)
 endif()
 
 # Newton is a pure Python package — no C++ linking is required.
-# PyTLFEANewtonCoupler (the Python-facing wrapper that bridges TLFEA and Newton)
-# lives in PyTLFEANewtonCoupler.h alongside this directory and is compiled as
-# part of the mophi_core Python extension module.
-# Users must have Newton installed: pip install newton, or enable
-# -DMOPHI_FETCH_NEWTON=ON to have MoPhi install it automatically.
+# PyTLFEANewtonCoupler.cpp is compiled directly into the mophi_core Python
+# extension module (see python/CMakeLists.txt).
 
-add_library(mophi_coupler_tlfea_newton STATIC
-    TLFEANewtonCoupler.cpp
-)
-
-# Required when the static library is linked into a shared library
-# (e.g., the Python extension module).
-set_target_properties(mophi_coupler_tlfea_newton PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-target_compile_features(mophi_coupler_tlfea_newton PUBLIC cxx_std_17)
+# ── INTERFACE target ──────────────────────────────────────────────────────────
+# Carries the TLFEA + CUDA link and include requirements to mophi_core via the
+# existing mophi_couplers INTERFACE chain.  No object files are produced here.
+add_library(mophi_coupler_tlfea_newton INTERFACE)
 
 target_include_directories(mophi_coupler_tlfea_newton
-    PUBLIC
+    INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include/mophi/couplers>
 )
 
-# PUBLIC (not PRIVATE) is required here because mophi_coupler_tlfea_newton is
-# a static library: any executable or shared library that links against it must
-# also receive the external libraries on its own link line.
-#
 # CUDA::cudart provides the CUDA runtime (cudaMalloc, cudaMemcpy, …) that
 # TLFEA's static library depends on, and also makes cuda_runtime.h available
 # on the include path so that TLFEA's __host__/__device__ annotated headers
@@ -71,7 +65,7 @@ target_include_directories(mophi_coupler_tlfea_newton
 # CUDA::nvrtc is NOT required here — that is specific to DEM-Engine's JIT
 # kernel compilation and is not used by TLFEA.
 target_link_libraries(mophi_coupler_tlfea_newton
-    PUBLIC
+    INTERFACE
         mophi_essentials
         mophi_ext_TLFEA
         Eigen3::Eigen

@@ -342,18 +342,53 @@ Create a new directory `src/couplers/<name>/` and add these files:
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` for all output — do **not** use `std::cout` directly
 - Destructor calls `finalize()` when `impl_->initialized` is `true`
 
-If the new solver requires a Python-side component (like Newton), add a
-`PyMyCoupler.h` in the same directory.  This header-only file uses pybind11
-types (`pybind11::object`) to bridge the C++ coupler with the Python library.
-It is compiled as part of `mophi_core` (not as a standalone library).
+If the new solver requires a Python-side component (like Newton), use a **Python-only coupler** pattern instead of the C++ coupler pattern above — see the next section.
+
+After writing source files, **run `.format_all`** before committing.
+
+### 2b. Python-only co-simulation coupler (one solver has no C++ ABI)
+
+When one of the two solvers is a pure Python package (no C++ ABI), there is no
+need for a separate C++ coupler class.  Instead, write a single
+`PyMyCoupler.h` + `PyMyCoupler.cpp` pair directly in `src/couplers/<name>/`:
+
+`src/couplers/<name>/PyMyCoupler.h` — declares the struct with pimpl:
+
+- `#pragma once`; include only `<pybind11/pybind11.h>` and standard library headers
+- `struct TLFEAImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
+- `std::unique_ptr<TLFEAImpl> fea_;` owns the C++ solver via pimpl
+- `pybind11::object` members for the Python solver objects
+- All lifecycle methods declared (not defined inline): `initialize(...)`, `step()`, `finalize()`
+- Coupling data-exchange methods: e.g. `get_node_positions()`, `set_node_forces()`
+- Delete copy, **no** default move (pybind11 objects inhibit trivial move)
+
+`src/couplers/<name>/PyMyCoupler.cpp` — defines pimpl and implements all methods:
+
+- Include `"PyMyCoupler.h"` first, then `<core/Logger.hpp>`, then C++ solver headers
+- `struct PyMyCoupler::TLFEAImpl { std::unique_ptr<CSolverClass> solver; bool initialized{false}; ... };`
+- Constructor initializes pimpl and all `pybind11::none()` objects
+- Destructor calls `finalize()` when `fea_->initialized` is `true`
+- Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` — never `std::cout`
+
+This `.cpp` is compiled **directly into `mophi_core`** (not as a separate static
+library) via `target_sources` in `python/CMakeLists.txt`.
 
 After writing source files, **run `.format_all`** before committing.
 
 ### 3. Register the coupler in the build system
 
-Create `src/couplers/<name>/CMakeLists.txt` (see `tlfea_dem/CMakeLists.txt` as
-reference) with the `mophi_require_externals()` call, prerequisite guards, and
-the `add_library` / `target_link_libraries` block.
+Create `src/couplers/<name>/CMakeLists.txt`:
+
+- **C++ coupler** (see `tlfea_dem/CMakeLists.txt`): build a `STATIC` library from
+  `MyCoupler.cpp`, link it `PUBLIC` against the required externals, and add it to
+  `mophi_couplers INTERFACE`.
+- **Python-only coupler** (see `tlfea_newton/CMakeLists.txt`): build an `INTERFACE`
+  library (no object files — just carries the link and include requirements), add it
+  to `mophi_couplers INTERFACE`.  The `.cpp` implementation is compiled into
+  `mophi_core` by `python/CMakeLists.txt`.
+
+In both cases, call `mophi_require_externals()` and emit `FATAL_ERROR` messages for
+missing system dependencies (CUDA, Eigen, …) at the top of the file.
 
 In `src/couplers/CMakeLists.txt`, add an `add_subdirectory` call:
 
@@ -365,30 +400,46 @@ endif()
 
 ### 4. Expose the coupler in Python bindings
 
-In `python/bindings/mophi_bindings.cpp`, include the coupler header (and
-`PyMyCoupler.h` if the coupler has a Python-facing wrapper):
+In `python/bindings/mophi_bindings.cpp`, include the coupler header:
 
 ```cpp
 #ifdef MOPHI_HAS_MY_COUPLER
-    #include "MyCoupler.h"
-    // #include "PyMyCoupler.h"   // if a Python-facing wrapper exists
+    #include "MyCoupler.h"       // C++ coupler  — OR —
+    #include "PyMyCoupler.h"     // Python-only coupler
 #endif
 
 // Inside PYBIND11_MODULE:
 #ifdef MOPHI_HAS_MY_COUPLER
+    // C++ coupler:
     py::class_<mophi::MyCoupler>(m, "MyCoupler", "…docstring…")
         .def(py::init<>())
         .def("initialize", &mophi::MyCoupler::initialize, /* py::arg ... */)
         .def("step",       &mophi::MyCoupler::step)
         .def("finalize",   &mophi::MyCoupler::finalize);
+
+    // Python-only coupler (PyMyCoupler lives in global namespace):
+    py::class_<PyMyCoupler>(m, "MyCoupler", "…docstring…")
+        .def(py::init<>())
+        .def("initialize", &PyMyCoupler::initialize, /* py::arg ... */)
+        .def("step",       &PyMyCoupler::step)
+        .def("finalize",   &PyMyCoupler::finalize);
 #endif
 ```
 
-In `python/CMakeLists.txt`, add the include path and compile definition together:
+In `python/CMakeLists.txt`:
+
+- **C++ coupler**: add `target_include_directories` + `target_compile_definitions`.
+- **Python-only coupler**: add the `.cpp` source and compile definition (the include
+  directory is already propagated via the INTERFACE CMake target):
 
 ```cmake
 if(MOPHI_BUILD_MY_COUPLER)
+    # C++ coupler:
     target_include_directories(mophi_core PRIVATE "${CMAKE_SOURCE_DIR}/src/couplers/<name>")
+    target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_MY_COUPLER)
+
+    # Python-only coupler (no explicit include_directories — INTERFACE target propagates them):
+    target_sources(mophi_core PRIVATE "${CMAKE_SOURCE_DIR}/src/couplers/<name>/PyMyCoupler.cpp")
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_MY_COUPLER)
 endif()
 ```
@@ -435,13 +486,14 @@ Update `README.md` to document:
 - [ ] `option(MOPHI_FETCH_*)` and `option(MOPHI_BUILD_*)` in root `CMakeLists.txt`
 - [ ] `find_package(... QUIET)` for any new system deps in root `CMakeLists.txt`
 - [ ] Create `src/couplers/<name>/` directory
-- [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, lifecycle methods, delete copy / default move
-- [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle methods implemented
-- [ ] `PyNewCoupler.h` (optional) — Python-facing wrapper when one solver is Python-only
-- [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards, `add_library`, `target_link_libraries`
+- [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, lifecycle methods, delete copy / default move *(C++ coupler)*
+- [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle methods implemented *(C++ coupler)*
+- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl `struct TLFEAImpl` + `pybind11::object` members *(Python-only coupler)*
+- [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including TLFEA lifecycle *(Python-only coupler)*
+- [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards; **STATIC** lib for C++ coupler or **INTERFACE** lib for Python-only coupler
 - [ ] `if(MOPHI_BUILD_*) add_subdirectory(<name>) endif()` in `src/couplers/CMakeLists.txt`
 - [ ] `#ifdef MOPHI_HAS_*` binding block in `python/bindings/mophi_bindings.cpp`
-- [ ] `target_include_directories` and `target_compile_definitions` for `MOPHI_HAS_*` in `python/CMakeLists.txt`
+- [ ] `target_compile_definitions` + `target_include_directories` (C++ coupler) **or** `target_sources` + `target_compile_definitions` (Python-only coupler) in `python/CMakeLists.txt`
 - [ ] `try/except ImportError` in `python/mophi/__init__.py`
 - [ ] Demo executable under `demo/<name>/`
 - [ ] `README.md` updated
