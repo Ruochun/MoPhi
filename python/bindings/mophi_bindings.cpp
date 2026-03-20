@@ -39,12 +39,12 @@ PYBIND11_MODULE(mophi_core, m) {
                                        "Impl holds deme::DEMSolver and tlfea::SolverBase directly; no wrapper\n"
                                        "layer sits between this coupler and the solver APIs.")
         .def(py::init<>())
-        .def("initialize", &mophi::TLFEADEMCoupler::initialize, py::arg("tlfea_config") = "",
+        .def("initialize", &mophi::TLFEADEMCoupler::Initialize, py::arg("tlfea_config") = "",
              py::arg("dem_config") = "", py::arg("num_gpus") = 1u,
              "Initialize both solvers.  num_gpus controls how many GPUs "
              "are handed to the DEM-Engine solver.")
-        .def("step", &mophi::TLFEADEMCoupler::step, "Advance both solvers by one co-simulation time step.")
-        .def("finalize", &mophi::TLFEADEMCoupler::finalize, "Finalize both solvers and release all resources.");
+        .def("step", &mophi::TLFEADEMCoupler::Step, "Advance both solvers by one co-simulation time step.")
+        .def("finalize", &mophi::TLFEADEMCoupler::Finalize, "Finalize both solvers and release all resources.");
 #endif
 
 #ifdef MOPHI_HAS_TLFEA_NEWTON_COUPLER
@@ -73,7 +73,7 @@ PYBIND11_MODULE(mophi_core, m) {
                                      "        coupler.step()  # drives TLFEA + Newton + data exchange\n"
                                      "    coupler.finalize()")
         .def(py::init<>())
-        .def("initialize", &PyTLFEANewtonCoupler::initialize, py::arg("tlfea_config") = "",
+        .def("initialize", &PyTLFEANewtonCoupler::Initialize, py::arg("tlfea_config") = "",
              py::arg("newton_model") = py::none(), py::arg("newton_solver") = py::none(),
              py::arg("sim_dt") = 1.0 / 1000.0,
              "Initialize TLFEA and (optionally) bind a Newton model and solver.\n\n"
@@ -83,12 +83,12 @@ PYBIND11_MODULE(mophi_core, m) {
              "evaluates initial forward kinematics.  sim_dt sets the Newton integration\n"
              "time step in seconds (default 1 ms).\n\n"
              "Omit newton_model / newton_solver (or pass None) to run TLFEA only.")
-        .def("step", &PyTLFEANewtonCoupler::step,
+        .def("step", &PyTLFEANewtonCoupler::Step,
              "Advance one co-simulation step.\n\n"
              "Sequence: advance TLFEA → extract TLFEA node positions → advance Newton\n"
              "(clear forces, collide, step, swap states) → (TODO) apply Newton forces\n"
              "to TLFEA.  If no Newton solver was provided, only TLFEA is advanced.")
-        .def("finalize", &PyTLFEANewtonCoupler::finalize,
+        .def("finalize", &PyTLFEANewtonCoupler::Finalize,
              "Finalize both solvers and release all resources including Newton references.");
 #endif
 }

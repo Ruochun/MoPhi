@@ -87,17 +87,17 @@ coupler's own public header.
 
 [pimpl]: https://en.cppreference.com/w/cpp/language/pimpl
 
-### 3. Lifecycle: initialize / step / finalize
+### 3. Lifecycle: Initialize / Step / Finalize
 
 Every coupler must implement exactly three public lifecycle methods:
 
 | Method | Responsibility |
 |--------|---------------|
-| `initialize(...)` | Create solver objects, load configs, allocate GPU/memory resources |
-| `step()` | Advance both solvers by one co-simulation time step and exchange coupling data |
-| `finalize()` | Tear down solvers, release all resources |
+| `Initialize(...)` | Create solver objects, load configs, allocate GPU/memory resources |
+| `Step()` | Advance both solvers by one co-simulation time step and exchange coupling data |
+| `Finalize()` | Tear down solvers, release all resources |
 
-The destructor calls `finalize()` automatically when `initialized` is `true`.
+The destructor calls `Finalize()` automatically when `initialized` is `true`.
 
 ### 4. Non-copyable, movable coupler classes
 
@@ -168,6 +168,7 @@ mophi::Logger::GetInstance().SetVerbosity(mophi::VERBOSITY_INFO);
 | Indentation | 4 spaces (enforced by `.clang-format`) |
 | Braces | Chromium style (`BasedOnStyle: Chromium` in `.clang-format`) |
 | Logging | Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` from `<core/Logger.hpp>` — do **not** use `std::cout` directly |
+| Method naming | Public methods use **PascalCase** (e.g. `Initialize`, `Step`, `Finalize`); private methods use **snake_case** (e.g. `build_mesh`) |
 
 ### Code formatting
 
@@ -331,7 +332,7 @@ Create a new directory `src/couplers/<name>/` and add these files:
 
 - `#pragma once`
 - Doxygen `///` class comment that names the external solvers owned and the pimpl members
-- Public lifecycle methods: `initialize(...)`, `step()`, `finalize()`
+- Public lifecycle methods: `Initialize(...)`, `Step()`, `Finalize()`
 - Private `struct Impl; std::unique_ptr<Impl> impl_;`
 - Delete copy, default move
 
@@ -340,7 +341,7 @@ Create a new directory `src/couplers/<name>/` and add these files:
 - Include the coupler header first, then `<core/Logger.hpp>`, then external solver headers
 - Implement `Impl` with `std::unique_ptr<ExternalSolverClass>` members
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` for all output — do **not** use `std::cout` directly
-- Destructor calls `finalize()` when `impl_->initialized` is `true`
+- Destructor calls `Finalize()` when `impl_->initialized` is `true`
 
 If the new solver requires a Python-side component (like Newton), use a **Python-only coupler** pattern instead of the C++ coupler pattern above — see the next section.
 
@@ -358,8 +359,8 @@ need for a separate C++ coupler class.  Instead, write a single
 - `struct TLFEAImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
 - `std::unique_ptr<TLFEAImpl> fea_;` owns the C++ solver via pimpl
 - `pybind11::object` members for the Python solver objects
-- All lifecycle methods declared (not defined inline): `initialize(...)`, `step()`, `finalize()`
-- Coupling data-exchange methods: e.g. `get_node_positions()`, `set_node_forces()`
+- All lifecycle methods declared (not defined inline): `Initialize(...)`, `Step()`, `Finalize()`
+- Coupling data-exchange methods: e.g. `GetNodePositions()`, `SetNodeForces()`
 - Delete copy, **no** default move (pybind11 objects inhibit trivial move)
 
 `src/couplers/<name>/PyMyCoupler.cpp` — defines pimpl and implements all methods:
@@ -367,7 +368,7 @@ need for a separate C++ coupler class.  Instead, write a single
 - Include `"PyMyCoupler.h"` first, then `<core/Logger.hpp>`, then C++ solver headers
 - `struct PyMyCoupler::TLFEAImpl { std::unique_ptr<CSolverClass> solver; bool initialized{false}; ... };`
 - Constructor initializes pimpl and all `pybind11::none()` objects
-- Destructor calls `finalize()` when `fea_->initialized` is `true`
+- Destructor calls `Finalize()` when `fea_->initialized` is `true`
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` — never `std::cout`
 
 This `.cpp` is compiled **directly into `mophi_core`** (not as a separate static
@@ -413,16 +414,16 @@ In `python/bindings/mophi_bindings.cpp`, include the coupler header:
     // C++ coupler:
     py::class_<mophi::MyCoupler>(m, "MyCoupler", "…docstring…")
         .def(py::init<>())
-        .def("initialize", &mophi::MyCoupler::initialize, /* py::arg ... */)
-        .def("step",       &mophi::MyCoupler::step)
-        .def("finalize",   &mophi::MyCoupler::finalize);
+        .def("initialize", &mophi::MyCoupler::Initialize, /* py::arg ... */)
+        .def("step",       &mophi::MyCoupler::Step)
+        .def("finalize",   &mophi::MyCoupler::Finalize);
 
     // Python-only coupler (PyMyCoupler lives in global namespace):
     py::class_<PyMyCoupler>(m, "MyCoupler", "…docstring…")
         .def(py::init<>())
-        .def("initialize", &PyMyCoupler::initialize, /* py::arg ... */)
-        .def("step",       &PyMyCoupler::step)
-        .def("finalize",   &PyMyCoupler::finalize);
+        .def("initialize", &PyMyCoupler::Initialize, /* py::arg ... */)
+        .def("step",       &PyMyCoupler::Step)
+        .def("finalize",   &PyMyCoupler::Finalize);
 #endif
 ```
 

@@ -12,7 +12,7 @@
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
 // FEASolver is TLFEA's top-level simulation driver that manages everything in
 // the package.  TLFEAImpl below owns a FEASolver instance created in
-// initialize() and driven in step() via its Solve() method.
+// Initialize() and driven in Step() via its Solve() method.
 #include <tlfea/FEASolver.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,8 +20,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct PyTLFEANewtonCoupler::TLFEAImpl {
-    /// TLFEA's top-level simulation driver.  Created in initialize() and driven
-    /// in step() via its Solve() method.
+    /// TLFEA's top-level simulation driver.  Created in Initialize() and driven
+    /// in Step() via its Solve() method.
     std::unique_ptr<tlfea::FEASolver> fea;
 
     bool initialized{false};
@@ -43,13 +43,13 @@ PyTLFEANewtonCoupler::PyTLFEANewtonCoupler()
 
 PyTLFEANewtonCoupler::~PyTLFEANewtonCoupler() {
     if (fea_ && fea_->initialized) {
-        finalize();
+        Finalize();
     }
 }
 
 // ── Public interface ───────────────────────────────────────────────────────────
 
-void PyTLFEANewtonCoupler::initialize(const std::string& tlfea_config,
+void PyTLFEANewtonCoupler::Initialize(const std::string& tlfea_config,
                                       pybind11::object newton_model_in,
                                       pybind11::object newton_solver_in,
                                       double dt) {
@@ -87,9 +87,9 @@ void PyTLFEANewtonCoupler::initialize(const std::string& tlfea_config,
     MOPHI_INFO("PyTLFEANewtonCoupler: initialized");
 }
 
-void PyTLFEANewtonCoupler::step() {
+void PyTLFEANewtonCoupler::Step() {
     if (!fea_->initialized) {
-        MOPHI_ERROR("PyTLFEANewtonCoupler::step() called before initialize().");
+        MOPHI_ERROR("PyTLFEANewtonCoupler::Step() called before Initialize().");
     }
 
     // ── 1. Advance TLFEA ──────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ void PyTLFEANewtonCoupler::step() {
     }
 
     // ── 2. Extract TLFEA node positions (coupling output: TLFEA → Newton) ─────
-    // auto tlfea_xyz = get_node_positions();
+    // auto tlfea_xyz = GetNodePositions();
     // TODO: convert tlfea_xyz to a warp array and pass to Newton to update
     // collision geometry or rigid-body anchor points.
 
@@ -117,10 +117,10 @@ void PyTLFEANewtonCoupler::step() {
     // TODO: read contact / body forces from newton_state_0 (the just-computed
     // state after the swap) and apply them to TLFEA:
     //   std::vector<std::array<double,3>> forces = ...;  // from Newton state
-    //   set_node_forces(forces);
+    //   SetNodeForces(forces);
 }
 
-void PyTLFEANewtonCoupler::finalize() {
+void PyTLFEANewtonCoupler::Finalize() {
     MOPHI_INFO("PyTLFEANewtonCoupler: finalizing ...");
     fea_->fea.reset();
     fea_->initialized = false;
@@ -135,7 +135,7 @@ void PyTLFEANewtonCoupler::finalize() {
     MOPHI_INFO("PyTLFEANewtonCoupler: finalized");
 }
 
-std::vector<std::array<double, 3>> PyTLFEANewtonCoupler::get_node_positions() const {
+std::vector<std::array<double, 3>> PyTLFEANewtonCoupler::GetNodePositions() const {
     if (!fea_->initialized) {
         return {};
     }
@@ -146,9 +146,9 @@ std::vector<std::array<double, 3>> PyTLFEANewtonCoupler::get_node_positions() co
     return {};
 }
 
-void PyTLFEANewtonCoupler::set_node_forces(const std::vector<std::array<double, 3>>& forces) {
+void PyTLFEANewtonCoupler::SetNodeForces(const std::vector<std::array<double, 3>>& forces) {
     if (!fea_->initialized) {
-        MOPHI_ERROR("PyTLFEANewtonCoupler::set_node_forces() called before initialize().");
+        MOPHI_ERROR("PyTLFEANewtonCoupler::SetNodeForces() called before Initialize().");
     }
     if (forces.empty()) {
         return;
