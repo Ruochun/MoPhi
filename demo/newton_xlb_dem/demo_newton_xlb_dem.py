@@ -186,10 +186,23 @@ builder.add_urdf(
 
 # Enlarge foot collision spheres for walking stability on the ground plane.
 # Doubling the URDF's small sphere radii prevents the robot from stumbling.
+# While scanning, also record each sphere's body index and local offset so that
+# we can build the foot-tip contact proxy descriptors after finalization.
+# Maps builder body-index → {"local_offset": [x,y,z], "sphere_radius": float}
+builder_foot_spheres: dict = {}
 for i in range(len(builder.shape_type)):
     if builder.shape_type[i] == GeoType.SPHERE:
         r = builder.shape_scale[i][0]
         builder.shape_scale[i] = (r * 2.0, 0.0, 0.0)
+        # shape_transform[i].p is the sphere-centre offset in the body's local frame.
+        local_p = builder.shape_transform[i].p
+        builder_foot_spheres[builder.shape_body[i]] = {
+            "local_offset": [float(local_p[0]), float(local_p[1]), float(local_p[2])],
+            "sphere_radius": float(r * 2.0),
+        }
+
+# Save builder body-name→index mapping before finalize() is called.
+builder_body_name_to_idx = {lbl.split("/")[-1]: i for i, lbl in enumerate(builder.body_label)}
 
 # Flat ground plane only — no procedural terrain.
 builder.add_ground_plane()
@@ -239,6 +252,55 @@ print(
     f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, "
     f"{newton_model.joint_count} joints.\n"
 )
+
+# ─── 7b. Identify foot-tip contact proxies ───────────────────────────────────
+# ANYmal C has a GeoType.SPHERE collision shape at the distal end of each SHANK
+# link.  These spheres are the ground-contact proxies and will serve as coupling
+# surfaces for DEM particles and XLB fluid boundaries in future co-sim work.
+#
+# Geometry representation:
+#   Newton represents each foot tip as a sphere shape attached to the SHANK body.
+#   The contact proxy is fully described by:
+#     • sphere centre in world space: body_pos + rotate(body_quat, local_offset)
+#     • sphere radius [m]
+#   This is the minimal geometry needed for both particle (DEM) contact detection
+#   and fluid (LBM) immersed-boundary coupling.
+#
+# foot_tip_descriptors — static list (4 entries, [LF, RF, LH, RH]) of dicts:
+#   "label"         : str   — short body name, e.g. "LF_SHANK"
+#   "body_idx"      : int   — row index into the body_q / body_qd arrays
+#   "local_offset"  : list  — sphere centre offset in the shank's body frame [m]
+#   "sphere_radius" : float — sphere radius [m]  (constant throughout simulation)
+#
+# foot_tip_sphere_radii — list[float], per-foot radii in [LF, RF, LH, RH] order.
+FOOT_SHANK_NAMES = ["LF_SHANK", "RF_SHANK", "LH_SHANK", "RH_SHANK"]
+foot_tip_descriptors = []
+for shank_name in FOOT_SHANK_NAMES:
+    b_idx = builder_body_name_to_idx.get(shank_name)
+    if b_idx is None:
+        raise RuntimeError(f"[FootTip] Shank body '{shank_name}' not found in builder body labels")
+    sphere_info = builder_foot_spheres.get(b_idx)
+    if sphere_info is None:
+        raise RuntimeError(f"[FootTip] No sphere shape found attached to shank body '{shank_name}'")
+    foot_tip_descriptors.append({
+        "label": shank_name,
+        "body_idx": b_idx,
+        "local_offset": sphere_info["local_offset"],
+        "sphere_radius": sphere_info["sphere_radius"],
+    })
+
+# Per-foot sphere radii are constant throughout the simulation.
+foot_tip_sphere_radii = [d["sphere_radius"] for d in foot_tip_descriptors]
+
+print("[FootTip] Leg-tip contact proxies (sphere geometry):")
+for d in foot_tip_descriptors:
+    lo = d["local_offset"]
+    print(
+        f"         {d['label']}: body_idx={d['body_idx']}, "
+        f"local_offset=[{lo[0]:.4f}, {lo[1]:.4f}, {lo[2]:.4f}] m, "
+        f"sphere_radius={d['sphere_radius']:.4f} m"
+    )
+print()
 
 # ─── 8. Build the XLB placeholder scene (if XLB is available) ─────────────────
 xlb_simulation = None
@@ -364,6 +426,54 @@ for frame in range(NUM_FRAMES):
         coupler.step()
     sim_time += FRAME_DT
 
+    # ── Extract foot-tip contact proxy poses ─────────────────────────────────
+    # Fetch all body transforms once; reuse for foot extraction and status line.
+    #
+    # foot_tip_positions : list[4 × [px, py, pz]]
+    #   World-space sphere centre for each foot, in [LF, RF, LH, RH] order [m].
+    #   Computed as:  body_pos + rotate(body_quat, local_offset)
+    #   where local_offset is the sphere-centre offset in the shank body frame.
+    #
+    # foot_tip_rotations : list[4 × [qx, qy, qz, qw]]
+    #   World-space orientation of each shank body (Warp xyzw quaternion).
+    #   Needed for asymmetric contact proxies; provided here for completeness.
+    #
+    # foot_tip_sphere_radii : list[4 × float]  (constant, defined above)
+    #   Sphere radius of each foot's contact proxy [m].
+    #
+    # TODO: pass (foot_tip_positions, foot_tip_rotations, foot_tip_sphere_radii)
+    #       into DEM-Engine and XLB once coupling logic is implemented.
+    all_transforms = coupler.get_robot_body_transforms()
+    foot_tip_positions = []
+    foot_tip_rotations = []
+    if all_transforms:
+        for d in foot_tip_descriptors:
+            t = all_transforms[d["body_idx"]]   # [px, py, pz, qx, qy, qz, qw]
+            px, py, pz = t[0], t[1], t[2]
+            qx, qy, qz, qw = t[3], t[4], t[5], t[6]
+            ox, oy, oz = d["local_offset"]
+            # Compute world-space sphere centre:
+            #   centre_world = body_pos + rotate(body_quat, local_offset)
+            #
+            # Using the Rodrigues rotation formula for rotate(q, o):
+            #   rotate(q, o) = o + 2*qw*(qv × o) + 2*(qv × (qv × o))
+            # where qv = (qx, qy, qz) and qw = scalar part.
+            # The +o term (unrotated local offset) is part of the formula itself.
+            # Combined with body_pos (p), the full world-space centre is:
+            #   centre_world = p + o + 2*qw*(qv×o) + 2*(qv×(qv×o))
+            cx = qy * oz - qz * oy        # first cross: qv × o
+            cy = qz * ox - qx * oz
+            cz = qx * oy - qy * ox
+            ccx = qy * cz - qz * cy       # second cross: qv × (qv × o)
+            ccy = qz * cx - qx * cz
+            ccz = qx * cy - qy * cx
+            foot_tip_positions.append([
+                px + ox + 2.0 * (qw * cx + ccx),
+                py + oy + 2.0 * (qw * cy + ccy),
+                pz + oz + 2.0 * (qw * cz + ccz),
+            ])
+            foot_tip_rotations.append([qx, qy, qz, qw])
+
     # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
         viewer.begin_frame(sim_time)
@@ -372,9 +482,8 @@ for frame in range(NUM_FRAMES):
 
     # ── Console status (every 25 frames) ─────────────────────────────────────
     if (frame + 1) % 25 == 0 or frame == 0:
-        transforms = coupler.get_robot_body_transforms()
-        if transforms:
-            base = transforms[0]
+        if all_transforms:
+            base = all_transforms[0]
             px, py, pz = base[0], base[1], base[2]
             qx, qy, qz, qw = base[3], base[4], base[5], base[6]
             print(
