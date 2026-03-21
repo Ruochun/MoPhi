@@ -429,6 +429,21 @@ for frame in range(NUM_FRAMES):
     # ── Extract foot-tip contact proxy poses ─────────────────────────────────
     # Fetch all body transforms once; reuse for foot extraction and status line.
     #
+    # NOTE on GPU→CPU data movement:
+    #   get_robot_body_transforms() calls body_q.numpy() internally, which
+    #   performs a synchronous GPU→CPU copy when Newton runs on a CUDA device.
+    #   This is acceptable for a demo, but in production co-simulation the copy
+    #   will become a bottleneck.
+    #
+    # TODO (GPU-native foot data): Replace get_robot_body_transforms() with a
+    #   GPU-resident path that keeps foot_tip_positions and foot_tip_rotations
+    #   as wp.array (or torch.Tensor on the GPU) so they can be fed directly
+    #   into DEM-Engine particle contact detection and XLB immersed-boundary
+    #   kernels without any CPU round-trip.  Candidate approach: expose the
+    #   body_q warp array directly and run a small warp.kernel that reads the
+    #   four shank rows + local offsets and writes world-space sphere centres
+    #   into a pre-allocated wp.array of shape (4, 3).
+    #
     # foot_tip_positions : list[4 × [px, py, pz]]
     #   World-space sphere centre for each foot, in [LF, RF, LH, RH] order [m].
     #   Computed as:  body_pos + rotate(body_quat, local_offset)
@@ -473,6 +488,14 @@ for frame in range(NUM_FRAMES):
                 pz + oz + 2.0 * (qw * cz + ccz),
             ])
             foot_tip_rotations.append([qx, qy, qz, qw])
+
+    # ── Print foot-tip positions every frame ──────────────────────────────────
+    if foot_tip_positions:
+        tip_str = "  ".join(
+            f"{d['label']}=({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})"
+            for d, p in zip(foot_tip_descriptors, foot_tip_positions)
+        )
+        print(f"[f{frame + 1:04d}] foot_tip_positions: {tip_str}")
 
     # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
