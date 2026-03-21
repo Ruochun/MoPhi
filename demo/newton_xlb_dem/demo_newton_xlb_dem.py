@@ -1,13 +1,14 @@
 """demo/newton_xlb_dem/demo_newton_xlb_dem.py
 
-Three-way co-simulation demo: Newton (walking robot) + XLB (LBM fluid) + DEM-Engine (particles).
+Three-way co-simulation demo: Newton (ANYmal C walking robot) + XLB (LBM fluid) + DEM-Engine (particles).
 
 This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
 
-  • Newton   — drives an articulated quadruped walking robot using position-based
-               dynamics (XPBD).  This is the active physics component: the robot
-               walks forward under a sinusoidal trot gait, and its spatial
-               representation (body transforms) is extracted at every step.
+  • Newton   — drives the ANYmal C quadruped walking robot using MuJoCo-based
+               physics (SolverMuJoCo) controlled by a pre-trained reinforcement
+               learning walking policy.  The robot walks forward on a flat ground
+               plane, and its spatial representation (body transforms) is extracted
+               at every step.
   • XLB      — a placeholder LBM fluid solver.  The solver is instantiated (if
                the xlb package is available) but no serious fluid physics runs
                during Step() yet.  Future work will use the robot's body transforms
@@ -20,13 +21,18 @@ Both XLB and DEM-Engine are gracefully skipped when their packages / libraries
 are not available, so the demo can run Newton-only on a CUDA machine that has
 only Newton and Warp installed.
 
+The robot setup and walking policy exactly follow Newton's
+``newton/examples/robot/example_robot_anymal_c_walk.py``.  The only difference
+is that this demo uses a flat ground plane (no procedural terrain) and wraps
+all physics inside the MoPhi three-way co-simulation coupler.
+
 Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (fetches and builds
     DEM-Engine, compiles NewtonXLBDEMCoupler, builds the mophi_core Python
     extension module).
-  • pip install newton warp-lang    (Newton rigid-body physics engine)
-  • pip install xlb                  (optional — XLB LBM solver)
+  • pip install newton warp-lang torch   (Newton rigid-body physics + PyTorch for RL policy)
+  • pip install xlb                       (optional — XLB LBM solver)
 
 Running
 -------
@@ -39,7 +45,6 @@ Or from the repository root after installing the mophi package:
     python -m demo.newton_xlb_dem.demo_newton_xlb_dem
 """
 
-import math
 import sys
 
 # ─── 1. Import MoPhi ─────────────────────────────────────────────────────────
@@ -59,18 +64,20 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
         "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# ─── 2. Import Newton + Warp ──────────────────────────────────────────────────
+# ─── 2. Import Newton + Warp + PyTorch ────────────────────────────────────────
 try:
+    import torch
     import newton
     import warp as wp
 
     _newton_available = True
+    from newton import GeoType
 except ImportError:
     _newton_available = False
     print(
-        "WARNING: Newton (or warp) is not installed.  "
+        "WARNING: Newton, warp, or torch is not installed.  "
         "The demo cannot proceed without Newton.\n"
-        "         Install with:  pip install newton warp-lang"
+        "         Install with:  pip install newton warp-lang torch"
     )
     sys.exit(1)
 
@@ -86,149 +93,154 @@ except ImportError:
         "      Install with:  pip install xlb"
     )
 
-print("=== MoPhi Newton + XLB + DEM-Engine three-way co-simulation demo ===\n")
+print("=== MoPhi Newton (ANYmal C) + XLB + DEM-Engine three-way co-simulation demo ===\n")
 
-# ─── 4. Initialize Warp ───────────────────────────────────────────────────────
+# ─── 4. Joint-index remapping ─────────────────────────────────────────────────
+# The ANYmal C RL policy was trained with legs ordered [LF, RF, LH, RH] × [HAA, HFE, KFE]
+# ("lab" convention), while MuJoCo/Newton uses a different internal ordering.
+# These index arrays reorder the 12 joint outputs so they apply to the correct actuators.
+# Mirrors newton/examples/robot/example_robot_anymal_c_walk.py.
+lab_to_mujoco = [0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11]
+mujoco_to_lab = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
+
+
+# ─── 5. Policy observation helpers ───────────────────────────────────────────
+@torch.jit.script
+def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Rotate a vector by the inverse of a quaternion (last dimension is [x,y,z,w])."""
+    q_w = q[..., 3]
+    q_vec = q[..., :3]
+    a = v * (2.0 * q_w**2 - 1.0).unsqueeze(-1)
+    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
+    if q_vec.dim() == 2:
+        c = q_vec * torch.bmm(q_vec.view(q.shape[0], 1, 3), v.view(q.shape[0], 3, 1)).squeeze(-1) * 2.0
+    else:
+        c = q_vec * torch.einsum("...i,...i->...", q_vec, v).unsqueeze(-1) * 2.0
+    return a - b + c
+
+
+def compute_obs(actions, state, joint_pos_initial, torch_device, indices, gravity_vec, command):
+    """Compute the 48-D observation vector required by the ANYmal C walking policy.
+
+    Mirrors newton/examples/robot/example_robot_anymal_c_walk.py::compute_obs().
+    The observation concatenates: base linear velocity (body frame), base angular
+    velocity (body frame), projected gravity, velocity command, joint position
+    error (lab order), joint velocity (lab order), previous actions.
+    """
+    root_quat_w = torch.tensor(state.joint_q[3:7], device=torch_device, dtype=torch.float32).unsqueeze(0)
+    root_lin_vel_w = torch.tensor(state.joint_qd[:3], device=torch_device, dtype=torch.float32).unsqueeze(0)
+    root_ang_vel_w = torch.tensor(state.joint_qd[3:6], device=torch_device, dtype=torch.float32).unsqueeze(0)
+    joint_pos_current = torch.tensor(state.joint_q[7:], device=torch_device, dtype=torch.float32).unsqueeze(0)
+    joint_vel_current = torch.tensor(state.joint_qd[6:], device=torch_device, dtype=torch.float32).unsqueeze(0)
+    vel_b = quat_rotate_inverse(root_quat_w, root_lin_vel_w)
+    a_vel_b = quat_rotate_inverse(root_quat_w, root_ang_vel_w)
+    grav = quat_rotate_inverse(root_quat_w, gravity_vec)
+    joint_pos_rel = joint_pos_current - joint_pos_initial
+    joint_vel_rel = joint_vel_current
+    rearranged_joint_pos_rel = torch.index_select(joint_pos_rel, 1, indices)
+    rearranged_joint_vel_rel = torch.index_select(joint_vel_rel, 1, indices)
+    obs = torch.cat([vel_b, a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
+    return obs
+
+
+# ─── 6. Initialize Warp ───────────────────────────────────────────────────────
 wp.init()
+torch_device = wp.device_to_torch(wp.get_device())
 
-# ─── 5. Build the Newton walking-robot scene ──────────────────────────────────
-# Newton/Warp uses a z-up coordinate system:
-#   x — forward (robot's walking direction)
-#   y — lateral (left is +y, right is −y)
-#   z — vertical (up is +z; ground plane is at z = 0; gravity in −z)
-#
-# We construct a quadruped robot using Newton's ModelBuilder.  The robot has:
-#   • A torso (box, 0.6 × 0.4 × 0.3 m: hx=0.3, hy=0.2, hz=0.15) connected
-#     to the world via a free joint.
-#   • Four legs (front-left, front-right, rear-left, rear-right), each with:
-#       – An upper-leg segment connected to the torso via a revolute hip joint
-#         (rotation about the y-axis for forward/backward sagittal-plane swing).
-#       – A lower-leg segment connected to the upper leg via a revolute knee
-#         joint (rotation about the same y-axis).
-#   • A ground plane for contact.
-#
-# Joint motors use position control: target_ke (stiffness) and target_kd
-# (damping) cause the joint to track the control target angle set in
-# control.joint_target_pos.  The demo updates those targets with sinusoidal
-# trot-gait signals before each coupler.step() call.
+# ─── 7. Load the ANYmal C robot model ─────────────────────────────────────────
+# newton.utils.download_asset("anybotics_anymal_c") downloads the ANYmal C URDF
+# and pre-trained RL walking policy from the Newton Assets repository.
+# The robot is placed at z = 0.62 m above the flat ground plane (z-up, x = forward).
+print("[Newton] Downloading ANYmal C robot assets ...")
+asset_path = newton.utils.download_asset("anybotics_anymal_c")
+urdf_path = str(asset_path / "urdf" / "anymal.urdf")
+policy_path = str(asset_path / "rl_policies" / "anymal_walking_policy_physx.pt")
+print(f"[Newton] Assets ready: {asset_path}\n")
 
-print("[Newton] Building quadruped walking-robot model ...")
-
+print("[Newton] Building ANYmal C model ...")
 builder = newton.ModelBuilder()
+newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
 
-# ── Torso (floating base) ─────────────────────────────────────────────────────
-torso = builder.add_link()
-# Torso box: 0.6 m long (x), 0.4 m wide (y), 0.3 m tall (z).
-# hz = 0.15 → torso bottom is 0.15 m below the torso centre.
-builder.add_shape_box(torso, hx=0.3, hy=0.2, hz=0.15)
+# Joint and shape defaults matching Newton's anymal example.
+builder.default_joint_cfg = newton.ModelBuilder.JointDofConfig(
+    armature=0.06,
+    limit_ke=1.0e3,
+    limit_kd=1.0e1,
+)
+builder.default_shape_cfg.ke = 5.0e4
+builder.default_shape_cfg.kd = 5.0e2
+builder.default_shape_cfg.kf = 1.0e3
+builder.default_shape_cfg.mu = 0.75
 
-# Free joint: lets the torso translate and rotate freely relative to the world.
-#
-# Initial height budget (all joints at 0 angle → legs straight down in −z).
-# child_xform z=+0.12 means the incoming joint frame is 0.12 m *above* the
-# child body's origin, so each child body's origin sits 0.12 m below its joint.
-#
-#   Torso centre                               =  H
-#   hip parent_xform z (−0.15, bottom of torso)= −0.15  →  hip joint at H−0.15
-#   upper-leg child_xform z (+0.12 above)      = −0.12  →  upper-leg origin at H−0.27
-#   knee parent_xform z (−0.12, bottom of UL)  = −0.12  →  knee joint at H−0.39
-#   lower-leg child_xform z (+0.12 above)      = −0.12  →  lower-leg origin at H−0.51
-#   lower-leg shape half-height (hz = 0.12)    = −0.12  →  foot bottom at H−0.63
-#
-# Minimum torso height for feet to just touch z = 0:  H = 0.63 m.
-# We add 5 cm of clearance (H = 0.68 m) so the robot falls gently onto the
-# floor under gravity instead of starting in ground penetration, which would
-# trigger a large corrective impulse and launch the robot skyward.
-torso_joint = builder.add_joint_free(
-    parent=-1,
-    child=torso,
-    parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.68), q=wp.quat_identity()),
-    child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
+builder.add_urdf(
+    urdf_path,
+    xform=wp.transform(
+        wp.vec3(0.0, 0.0, 0.62),
+        wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), wp.pi * 0.5),
+    ),
+    floating=True,
+    enable_self_collisions=False,
+    collapse_fixed_joints=True,
+    ignore_inertial_definitions=False,
 )
 
-# ── Legs ──────────────────────────────────────────────────────────────────────
-# Attachment offsets (in the torso local frame, z-up) from the torso centre to
-# each hip joint.  Legs hang straight down (−z) from the torso bottom.
-# Trot gait phases: diagonal pairs (FL, RR) share phase 0; (FR, RL) share π.
-LEG_LABELS = ["front_left", "front_right", "rear_left", "rear_right"]
-LEG_OFFSETS = [
-    (0.25,  0.18, -0.15),   # front-left  (+x=fwd, +y=left, −z=bottom of torso)
-    (0.25, -0.18, -0.15),   # front-right (+x=fwd, −y=right, −z=bottom of torso)
-    (-0.25,  0.18, -0.15),  # rear-left   (−x=rear, +y=left, −z=bottom of torso)
-    (-0.25, -0.18, -0.15),  # rear-right  (−x=rear, −y=right, −z=bottom of torso)
-]
-# Trot gait: diagonal pairs (FL, RR) share phase 0; (FR, RL) share phase π.
-LEG_PHASES = [0.0, math.pi, math.pi, 0.0]
+# Enlarge foot collision spheres for walking stability on the ground plane.
+# Doubling the URDF's small sphere radii prevents the robot from stumbling.
+for i in range(len(builder.shape_type)):
+    if builder.shape_type[i] == GeoType.SPHERE:
+        r = builder.shape_scale[i][0]
+        builder.shape_scale[i] = (r * 2.0, 0.0, 0.0)
 
-hip_joint_dof_indices = []   # DOF index of each hip joint in joint_target_pos
-knee_joint_dof_indices = []  # DOF index of each knee joint in joint_target_pos
-all_joints = [torso_joint]
-
-for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
-    zip(LEG_LABELS, LEG_OFFSETS, LEG_PHASES)
-):
-    upper_leg = builder.add_link()
-    lower_leg = builder.add_link()
-
-    # Leg shapes: narrow boxes oriented along the leg's long axis (z, vertical).
-    builder.add_shape_box(upper_leg, hx=0.04, hy=0.04, hz=0.12)
-    builder.add_shape_box(lower_leg, hx=0.035, hy=0.035, hz=0.12)
-
-    # Hip joint — revolute about the y-axis (sagittal-plane xz swing).
-    # parent_xform: hip attachment point on the torso (at the torso bottom).
-    # child_xform: top of the upper-leg segment (local +z = up toward hip).
-    hip = builder.add_joint_revolute(
-        parent=torso,
-        child=upper_leg,
-        axis=wp.vec3(0.0, 1.0, 0.0),
-        parent_xform=wp.transform(
-            p=wp.vec3(ox, oy, oz), q=wp.quat_identity()
-        ),
-        child_xform=wp.transform(
-            p=wp.vec3(0.0, 0.0, 0.12), q=wp.quat_identity()
-        ),
-        target_ke=2000.0,
-        target_kd=80.0,
-        limit_lower=-0.7,
-        limit_upper=0.7,
-    )
-
-    # Knee joint — revolute about the y-axis (knee flexion/extension).
-    # parent_xform: bottom of upper leg (−z end).
-    # child_xform: top of lower leg (+z end).
-    knee = builder.add_joint_revolute(
-        parent=upper_leg,
-        child=lower_leg,
-        axis=wp.vec3(0.0, 1.0, 0.0),
-        parent_xform=wp.transform(
-            p=wp.vec3(0.0, 0.0, -0.12), q=wp.quat_identity()
-        ),
-        child_xform=wp.transform(
-            p=wp.vec3(0.0, 0.0, 0.12), q=wp.quat_identity()
-        ),
-        target_ke=1500.0,
-        target_kd=60.0,
-        limit_lower=-1.2,
-        limit_upper=0.1,
-    )
-
-    hip_joint_dof_indices.append(hip)
-    knee_joint_dof_indices.append(knee)
-    all_joints.extend([hip, knee])
-
-# Group all joints into a single articulation (one connected kinematic tree).
-builder.add_articulation(all_joints, label="quadruped")
+# Flat ground plane only — no procedural terrain.
 builder.add_ground_plane()
 
-newton_model = builder.finalize()
-newton_solver = newton.solvers.SolverXPBD(newton_model)
+# Set initial joint positions to a stable standing pose (from the ANYmal C example).
+initial_q = {
+    "RH_HAA": 0.0,
+    "RH_HFE": -0.4,
+    "RH_KFE": 0.8,
+    "LH_HAA": 0.0,
+    "LH_HFE": -0.4,
+    "LH_KFE": 0.8,
+    "RF_HAA": 0.0,
+    "RF_HFE": 0.4,
+    "RF_KFE": -0.8,
+    "LF_HAA": 0.0,
+    "LF_HFE": 0.4,
+    "LF_KFE": -0.8,
+}
+# builder.joint_q indices: first 6 are the free-joint (position + quaternion),
+# then each revolute joint's DOF follows in declaration order.
+# Build a name→index mapping once to avoid repeated linear scans.
+joint_name_to_idx = {lbl.split("/")[-1]: i for i, lbl in enumerate(builder.joint_label)}
+for name, value in initial_q.items():
+    idx = joint_name_to_idx.get(name)
+    if idx is None:
+        raise ValueError(f"Joint '{name}' not found in builder.joint_label")
+    builder.joint_q[idx + 6] = value
 
-print(
-    f"[Newton] Quadruped model built: {newton_model.body_count} bodies, "
-    f"{len(hip_joint_dof_indices)} hip joints, {len(knee_joint_dof_indices)} knee joints.\n"
+# Position and velocity control gains.
+for i in range(len(builder.joint_target_ke)):
+    builder.joint_target_ke[i] = 150
+    builder.joint_target_kd[i] = 5
+
+newton_model = builder.finalize()
+newton_solver = newton.solvers.SolverMuJoCo(
+    newton_model,
+    use_mujoco_contacts=False,
+    solver="newton",
+    ls_parallel=False,
+    ls_iterations=50,
+    njmax=50,
+    nconmax=100,
 )
 
-# ─── 6. Build the XLB placeholder scene (if XLB is available) ─────────────────
+print(
+    f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, "
+    f"{newton_model.joint_count} joints.\n"
+)
+
+# ─── 8. Build the XLB placeholder scene (if XLB is available) ─────────────────
 xlb_simulation = None
 
 if _xlb_available:
@@ -248,8 +260,10 @@ if _xlb_available:
         print(f"[XLB] Could not create XLB simulation ({exc}) — skipping XLB.\n")
         xlb_simulation = None
 
-# ─── 7. Initialize the coupler ────────────────────────────────────────────────
-SIM_DT = 1.0 / 500.0  # 2 ms co-simulation time step
+# ─── 9. Initialize the coupler ────────────────────────────────────────────────
+# sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
+# matching the inner time step from Newton's anymal example).
+SIM_DT = 1.0 / 200.0
 
 coupler = mophi.NewtonXLBDEMCoupler()
 
@@ -263,12 +277,30 @@ coupler.initialize(
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
-# ─── 8. Set up Newton's OpenGL visualization window ───────────────────────────
+# ─── 10. Load the ANYmal C walking policy ────────────────────────────────────
+print("[Policy] Loading ANYmal C walking policy ...")
+policy = torch.jit.load(policy_path, map_location=torch_device)
+
+# Initial joint positions (from the state after coupler initialization and FK eval).
+# joint_q[0:7] = free-joint pose (position + quaternion); joint_q[7:] = revolute DOFs.
+joint_pos_initial = torch.tensor(
+    coupler.newton_state_0.joint_q[7:], device=torch_device, dtype=torch.float32
+).unsqueeze(0)
+
+act = torch.zeros(1, 12, device=torch_device, dtype=torch.float32)
+lab_to_mujoco_indices = torch.tensor(lab_to_mujoco, device=torch_device)
+mujoco_to_lab_indices = torch.tensor(mujoco_to_lab, device=torch_device)
+gravity_vec = torch.tensor([[0.0, 0.0, -1.0]], device=torch_device, dtype=torch.float32)
+command = torch.zeros((1, 3), device=torch_device, dtype=torch.float32)
+command[0, 0] = 1.0  # walk forward (x-direction)
+
+print("[Policy] ANYmal C walking policy loaded.\n")
+
+# ─── 11. Set up Newton's OpenGL visualization window ─────────────────────────
 # ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
 # render path: begin_frame() / log_state() / end_frame() update the display each
-# step while the simulation continues to advance.  The window can be closed by
-# the user at any time; viewer.is_running() returns False once the window is
-# dismissed, which will end the co-simulation loop early.
+# frame while the simulation continues to advance.  The window can be closed by
+# the user at any time; viewer.is_running() returns False once dismissed.
 try:
     viewer = newton.viewer.ViewerGL()
     viewer.set_model(newton_model)
@@ -277,100 +309,84 @@ try:
 except Exception as exc:
     viewer = None
     _viewer_available = False
-    print(f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
-          "         The simulation will run without visualization.")
-
-# ─── 9. Walking control helper ────────────────────────────────────────────────
-WALK_FREQ = 3.5   # Gait cycle frequency [Hz] — fast run cadence
-HIP_AMP   = 0.60  # Hip swing amplitude [rad] — long strides
-KNEE_AMP  = 0.55  # Knee flexion amplitude [rad] — high knee lift for running
-
-
-def update_walking_control(control, step: int, dt: float) -> None:
-    """Apply sinusoidal trot-gait targets to the hip and knee joints.
-
-    The trot gait drives diagonal leg pairs in phase:
-      front-left  + rear-right:  phase = 0
-      front-right + rear-left:   phase = π
-
-    Hip joints swing forward/back (sinusoidal).
-    Knee joints flex on the swing phase (cosine-based, always < 0).
-
-    Targets are written to control.joint_target_pos which is the per-DOF
-    position target array used by the XPBD solver's joint motor.
-    """
-    t = step * dt
-
-    # joint_target_pos is a Warp GPU array of shape (joint_dof_count,).
-    # Copy to CPU, update, then write back.
-    targets = control.joint_target_pos.numpy().copy()
-
-    for hip_dof_idx, knee_dof_idx, phase in zip(hip_joint_dof_indices, knee_joint_dof_indices, LEG_PHASES):
-        hip_angle  = HIP_AMP  * math.sin(2.0 * math.pi * WALK_FREQ * t + phase)
-        knee_angle = -KNEE_AMP * (1.0 + math.cos(2.0 * math.pi * WALK_FREQ * t + phase)) / 2.0
-        targets[hip_dof_idx]  = hip_angle
-        targets[knee_dof_idx] = knee_angle
-
-    control.joint_target_pos.assign(
-        wp.from_numpy(targets, dtype=wp.float32, device=control.joint_target_pos.device)
+    print(
+        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
+        "         The simulation will run without visualization."
     )
 
-
-# ─── 10. Co-simulation loop ───────────────────────────────────────────────────
-NUM_STEPS = 1500  # ~3 s of simulation at 500 Hz (or until the viewer is closed)
+# ─── 12. Co-simulation loop ───────────────────────────────────────────────────
+# The ANYmal C walking policy runs at 50 Hz (one inference per frame).
+# Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
+# 4-substep inner loop in Newton's anymal example (frame_dt = 1/50, sim_dt = 1/200).
+SIM_SUBSTEPS = 4          # physics substeps per policy frame
+FRAME_DT = SIM_DT * SIM_SUBSTEPS  # = 1/50 s — policy control rate
+NUM_FRAMES = 250          # ≈ 5 s at 50 Hz (or until the viewer is closed)
 sim_time = 0.0
 
-print(f"Running up to {NUM_STEPS} co-simulation step(s) (dt={SIM_DT*1000:.1f} ms each) ...\n")
-print(f"{'Step':>5}  {'Torso X [m]':>12}  {'Torso Y [m]':>12}  {'Torso Z [m]':>12}  Representation")
+print(
+    f"Running up to {NUM_FRAMES} policy frame(s) "
+    f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} substeps × {SIM_DT * 1000:.1f} ms) ...\n"
+)
+print(f"{'Frame':>5}  {'Base X [m]':>12}  {'Base Y [m]':>12}  {'Base Z [m]':>12}  Representation")
 print("-" * 72)
 
-for i in range(NUM_STEPS):
+# Pre-allocate the 6-element zeros buffer used to prepend free-joint DOFs each frame.
+free_joint_zeros = torch.zeros(6, device=torch_device, dtype=torch.float32)
+
+for frame in range(NUM_FRAMES):
     # Stop early if the viewer window has been closed by the user.
     if _viewer_available and not viewer.is_running():
-        print(f"\n[Viewer] Window closed by user after step {i}.")
+        print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
-    # Update joint control targets to drive the walking gait.
-    update_walking_control(coupler.newton_control, i, SIM_DT)
+    # ── Policy inference: compute observation and get joint targets ──────────
+    obs = compute_obs(
+        act,
+        coupler.newton_state_0,
+        joint_pos_initial,
+        torch_device,
+        lab_to_mujoco_indices,
+        gravity_vec,
+        command,
+    )
+    with torch.no_grad():
+        act = policy(obs)
+        rearranged_act = torch.gather(act, 1, mujoco_to_lab_indices.unsqueeze(0))
+        a = joint_pos_initial + 0.5 * rearranged_act
+        # Prepend 6 free-joint DOFs (3 linear + 3 angular velocity targets; not actuated).
+        a_with_zeros = torch.cat([free_joint_zeros, a.squeeze(0)])
+        a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
+        wp.copy(coupler.newton_control.joint_target_pos, a_wp)
 
-    # Advance all three solvers by one co-simulation step.
-    coupler.step()
-    sim_time += SIM_DT
+    # ── Physics substeps ──────────────────────────────────────────────────────
+    for _ in range(SIM_SUBSTEPS):
+        coupler.step()
+    sim_time += FRAME_DT
 
-    # Extract the robot's spatial representation: one [px, py, pz, qx, qy, qz, qw]
-    # per Newton body (torso + 8 leg segments = 9 entries for this quadruped).
-    transforms = coupler.get_robot_body_transforms()
-
-    # Update the visualization window.
+    # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
         viewer.begin_frame(sim_time)
-        # log_state reads body_q and body_qd from the state stored inside the coupler.
-        # We access the live Newton state through the coupler's newton_state_0 attribute.
         viewer.log_state(coupler.newton_state_0)
         viewer.end_frame()
 
-    # Print a status line every 50 steps to avoid flooding the console.
-    if (i + 1) % 50 == 0 or i == 0:
+    # ── Console status (every 25 frames) ─────────────────────────────────────
+    if (frame + 1) % 25 == 0 or frame == 0:
+        transforms = coupler.get_robot_body_transforms()
         if transforms:
-            torso_transform = transforms[0]
-            px, py, pz = torso_transform[0], torso_transform[1], torso_transform[2]
-            qx, qy, qz, qw = (
-                torso_transform[3],
-                torso_transform[4],
-                torso_transform[5],
-                torso_transform[6],
-            )
+            base = transforms[0]
+            px, py, pz = base[0], base[1], base[2]
+            qx, qy, qz, qw = base[3], base[4], base[5], base[6]
             print(
-                f"{i + 1:>5}  {px:>12.4f}  {py:>12.4f}  {pz:>12.4f}  "
+                f"{frame + 1:>5}  {px:>12.4f}  {py:>12.4f}  {pz:>12.4f}  "
                 f"[{newton_model.body_count} bodies, "
-                f"torso quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})]"
+                f"base quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})]"
             )
         else:
-            print(f"{i + 1:>5}  (Newton not available — no transforms)")
+            print(f"{frame + 1:>5}  (Newton not available — no transforms)")
 
 print()
 
-# ─── 11. Finalize ─────────────────────────────────────────────────────────────
+# ─── 13. Finalize ─────────────────────────────────────────────────────────────
 if _viewer_available:
     viewer.close()
 
@@ -387,7 +403,7 @@ else:
     print("  XLB            : not installed (placeholder skipped)")
 print(
     "\nSpatial representation summary:\n"
-    "  Each step produced a list of body transforms "
+    "  Each frame produced a list of body transforms "
     f"({newton_model.body_count} bodies × 7 values each).\n"
     "  Format: [px, py, pz, qx, qy, qz, qw]  (position [m] + quaternion).\n"
     "  Future work: feed these transforms to DEM-Engine and XLB for full coupling."
