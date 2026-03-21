@@ -104,6 +104,7 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
     MOPHI_INFO("PyNewtonXLBDEMCoupler: initialized");
 }
 
+//// TODO: No whole-sale stepper. Each physics step their own way.
 void PyNewtonXLBDEMCoupler::Step() {
     if (!dem_->initialized) {
         MOPHI_ERROR("PyNewtonXLBDEMCoupler::Step() called before Initialize().");

@@ -360,6 +360,7 @@ for frame in range(NUM_FRAMES):
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
+        # TODO: No whole-sale stepper. Update this later.
         coupler.step()
     sim_time += FRAME_DT
 
