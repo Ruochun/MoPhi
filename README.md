@@ -119,6 +119,68 @@ Newton is installed by MoPhi via pip at configure time when
 pip install newton
 ```
 
+### Newton + XLB + DEM-Engine (three-way coupling)
+
+```bash
+# Configure: fetch DEM-Engine, install Newton + XLB via pip, and build the coupler
+cmake -B build \
+      -DMOPHI_FETCH_DEMENGINE=ON \
+      -DMOPHI_FETCH_NEWTON=ON \
+      -DMOPHI_FETCH_XLB=ON \
+      -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
+cmake --build build
+
+# Run the Python demo (walking robot + XLB placeholder + DEM placeholder)
+PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
+```
+
+`NewtonXLBDEMCoupler` is a three-way co-simulation coupler:
+
+- **Newton** (active) — drives an articulated quadruped walking robot using
+  position-based dynamics (XPBD).  The robot's spatial representation (body
+  position + orientation quaternion per body) is extracted at every step via
+  `get_robot_body_transforms()`.
+- **XLB** (placeholder) — a JAX-based LBM fluid solver is instantiated but not
+  yet seriously advanced.  Future work will feed the robot's geometry as a
+  moving boundary condition.
+- **DEM-Engine** (placeholder) — a C++/CUDA discrete-element solver is
+  instantiated but not yet advanced.  Future work will introduce
+  particle–robot coupling.
+
+```python
+import mophi, newton, warp as wp, math
+
+wp.init()
+builder = newton.ModelBuilder()
+# ... build walking-robot model (see demo script for full quadruped) ...
+model  = builder.finalize()
+solver = newton.solvers.SolverXPBD(model)
+
+coupler = mophi.NewtonXLBDEMCoupler()
+coupler.initialize(newton_model=model, newton_solver=solver, sim_dt=2e-3)
+
+for step in range(steps):
+    # Update joint control targets for the trot gait before each step.
+    targets = coupler.newton_control.joint_target.numpy().copy()
+    # ... set sinusoidal hip/knee angles based on step * sim_dt ...
+    coupler.newton_control.joint_target.assign(
+        wp.from_numpy(targets, dtype=wp.float32, device="cuda"))
+
+    coupler.step()
+
+    # Extract spatial representation: [{px,py,pz,qx,qy,qz,qw}, ...] per body.
+    transforms = coupler.get_robot_body_transforms()
+
+coupler.finalize()
+```
+
+XLB is optionally installed by MoPhi via pip at configure time when
+`-DMOPHI_FETCH_XLB=ON`.  You can also install it manually:
+
+```bash
+pip install xlb
+```
+
 If you try to enable the co-simulation solver without first fetching the
 required externals, CMake will emit a clear error:
 
@@ -180,6 +242,7 @@ Control which ones are fetched with the following options:
 | `-DMOPHI_FETCH_TLFEA=ON` | OFF | Download TLFEA FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
 | `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
+| `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install xlb`) |
 
 ### Adding a new external solver
 
@@ -207,6 +270,7 @@ Control which ones are fetched with the following options:
 |--------|---------|-------------------|--------|
 | `-DMOPHI_BUILD_TLFEA_DEM=ON` | OFF | TLFEA + DEMEngine | Build TLFEA + DEM-Engine coupler |
 | `-DMOPHI_BUILD_TLFEA_NEWTON=ON` | OFF | TLFEA + Newton (pip) + CUDA Toolkit | Build TLFEA + Newton coupler |
+| `-DMOPHI_BUILD_NEWTON_XLB_DEM=ON` | OFF | DEMEngine + Newton (pip) + XLB (pip, optional) + CUDA Toolkit | Build Newton + XLB + DEM-Engine three-way coupler |
 
 If a required external is not fetched, CMake emits a `FATAL_ERROR` at
 configure time with instructions on how to resolve the problem.
@@ -247,8 +311,10 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 | `MOPHI_FETCH_TLFEA` | OFF | Download TLFEA into `external/TLFEA/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
 | `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
+| `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install xlb`) |
 | `MOPHI_BUILD_TLFEA_DEM` | OFF | Build the TLFEA+DEM co-simulation solver |
 | `MOPHI_BUILD_TLFEA_NEWTON` | OFF | Build the TLFEA+Newton co-simulation coupler |
+| `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEM-Engine three-way coupler |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
 
 ---
@@ -260,6 +326,7 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 | TLFEA | https://github.com/Ruochun/TLFEA | Total-Lagrangian FEA | C++ (CMake) |
 | DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM | C++ / CUDA (CMake) |
 | Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
+| XLB | https://github.com/Autodesk/XLB | GPU lattice-Boltzmann fluid | Pure Python / JAX (pip) |
 
 ---
 
