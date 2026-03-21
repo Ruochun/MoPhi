@@ -92,13 +92,19 @@ print("=== MoPhi Newton + XLB + DEM-Engine three-way co-simulation demo ===\n")
 wp.init()
 
 # ─── 5. Build the Newton walking-robot scene ──────────────────────────────────
+# Newton/Warp uses a z-up coordinate system:
+#   x — forward (robot's walking direction)
+#   y — lateral (left is +y, right is −y)
+#   z — vertical (up is +z; ground plane is at z = 0; gravity in −z)
+#
 # We construct a quadruped robot using Newton's ModelBuilder.  The robot has:
-#   • A torso (box, 0.6 × 0.3 × 0.4 m) connected to the world via a free joint.
+#   • A torso (box, 0.6 × 0.4 × 0.3 m: hx=0.3, hy=0.2, hz=0.15) connected
+#     to the world via a free joint.
 #   • Four legs (front-left, front-right, rear-left, rear-right), each with:
 #       – An upper-leg segment connected to the torso via a revolute hip joint
-#         (rotation about the sagittal z-axis for forward/backward swing).
+#         (rotation about the y-axis for forward/backward sagittal-plane swing).
 #       – A lower-leg segment connected to the upper leg via a revolute knee
-#         joint (rotation about the same z-axis).
+#         joint (rotation about the same y-axis).
 #   • A ground plane for contact.
 #
 # Joint motors use position control: target_ke (stiffness) and target_kd
@@ -112,41 +118,44 @@ builder = newton.ModelBuilder()
 
 # ── Torso (floating base) ─────────────────────────────────────────────────────
 torso = builder.add_link()
-builder.add_shape_box(torso, hx=0.3, hy=0.15, hz=0.2)
+# Torso box: 0.6 m long (x), 0.4 m wide (y), 0.3 m tall (z).
+# hz = 0.15 → torso bottom is 0.15 m below the torso centre.
+builder.add_shape_box(torso, hx=0.3, hy=0.2, hz=0.15)
 
 # Free joint: lets the torso translate and rotate freely relative to the world.
 #
-# Initial height budget (all joints at 0 angle → legs straight down).
-# child_xform y=+0.12 means the joint frame is 0.12 m *above* the body origin,
-# so each child body's origin sits 0.12 m *below* its incoming joint.
+# Initial height budget (all joints at 0 angle → legs straight down in −z).
+# child_xform z=+0.12 means the incoming joint frame is 0.12 m *above* the
+# child body's origin, so each child body's origin sits 0.12 m below its joint.
 #
-#   Torso origin                              =  h
-#   − hip parent_xform y offset (oy = −0.12) = −0.12  →  hip joint at h−0.12
-#   − upper-leg child_xform y (0.12 above)   = −0.12  →  upper-leg origin at h−0.24
-#   − knee parent_xform y (−0.12 below)      = −0.12  →  knee joint at h−0.36
-#   − lower-leg child_xform y (0.12 above)   = −0.12  →  lower-leg origin at h−0.48
-#   − lower-leg shape half-height (hy=0.12)  = −0.12  →  foot bottom at h−0.60
+#   Torso centre                               =  H
+#   hip parent_xform z (−0.15, bottom of torso)= −0.15  →  hip joint at H−0.15
+#   upper-leg child_xform z (+0.12 above)      = −0.12  →  upper-leg origin at H−0.27
+#   knee parent_xform z (−0.12, bottom of UL)  = −0.12  →  knee joint at H−0.39
+#   lower-leg child_xform z (+0.12 above)      = −0.12  →  lower-leg origin at H−0.51
+#   lower-leg shape half-height (hz = 0.12)    = −0.12  →  foot bottom at H−0.63
 #
-# Minimum torso height for feet to just touch y=0:  h = 0.60 m.
-# We add 5 cm of clearance (h = 0.65 m) so the robot falls gently onto the
+# Minimum torso height for feet to just touch z = 0:  H = 0.63 m.
+# We add 5 cm of clearance (H = 0.68 m) so the robot falls gently onto the
 # floor under gravity instead of starting in ground penetration, which would
 # trigger a large corrective impulse and launch the robot skyward.
 torso_joint = builder.add_joint_free(
     parent=-1,
     child=torso,
-    parent_xform=wp.transform(p=wp.vec3(0.0, 0.65, 0.0), q=wp.quat_identity()),
+    parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.68), q=wp.quat_identity()),
     child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
 )
 
 # ── Legs ──────────────────────────────────────────────────────────────────────
-# Attachment offsets from the torso centre to the hip joint, and trot-gait
-# phases (front-left ↔ rear-right in phase; front-right ↔ rear-left in phase).
+# Attachment offsets (in the torso local frame, z-up) from the torso centre to
+# each hip joint.  Legs hang straight down (−z) from the torso bottom.
+# Trot gait phases: diagonal pairs (FL, RR) share phase 0; (FR, RL) share π.
 LEG_LABELS = ["front_left", "front_right", "rear_left", "rear_right"]
 LEG_OFFSETS = [
-    (0.25, -0.12, 0.18),   # front-left  hip attachment
-    (0.25, -0.12, -0.18),  # front-right hip attachment
-    (-0.25, -0.12, 0.18),  # rear-left   hip attachment
-    (-0.25, -0.12, -0.18), # rear-right  hip attachment
+    (0.25,  0.18, -0.15),   # front-left  (+x=fwd, +y=left, −z=bottom of torso)
+    (0.25, -0.18, -0.15),   # front-right (+x=fwd, −y=right, −z=bottom of torso)
+    (-0.25,  0.18, -0.15),  # rear-left   (−x=rear, +y=left, −z=bottom of torso)
+    (-0.25, -0.18, -0.15),  # rear-right  (−x=rear, −y=right, −z=bottom of torso)
 ]
 # Trot gait: diagonal pairs (FL, RR) share phase 0; (FR, RL) share phase π.
 LEG_PHASES = [0.0, math.pi, math.pi, 0.0]
@@ -161,23 +170,22 @@ for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
     upper_leg = builder.add_link()
     lower_leg = builder.add_link()
 
-    # Upper-leg shape: a narrow box oriented along the leg's long axis (y).
-    builder.add_shape_box(upper_leg, hx=0.04, hy=0.12, hz=0.04)
-    # Lower-leg shape: slightly narrower.
-    builder.add_shape_box(lower_leg, hx=0.035, hy=0.12, hz=0.035)
+    # Leg shapes: narrow boxes oriented along the leg's long axis (z, vertical).
+    builder.add_shape_box(upper_leg, hx=0.04, hy=0.04, hz=0.12)
+    builder.add_shape_box(lower_leg, hx=0.035, hy=0.035, hz=0.12)
 
-    # Hip joint — revolute about the z-axis (sagittal plane swing).
-    # parent_xform: hip attachment point on the torso.
-    # child_xform: top of the upper-leg segment (local +y = up toward hip).
+    # Hip joint — revolute about the y-axis (sagittal-plane xz swing).
+    # parent_xform: hip attachment point on the torso (at the torso bottom).
+    # child_xform: top of the upper-leg segment (local +z = up toward hip).
     hip = builder.add_joint_revolute(
         parent=torso,
         child=upper_leg,
-        axis=wp.vec3(0.0, 0.0, 1.0),
+        axis=wp.vec3(0.0, 1.0, 0.0),
         parent_xform=wp.transform(
             p=wp.vec3(ox, oy, oz), q=wp.quat_identity()
         ),
         child_xform=wp.transform(
-            p=wp.vec3(0.0, 0.12, 0.0), q=wp.quat_identity()
+            p=wp.vec3(0.0, 0.0, 0.12), q=wp.quat_identity()
         ),
         target_ke=800.0,
         target_kd=40.0,
@@ -185,18 +193,18 @@ for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
         limit_upper=0.7,
     )
 
-    # Knee joint — revolute about the z-axis (knee flexion/extension).
-    # parent_xform: bottom of upper leg.
-    # child_xform: top of lower leg.
+    # Knee joint — revolute about the y-axis (knee flexion/extension).
+    # parent_xform: bottom of upper leg (−z end).
+    # child_xform: top of lower leg (+z end).
     knee = builder.add_joint_revolute(
         parent=upper_leg,
         child=lower_leg,
-        axis=wp.vec3(0.0, 0.0, 1.0),
+        axis=wp.vec3(0.0, 1.0, 0.0),
         parent_xform=wp.transform(
-            p=wp.vec3(0.0, -0.12, 0.0), q=wp.quat_identity()
+            p=wp.vec3(0.0, 0.0, -0.12), q=wp.quat_identity()
         ),
         child_xform=wp.transform(
-            p=wp.vec3(0.0, 0.12, 0.0), q=wp.quat_identity()
+            p=wp.vec3(0.0, 0.0, 0.12), q=wp.quat_identity()
         ),
         target_ke=600.0,
         target_kd=30.0,
