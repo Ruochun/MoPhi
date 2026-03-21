@@ -187,8 +187,8 @@ for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
         child_xform=wp.transform(
             p=wp.vec3(0.0, 0.0, 0.12), q=wp.quat_identity()
         ),
-        target_ke=800.0,
-        target_kd=40.0,
+        target_ke=2000.0,
+        target_kd=80.0,
         limit_lower=-0.7,
         limit_upper=0.7,
     )
@@ -206,8 +206,8 @@ for leg_idx, (label, (ox, oy, oz), phase) in enumerate(
         child_xform=wp.transform(
             p=wp.vec3(0.0, 0.0, 0.12), q=wp.quat_identity()
         ),
-        target_ke=600.0,
-        target_kd=30.0,
+        target_ke=1500.0,
+        target_kd=60.0,
         limit_lower=-1.2,
         limit_upper=0.1,
     )
@@ -281,9 +281,9 @@ except Exception as exc:
           "         The simulation will run without visualization.")
 
 # ─── 9. Walking control helper ────────────────────────────────────────────────
-WALK_FREQ = 1.5   # Gait cycle frequency [Hz]
-HIP_AMP   = 0.45  # Hip swing amplitude [rad]
-KNEE_AMP  = 0.40  # Knee flexion amplitude [rad]
+WALK_FREQ = 3.5   # Gait cycle frequency [Hz] — fast run cadence
+HIP_AMP   = 0.60  # Hip swing amplitude [rad] — long strides
+KNEE_AMP  = 0.55  # Knee flexion amplitude [rad] — high knee lift for running
 
 
 def update_walking_control(control, step: int, dt: float) -> None:
@@ -317,7 +317,7 @@ def update_walking_control(control, step: int, dt: float) -> None:
 
 
 # ─── 10. Co-simulation loop ───────────────────────────────────────────────────
-NUM_STEPS = 500  # ~1 s of simulation at 500 Hz (or until the viewer is closed)
+NUM_STEPS = 1500  # ~3 s of simulation at 500 Hz (or until the viewer is closed)
 sim_time = 0.0
 
 print(f"Running up to {NUM_STEPS} co-simulation step(s) (dt={SIM_DT*1000:.1f} ms each) ...\n")
