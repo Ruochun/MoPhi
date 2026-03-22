@@ -13,12 +13,12 @@
 // FEASolver.h is a convenience header that includes every element type
 // (FEAT10, FEAT4, ANCF3243, ANCF3443) and every solver (SyncedNesterov,
 // SyncedAdamW, LinearStatic).  TLFEAImpl below owns a GPU_FEAT10_Data element
-// and a SyncedNesterovSolver driven in Step() via its Solve() method.
+// and a SyncedAdamWNocoopSolver driven in Step() via its Solve() method.
 #include <tlfea/FEASolver.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TLFEAImpl — pimpl that hides tlfea::GPU_FEAT10_Data and
-// tlfea::SyncedNesterovSolver from PyTLFEANewtonCoupler.h
+// tlfea::SyncedAdamWNocoopSolver from PyTLFEANewtonCoupler.h
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct PyTLFEANewtonCoupler::TLFEAImpl {
@@ -27,9 +27,9 @@ struct PyTLFEANewtonCoupler::TLFEAImpl {
     /// a real initialization would load a mesh from tlfea_config first.
     std::unique_ptr<tlfea::GPU_FEAT10_Data> fea_element;
 
-    /// TLFEA Nesterov iterative solver.  Constructed after fea_element is set up;
-    /// driven in Step() via its Solve() method.
-    std::unique_ptr<tlfea::SyncedNesterovSolver> fea_solver;
+    /// TLFEA AdamW (no-cooperative-groups) iterative solver.  Constructed after
+    /// fea_element is set up; driven in Step() via its Solve() method.
+    std::unique_ptr<tlfea::SyncedAdamWNocoopSolver> fea_solver;
 
     bool initialized{false};
     double time_step{1e-4};  ///< Co-simulation time step [s].
@@ -69,7 +69,7 @@ void PyTLFEANewtonCoupler::Initialize(const std::string& tlfea_config,
     //   fea_->fea_element = std::make_unique<tlfea::GPU_FEAT10_Data>(n_elems, n_nodes);
     //   fea_->fea_element->Initialize();
     //   // ... configure material parameters, boundary conditions, external forces ...
-    //   fea_->fea_solver = std::make_unique<tlfea::SyncedNesterovSolver>(
+    //   fea_->fea_solver = std::make_unique<tlfea::SyncedAdamWNocoopSolver>(
     //       fea_->fea_element.get(), fea_->fea_element->get_n_constraint());
     const std::string fea_suffix = tlfea_config.empty() ? "" : (" (config: " + tlfea_config + ")");
     MOPHI_INFO("PyTLFEANewtonCoupler: TLFEA element and solver placeholder ready%s", fea_suffix.c_str());

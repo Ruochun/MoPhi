@@ -19,7 +19,7 @@ namespace mophi {
 /// Impl holds:
 ///   - std::unique_ptr<deme::DEMSolver>                — DEM-Engine's main solver class
 ///   - std::unique_ptr<tlfea::GPU_FEAT10_Data>          — TLFEA 10-node tetrahedral element data
-///   - std::unique_ptr<tlfea::SyncedNesterovSolver>     — TLFEA Nesterov iterative solver
+///   - std::unique_ptr<tlfea::SyncedAdamWNocoopSolver>  — TLFEA AdamW (no-cooperative-groups) solver
 ///
 /// Building this class requires both the TLFEA and DEMEngine external projects
 /// to have been fetched.  CMake emits a FATAL_ERROR at configure time if either
