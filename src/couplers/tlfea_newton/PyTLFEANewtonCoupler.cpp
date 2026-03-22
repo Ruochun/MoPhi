@@ -10,19 +10,25 @@
 #include <cuda_runtime.h>
 
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
-// FEASolver is TLFEA's top-level simulation driver that manages everything in
-// the package.  TLFEAImpl below owns a FEASolver instance created in
-// Initialize() and driven in Step() via its Solve() method.
+// FEASolver.h is a convenience header that pulls in all TLFEA element types and
+// solver types.  TLFEAImpl below owns a GPU_FEAT10_Data (TET10 element) and a
+// SyncedAdamWNocoopSolver (AdamW-Nocoop time integrator) created in Initialize()
+// and driven in Step() via the solver's Solve() method.
 #include <tlfea/FEASolver.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TLFEAImpl — pimpl that hides tlfea::FEASolver from PyTLFEANewtonCoupler.h
+// TLFEAImpl — pimpl that hides tlfea::GPU_FEAT10_Data and
+//             tlfea::SyncedAdamWNocoopSolver from PyTLFEANewtonCoupler.h
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct PyTLFEANewtonCoupler::TLFEAImpl {
-    /// TLFEA's top-level simulation driver.  Created in Initialize() and driven
-    /// in Step() via its Solve() method.
-    std::unique_ptr<tlfea::FEASolver> fea;
+    /// TLFEA TET10 element data (mesh geometry, DOFs, forces).  Created and
+    /// initialized in Initialize(); torn down in Finalize() via Destroy().
+    std::unique_ptr<tlfea::GPU_FEAT10_Data> fea_element;
+
+    /// TLFEA AdamW-Nocoop time integrator.  Created after fea_element in
+    /// Initialize() and driven in Step() via its Solve() method.
+    std::unique_ptr<tlfea::SyncedAdamWNocoopSolver> fea_solver;
 
     bool initialized{false};
     double time_step{1e-4};  ///< Co-simulation time step [s].
@@ -56,9 +62,16 @@ void PyTLFEANewtonCoupler::Initialize(const std::string& tlfea_config,
     MOPHI_INFO("PyTLFEANewtonCoupler: initializing ...");
 
     // ── TLFEA ─────────────────────────────────────────────────────────────────
-    fea_->fea = std::make_unique<tlfea::FEASolver>();
+    // Create TET10 element data with placeholder dimensions (0 elements / 0 nodes).
+    // TODO: load the actual mesh from tlfea_config and use the real element count /
+    //       node count once mesh-loading support is implemented.
+    fea_->fea_element = std::make_unique<tlfea::GPU_FEAT10_Data>(0, 0);
+    fea_->fea_element->Initialize();
+    // Create AdamW-Nocoop solver bound to the element.
+    fea_->fea_solver = std::make_unique<tlfea::SyncedAdamWNocoopSolver>(fea_->fea_element.get(),
+                                                                        fea_->fea_element->get_n_constraint());
     const std::string fea_suffix = tlfea_config.empty() ? "" : (" (config: " + tlfea_config + ")");
-    MOPHI_INFO("PyTLFEANewtonCoupler: tlfea::FEASolver created%s", fea_suffix.c_str());
+    MOPHI_INFO("PyTLFEANewtonCoupler: tlfea::GPU_FEAT10_Data + SyncedAdamWNocoopSolver created%s", fea_suffix.c_str());
 
     fea_->initialized = true;
 
@@ -94,7 +107,7 @@ void PyTLFEANewtonCoupler::Step() {
 
     // ── 1. Advance TLFEA ──────────────────────────────────────────────────────
     // Uncomment once the solver has been fully configured and initialized:
-    // fea_->fea->Solve();
+    // fea_->fea_solver->Solve();
 
     if (!newton_available) {
         return;
@@ -122,7 +135,11 @@ void PyTLFEANewtonCoupler::Step() {
 
 void PyTLFEANewtonCoupler::Finalize() {
     MOPHI_INFO("PyTLFEANewtonCoupler: finalizing ...");
-    fea_->fea.reset();
+    fea_->fea_solver.reset();
+    if (fea_->fea_element) {
+        fea_->fea_element->Destroy();
+        fea_->fea_element.reset();
+    }
     fea_->initialized = false;
     // Release Newton references so Python's reference counter can collect them.
     newton_model = pybind11::none();
@@ -141,7 +158,9 @@ std::vector<std::array<double, 3>> PyTLFEANewtonCoupler::GetNodePositions() cons
     }
     // TODO: Return actual deformed node positions from TLFEA once the solver is
     // fully configured, e.g.:
-    //   return fea_->fea->GetNodePositions();
+    //   VectorXR x12, y12, z12;
+    //   fea_->fea_element->RetrievePositionToCPU(x12, y12, z12);
+    //   // convert to std::vector<std::array<double,3>> and return
     // For now this is a placeholder that returns an empty vector.
     return {};
 }
@@ -155,6 +174,8 @@ void PyTLFEANewtonCoupler::SetNodeForces(const std::vector<std::array<double, 3>
     }
     // TODO: Apply external forces to TLFEA nodes once the solver is fully configured,
     // e.g.:
-    //   fea_->fea->SetExternalForces(forces);
+    //   VectorXR h_f_ext(fea_->fea_element->get_n_coef() * 3);
+    //   // populate h_f_ext from forces vector ...
+    //   fea_->fea_element->SetExternalForce(h_f_ext);
     // For now this is a placeholder.
 }

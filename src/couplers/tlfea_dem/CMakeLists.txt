@@ -53,6 +53,15 @@ target_include_directories(mophi_coupler_tlfea_dem
         $<INSTALL_INTERFACE:include/mophi/couplers>
 )
 
+# TLFEA's installed .cuh headers include <MoPhiEssentials.h> and rely on
+# MOPHI_GPU_CALL and DualArray, which are only compiled when MOPHI_USE_CUDA is
+# defined.  MoPhi's own mophi_essentials submodule is built CPU-only
+# (MOPHI_ENABLE_CUDA=OFF FORCE) so it never adds that definition.  We must add
+# it here so that the TLFEA headers compile correctly in this translation unit.
+# PRIVATE is sufficient because the pimpl design hides all TLFEA headers from
+# the public TLFEADEMCoupler.h — consumers of this library never see them.
+target_compile_definitions(mophi_coupler_tlfea_dem PRIVATE MOPHI_USE_CUDA)
+
 # Link against the IMPORTED targets created by mophi_fetch_external().
 # Each target carries:
 #   - INTERFACE_INCLUDE_DIRECTORIES pointing to <external>/install/include
@@ -72,7 +81,9 @@ target_include_directories(mophi_coupler_tlfea_dem
 # that DEM-Engine's static library depends on.  CUDA::cuda_driver covers
 # driver-API symbols.  CUDA::nvrtc is required for DEM-Engine's JIT kernel
 # compilation (nvrtcGetLoweredName, nvrtcCompileProgram, etc.).
-# All three are propagated PUBLIC for the same reason.
+# CUDA::cusparse and CUDA::cublas are required because the TLFEA solver and
+# element .cuh headers include <cusparse.h> and <cublas_v2.h> respectively.
+# All are propagated PUBLIC for the same reason.
 target_link_libraries(mophi_coupler_tlfea_dem
     PUBLIC
         mophi_essentials
@@ -82,6 +93,8 @@ target_link_libraries(mophi_coupler_tlfea_dem
         CUDA::cudart
         CUDA::cuda_driver
         CUDA::nvrtc
+        CUDA::cusparse
+        CUDA::cublas
 )
 
 target_link_libraries(mophi_couplers INTERFACE mophi_coupler_tlfea_dem)

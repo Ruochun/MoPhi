@@ -13,6 +13,8 @@
 // TLFEA is a CUDA-based FEA solver whose headers carry __host__/__device__
 // annotations.  The pimpl (TLFEAImpl) keeps those headers out of this
 // declaration and limits TLFEA-specific compilation to PyTLFEANewtonCoupler.cpp.
+// TLFEAImpl owns a GPU_FEAT10_Data (TET10 element) and a SyncedAdamWNocoopSolver
+// (AdamW-Nocoop time integrator) from the TLFEA library.
 //
 // Newton is a pure Python package (GPU-accelerated via NVIDIA Warp) with no
 // C++ ABI.  Newton objects are held as pybind11::object and driven through the
@@ -33,7 +35,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct PyTLFEANewtonCoupler {
-    /// pimpl hiding tlfea::FEASolver and CUDA headers — defined in PyTLFEANewtonCoupler.cpp.
+    /// pimpl hiding tlfea::GPU_FEAT10_Data, tlfea::SyncedAdamWNocoopSolver, and CUDA headers
+    /// — defined in PyTLFEANewtonCoupler.cpp.
     struct TLFEAImpl;
     std::unique_ptr<TLFEAImpl> fea_;
 

@@ -22,12 +22,13 @@ int main() {
 
     // ── 1. Construct ─────────────────────────────────────────────────────────
     mophi::TLFEADEMCoupler coupler;
+    coupler.SetVerbosity(mophi::VERBOSITY_INFO);
 
     // ── 2. Initialize ────────────────────────────────────────────────────────
     // tlfea_config and dem_config are left empty; real simulations would
     // supply paths to mesh / scene description files here.
     // num_gpus=1 is the default for single-GPU machines.
-    coupler.initialize(/*tlfea_config=*/"",
+    coupler.Initialize(/*tlfea_config=*/"",
                        /*dem_config=*/"",
                        /*num_gpus=*/1);
 
@@ -36,11 +37,11 @@ int main() {
     std::cout << "\nRunning " << num_steps << " co-simulation step(s)...\n";
     for (int i = 0; i < num_steps; ++i) {
         std::cout << "  step " << (i + 1) << " / " << num_steps << "\n";
-        coupler.step();
+        coupler.Step();
     }
 
     // ── 4. Finalize ──────────────────────────────────────────────────────────
-    coupler.finalize();
+    coupler.Finalize();
 
     std::cout << "\nDemo completed successfully.\n";
     return 0;
