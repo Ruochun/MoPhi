@@ -9,6 +9,14 @@
 // FATAL_ERROR before compilation if either external is missing.
 #include <DEM/API.h>
 
+// ── CUDA runtime ──────────────────────────────────────────────────────────────
+// Must be included before any TLFEA header.  TLFEA is a CUDA-based library
+// whose headers annotate functions with __host__ and __device__, and whose
+// .cuh files call CUDA runtime API functions (cudaMalloc, cudaMemcpy, …)
+// inline inside class definitions.  These keywords and functions are only
+// available once cuda_runtime.h has been included.
+#include <cuda_runtime.h>
+
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
 // FEASolver.h is a convenience header that pulls in all TLFEA element types and
 // solver types.  The Impl below uses GPU_FEAT10_Data (TET10 element) and

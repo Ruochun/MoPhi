@@ -57,10 +57,16 @@ target_include_directories(mophi_coupler_tlfea_newton
         $<INSTALL_INTERFACE:include/mophi/couplers>
 )
 
-# CUDA::cudart provides the CUDA runtime (cudaMalloc, cudaMemcpy, …) that
-# TLFEA's static library depends on, and also makes cuda_runtime.h available
-# on the include path so that TLFEA's __host__/__device__ annotated headers
-# compile correctly with the plain C++ compiler.
+# TLFEA's installed .cuh headers include <MoPhiEssentials.h> and rely on
+# MOPHI_GPU_CALL and DualArray, which are only compiled when MOPHI_USE_CUDA is
+# defined.  MoPhi's own mophi_essentials submodule is built CPU-only
+# (MOPHI_ENABLE_CUDA=OFF FORCE) so it never adds that definition.  We must
+# propagate it as INTERFACE so that mophi_core (the Python extension module
+# that compiles PyTLFEANewtonCoupler.cpp) also sees it.
+target_compile_definitions(mophi_coupler_tlfea_newton INTERFACE MOPHI_USE_CUDA)
+
+# CUDA::cusparse and CUDA::cublas are required because the TLFEA solver and
+# element .cuh headers include <cusparse.h> and <cublas_v2.h> respectively.
 # CUDA::cuda_driver covers driver-API symbols used by TLFEA.
 # CUDA::nvrtc is NOT required here — that is specific to DEM-Engine's JIT
 # kernel compilation and is not used by TLFEA.
@@ -71,6 +77,8 @@ target_link_libraries(mophi_coupler_tlfea_newton
         Eigen3::Eigen
         CUDA::cudart
         CUDA::cuda_driver
+        CUDA::cusparse
+        CUDA::cublas
 )
 
 target_link_libraries(mophi_couplers INTERFACE mophi_coupler_tlfea_newton)
