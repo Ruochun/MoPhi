@@ -10,9 +10,10 @@
 #include <DEM/API.h>
 
 // ── TLFEA ─────────────────────────────────────────────────────────────────────
-// FEASolver is TLFEA's top-level simulation driver that manages everything in
-// the package.  The Impl below owns a FEASolver instance created in Initialize()
-// and driven in Step() via its Solve() method.
+// FEASolver.h is a convenience header that includes every element type
+// (FEAT10, FEAT4, ANCF3243, ANCF3443) and every solver (SyncedNesterov,
+// SyncedAdamW, LinearStatic).  The Impl below owns a GPU_FEAT10_Data element
+// object and a SyncedNesterovSolver driven in Step() via its Solve() method.
 #include <tlfea/FEASolver.h>
 
 namespace mophi {
@@ -26,9 +27,14 @@ struct TLFEADEMCoupler::Impl {
     /// calling dem->Initialize().
     std::unique_ptr<deme::DEMSolver> dem;
 
-    /// TLFEA's top-level simulation driver.  Created in Initialize() and
+    /// TLFEA 10-node tetrahedral element data (nodes, connectivity, material
+    /// parameters, boundary conditions).  Created and configured in Initialize();
+    /// a real initialization would load a mesh from tlfea_config first.
+    std::unique_ptr<tlfea::GPU_FEAT10_Data> fea_element;
+
+    /// TLFEA Nesterov iterative solver.  Constructed after fea_element is set up;
     /// driven in Step() via its Solve() method.
-    std::unique_ptr<tlfea::FEASolver> fea;
+    std::unique_ptr<tlfea::SyncedNesterovSolver> fea_solver;
 
     bool initialized{false};
     double time_step{1e-4};  ///< Co-simulation time step [s].
@@ -62,10 +68,16 @@ void TLFEADEMCoupler::Initialize(const std::string& tlfea_config,
     MOPHI_INFO("TLFEADEMCoupler: deme::DEMSolver created (nGPUs=%u)%s", num_gpus, dem_suffix.c_str());
 
     // ── TLFEA ─────────────────────────────────────────────────────────────────
-    // Create FEASolver — TLFEA's top-level simulation driver.
-    impl_->fea = std::make_unique<tlfea::FEASolver>();
+    // TLFEA requires mesh data (node positions, element connectivity, boundary
+    // conditions) before the element and solver objects can be constructed.  In
+    // a real co-simulation the mesh would be read from tlfea_config, then:
+    //   impl_->fea_element = std::make_unique<tlfea::GPU_FEAT10_Data>(n_elems, n_nodes);
+    //   impl_->fea_element->Initialize();
+    //   // ... configure material parameters, boundary conditions, external forces ...
+    //   impl_->fea_solver = std::make_unique<tlfea::SyncedNesterovSolver>(
+    //       impl_->fea_element.get(), impl_->fea_element->get_n_constraint());
     const std::string fea_suffix = tlfea_config.empty() ? "" : (" (config: " + tlfea_config + ")");
-    MOPHI_INFO("TLFEADEMCoupler: tlfea::FEASolver created%s", fea_suffix.c_str());
+    MOPHI_INFO("TLFEADEMCoupler: TLFEA element and solver placeholder ready%s", fea_suffix.c_str());
 
     impl_->initialized = true;
     MOPHI_INFO("TLFEADEMCoupler: initialized");
@@ -81,12 +93,13 @@ void TLFEADEMCoupler::Step() {
     // impl_->dem->DoDynamicsThenSync(impl_->time_step);
 
     // FEA step: advance the TLFEA simulation by one time step.
-    // impl_->fea->Solve();
+    // impl_->fea_solver->Solve();
 }
 
 void TLFEADEMCoupler::Finalize() {
     MOPHI_INFO("TLFEADEMCoupler: finalizing ...");
-    impl_->fea.reset();
+    impl_->fea_solver.reset();
+    impl_->fea_element.reset();
     impl_->dem.reset();
     impl_->initialized = false;
     MOPHI_INFO("TLFEADEMCoupler: finalized");

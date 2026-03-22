@@ -33,7 +33,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct PyTLFEANewtonCoupler {
-    /// pimpl hiding tlfea::FEASolver and CUDA headers — defined in PyTLFEANewtonCoupler.cpp.
+    /// pimpl hiding tlfea::GPU_FEAT10_Data, tlfea::SyncedNesterovSolver, and
+    /// CUDA headers — defined in PyTLFEANewtonCoupler.cpp.
     struct TLFEAImpl;
     std::unique_ptr<TLFEAImpl> fea_;
 
