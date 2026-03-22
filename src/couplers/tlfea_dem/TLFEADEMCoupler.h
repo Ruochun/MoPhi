@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+#include <core/Logger.hpp>
+
 namespace mophi {
 
 /// @brief Placeholder co-simulation solver coupling TLFEA and DEM-Engine.
@@ -52,6 +54,9 @@ class TLFEADEMCoupler {
 
     /// @brief Finalize both solvers and release all resources.
     void Finalize();
+
+    /// @brief Set verbosity.
+    void SetVerbosity(mophi::verbosity_t verbose);
 
   private:
     struct Impl;

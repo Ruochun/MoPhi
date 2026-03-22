@@ -1,7 +1,5 @@
 #include "TLFEADEMCoupler.h"
 
-#include <core/Logger.hpp>
-
 // ── DEM-Engine ────────────────────────────────────────────────────────────────
 // Header lives at external/DEMEngine/src/DEM/API.h, added to the include path
 // by src/couplers/CMakeLists.txt.  This translation unit is only compiled when
@@ -60,6 +58,10 @@ TLFEADEMCoupler::~TLFEADEMCoupler() {
 }
 
 // ── Public interface ──────────────────────────────────────────────────────────
+
+void TLFEADEMCoupler::SetVerbosity(mophi::verbosity_t verbose) {
+    mophi::Logger::GetInstance().SetVerbosity(verbose);
+}
 
 void TLFEADEMCoupler::Initialize(const std::string& tlfea_config,
                                  const std::string& dem_config,
