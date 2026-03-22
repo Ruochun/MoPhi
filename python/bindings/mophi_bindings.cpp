@@ -19,12 +19,12 @@
 #endif
 
 // NewtonXLBDEMCoupler is only registered when the library was compiled with
-// MOPHI_BUILD_NEWTON_XLB_DEM=ON (DEMEngine external fetched and built).
-// Newton and XLB are pure Python packages and are not linked into this module.
+// MOPHI_BUILD_NEWTON_XLB_DEM=ON.  Newton, XLB, and DEME are all pure Python
+// packages and are not linked into this module.
 // PyNewtonXLBDEMCoupler (defined in src/couplers/newton_xlb_dem/PyNewtonXLBDEMCoupler.h)
 // bridges all three solvers: Newton drives a walking robot in Python, XLB provides
-// a placeholder LBM fluid solver in Python, and DEM-Engine is a placeholder C++
-// discrete-element solver held via a pimpl DEMImpl.
+// a placeholder LBM fluid solver in Python, and DEME is a placeholder Python
+// discrete-element solver (pip install deme) imported at runtime via pybind11.
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
     #include "PyNewtonXLBDEMCoupler.h"  // src/couplers/newton_xlb_dem/
 #endif
@@ -112,10 +112,10 @@ PYBIND11_MODULE(mophi_core, m) {
     // PyNewtonXLBDEMCoupler is defined in src/couplers/newton_xlb_dem/.
     py::class_<PyNewtonXLBDEMCoupler>(m, "NewtonXLBDEMCoupler",
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "
-                                      "physics), XLB (lattice-Boltzmann fluid solver), and DEM-Engine (discrete "
-                                      "elements).\n\n"
+                                      "physics), XLB (lattice-Boltzmann fluid solver), and DEME (Python "
+                                      "discrete-element solver, pip install deme).\n\n"
                                       "Newton drives a walking robot and produces a spatial representation "
-                                      "(body transforms) at every step.  XLB and DEM-Engine are placeholder "
+                                      "(body transforms) at every step.  XLB and DEME are placeholder "
                                       "solvers that are instantiated but not seriously advanced yet; future "
                                       "work will feed the robot geometry into both.\n\n"
                                       "Usage::\n\n"
@@ -142,11 +142,11 @@ PYBIND11_MODULE(mophi_core, m) {
              "the coupler evaluates initial forward kinematics and is ready to step.\n"
              "xlb_simulation may be an XLB simulation object or None (skip XLB).\n"
              "sim_dt sets the co-simulation time step in seconds (default 1 ms).\n"
-             "num_gpus controls how many GPUs are handed to DEM-Engine (default 1).")
+             "num_gpus is forwarded to the DEME Python solver constructor (default 1).")
         .def("step", &PyNewtonXLBDEMCoupler::Step,
              "Advance one co-simulation step.\n\n"
              "Sequence: clear Newton forces → Newton collide → Newton step → swap states\n"
-             "→ DEM-Engine placeholder (no-op) → XLB placeholder (no-op).\n"
+             "→ DEME placeholder (no-op) → XLB placeholder (no-op).\n"
              "Call get_robot_body_transforms() after step() to read the spatial\n"
              "representation of the robot.")
         .def("finalize", &PyNewtonXLBDEMCoupler::Finalize,

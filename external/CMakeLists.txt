@@ -127,6 +127,57 @@ else()
     endif()
 endif()
 
+# ── DEME (Python package) ─────────────────────────────────────────────────────
+# DEME is a pure Python discrete-element solver — it has no CMake build system
+# and cannot be handled with mophi_fetch_external.  When MOPHI_FETCH_DEME=ON,
+# MoPhi installs DEME via pip at configure time so that it is immediately
+# importable in the Python coupler.
+if(MOPHI_FETCH_DEME)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    message(STATUS "MoPhi: Installing DEME Python package via pip ...")
+    execute_process(
+        COMMAND           ${Python3_EXECUTABLE} -m pip install deme
+        RESULT_VARIABLE   _deme_install_result
+        OUTPUT_VARIABLE   _deme_install_output
+        ERROR_VARIABLE    _deme_install_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_STRIP_TRAILING_WHITESPACE
+    )
+    if(_deme_install_result EQUAL 0)
+        message(STATUS "MoPhi: DEME Python package installed successfully")
+        set(MOPHI_EXTERNAL_DEME_AVAILABLE TRUE
+            CACHE INTERNAL "DEME Python package available")
+    else()
+        message(WARNING
+            "MoPhi: pip install deme failed (exit code ${_deme_install_result}):\n"
+            "${_deme_install_error}\n"
+            "DEME will not be available for the coupler.  "
+            "Install it manually with:  pip install deme")
+    endif()
+else()
+    # Even without MOPHI_FETCH_DEME, detect a pre-installed DEME so the
+    # summary line below reports the correct status.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_FOUND)
+        execute_process(
+            COMMAND         ${Python3_EXECUTABLE} -c "import deme"
+            RESULT_VARIABLE _deme_check_result
+            OUTPUT_QUIET
+            ERROR_QUIET
+        )
+        if(_deme_check_result EQUAL 0)
+            set(MOPHI_EXTERNAL_DEME_AVAILABLE TRUE
+                CACHE INTERNAL "DEME Python package available")
+        else()
+            set(MOPHI_EXTERNAL_DEME_AVAILABLE FALSE
+                CACHE INTERNAL "DEME Python package not available")
+        endif()
+    else()
+        set(MOPHI_EXTERNAL_DEME_AVAILABLE FALSE
+            CACHE INTERNAL "DEME Python package not available")
+    endif()
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────

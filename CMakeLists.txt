@@ -17,6 +17,7 @@ option(MOPHI_FETCH_TLFEA     "Download/update the TLFEA external project"     OF
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
 option(MOPHI_FETCH_NEWTON    "Install the Newton Python package (pip install newton)" OFF)
 option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install xlb)"       OFF)
+option(MOPHI_FETCH_DEME      "Install the DEME Python package (pip install deme)"     OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: co-simulation solvers to build
