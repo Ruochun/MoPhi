@@ -48,6 +48,8 @@ Or from the repository root after installing the mophi package:
 
 import sys
 
+import numpy as np
+
 # ─── 1. Import MoPhi ─────────────────────────────────────────────────────────
 try:
     import mophi
@@ -403,6 +405,25 @@ except Exception as exc:
         "         The simulation will run without visualization."
     )
 
+# ─── 13b. DEM placeholder sphere visualisation ───────────────────────────────
+# These static spheres represent placeholder DEME particle positions in the
+# visualisation window.  Their world-space positions and radii are hard-coded
+# for now; future work will replace them with live data from deme_solver so
+# that actual particle positions from DEM-Engine are shown each frame.
+_DEM_SPHERE_POSITIONS = [
+    [1.0, 0.0, 0.05],
+    [1.5, 0.3, 0.05],
+    [0.5, -0.4, 0.05],
+    [2.0, 0.0, 0.05],
+    [1.0, 0.8, 0.05],
+]
+_DEM_SPHERE_RADII = [0.05, 0.07, 0.04, 0.06, 0.05]
+
+if _viewer_available:
+    _dem_sphere_pos_wp = wp.array(np.array(_DEM_SPHERE_POSITIONS, dtype=np.float32), dtype=wp.vec3)
+    _dem_sphere_radii_wp = wp.array(np.array(_DEM_SPHERE_RADII, dtype=np.float32), dtype=wp.float32)
+    print(f"[Viewer] {len(_DEM_SPHERE_POSITIONS)} DEM placeholder sphere(s) registered for visualisation.\n")
+
 # ─── 14. Co-simulation loop ───────────────────────────────────────────────────
 # The ANYmal C walking policy runs at 50 Hz (one inference per frame).
 # Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
@@ -528,6 +549,15 @@ for frame in range(NUM_FRAMES):
     if _viewer_available:
         viewer.begin_frame(sim_time)
         viewer.log_state(coupler.newton_state_0)
+        # Render DEM placeholder spheres.  These static spheres stand in for
+        # future DEME particle positions; eventually this call will use live
+        # positions and radii provided by deme_solver each step.
+        viewer.log_points(
+            "dem_particles",
+            _dem_sphere_pos_wp,
+            radii=_dem_sphere_radii_wp,
+            colors=(0.8, 0.4, 0.1),  # orange — placeholder DEM particle colour
+        )
         viewer.end_frame()
 
     # ── Console status (every 25 frames) ─────────────────────────────────────
