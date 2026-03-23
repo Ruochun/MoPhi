@@ -46,23 +46,7 @@ Or from the repository root after installing the mophi package:
     python -m demo.newton_xlb_dem.demo_newton_xlb_dem
 """
 
-import site as _site
 import sys
-
-# ── Ensure pip-installed packages are discoverable ────────────────────────────
-# When the demo is launched with a manually set PYTHONPATH (e.g.
-# "PYTHONPATH=<build>/python python3 demo_newton_xlb_dem.py"), or via
-# `cmake --build ... --target demo_newton_xlb_dem`, the Python interpreter
-# may not include the user site-packages directory in sys.path
-# (e.g. when PYTHONNOUSERSITE is set, or when running inside a virtual
-# environment whose sys.path only contains venv directories).  Force-adding
-# the user site-packages directory ensures that packages installed with
-# "python3 -m pip install --user deme" (or to user site-packages by default)
-# are always importable regardless of how the script is invoked.
-_user_sp = _site.getusersitepackages()
-if _user_sp not in sys.path:
-    _site.addsitedir(_user_sp)
-del _site, _user_sp
 
 # ─── 1. Import MoPhi ─────────────────────────────────────────────────────────
 try:
@@ -94,8 +78,7 @@ except ImportError:
     print(
         "WARNING: Newton, warp, or torch is not installed.  "
         "The demo cannot proceed without Newton.\n"
-        f"         Install with:  python3 -m pip install newton warp-lang torch\n"
-        f"         (Using Python: {sys.executable})"
+        "         Install with:  pip install newton warp-lang torch"
     )
     sys.exit(1)
 
@@ -104,12 +87,11 @@ try:
     import xlb
 
     _xlb_available = True
-except ImportError as _xlb_exc:
+except ImportError:
     _xlb_available = False
     print(
-        f"INFO: XLB is not installed or could not be imported: {_xlb_exc}\n"
-        f"      Install with:  python3 -m pip install xlb\n"
-        f"      (Using Python: {sys.executable})"
+        "INFO: XLB is not installed — the XLB solver will be skipped (placeholder only).\n"
+        "      Install with:  pip install xlb"
     )
 
 # ─── 4. Import DEME (optional) ────────────────────────────────────────────────
@@ -117,12 +99,11 @@ try:
     import deme
 
     _deme_available = True
-except ImportError as _deme_exc:
+except ImportError:
     _deme_available = False
     print(
-        f"INFO: DEME is not installed or could not be imported: {_deme_exc}\n"
-        f"      Install with:  python3 -m pip install deme\n"
-        f"      (Using Python: {sys.executable})"
+        "INFO: DEME is not installed — the DEME solver will be skipped (placeholder only).\n"
+        "      Install with:  pip install deme"
     )
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
