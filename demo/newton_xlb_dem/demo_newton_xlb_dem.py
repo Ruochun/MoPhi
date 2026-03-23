@@ -418,10 +418,12 @@ _DEM_SPHERE_POSITIONS = [
     [1.0, 0.8, 0.05],
 ]
 _DEM_SPHERE_RADII = [0.05, 0.07, 0.04, 0.06, 0.05]
+_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — placeholder DEM particle colour
 
 if _viewer_available:
     _dem_sphere_pos_wp = wp.array(np.array(_DEM_SPHERE_POSITIONS, dtype=np.float32), dtype=wp.vec3)
     _dem_sphere_radii_wp = wp.array(np.array(_DEM_SPHERE_RADII, dtype=np.float32), dtype=wp.float32)
+    _dem_sphere_colors_wp = wp.array([_DEM_SPHERE_COLOR] * len(_DEM_SPHERE_POSITIONS), dtype=wp.vec3)
     print(f"[Viewer] {len(_DEM_SPHERE_POSITIONS)} DEM placeholder sphere(s) registered for visualisation.\n")
 
 # ─── 14. Co-simulation loop ───────────────────────────────────────────────────
@@ -556,7 +558,7 @@ for frame in range(NUM_FRAMES):
             "dem_particles",
             _dem_sphere_pos_wp,
             radii=_dem_sphere_radii_wp,
-            colors=(0.8, 0.4, 0.1),  # orange — placeholder DEM particle colour
+            colors=_dem_sphere_colors_wp,
         )
         viewer.end_frame()
 
