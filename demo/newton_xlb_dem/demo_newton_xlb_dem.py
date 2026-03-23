@@ -96,7 +96,7 @@ except ImportError:
 
 # ─── 4. Import DEME (optional) ────────────────────────────────────────────────
 try:
-    import deme
+    import DEME
 
     _deme_available = True
 except ImportError:
@@ -324,6 +324,7 @@ if _xlb_available:
         # XLB 0.2+ API: create a minimal 3-D LBM simulation.
         # The grid is intentionally tiny (32³) for a placeholder — real coupling
         # will size the domain to encompass the robot's workspace.
+        # TODO: xlb is not used like this, work on it later
         xlb_simulation = xlb.Simulation(
             omega=1.0,
             grid_shape=(32, 32, 32),
@@ -341,10 +342,10 @@ deme_solver = None
 if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
     try:
-        deme_solver = deme.DEMSolver(1)
-        print("[DEME] deme.DEMSolver created (nGPUs=1) [placeholder].\n")
+        deme_solver = DEME.DEMSolver()
+        print("[DEME] DEME.DEMSolver created [placeholder].\n")
     except Exception as exc:
-        print(f"[DEME] Could not create deme.DEMSolver ({exc}) — skipping DEME.\n")
+        print(f"[DEME] Could not create DEME.DEMSolver ({exc}) — skipping DEME.\n")
         deme_solver = None
 
 # ─── 11. Initialize the coupler ───────────────────────────────────────────────
