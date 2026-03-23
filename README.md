@@ -60,7 +60,7 @@ cmake -B build \
 cmake --build build
 
 # 4. Use the Python package from the build tree
-PYTHONPATH=python python3 -c "
+PYTHONPATH=build/python python3 -c "
 import mophi
 c = mophi.TLFEADEMCoupler()
 c.initialize()
@@ -80,7 +80,7 @@ cmake -B build \
 cmake --build build
 
 # Run the Python demo (TLFEA solver + Newton double-pendulum as one coupled system)
-PYTHONPATH=python python3 demo/tlfea_newton/demo_tlfea_newton.py
+PYTHONPATH=build/python python3 demo/tlfea_newton/demo_tlfea_newton.py
 ```
 
 The `TLFEANewtonCoupler` bridges C++ (TLFEA) and Python (Newton) inside a single
@@ -116,8 +116,14 @@ Newton is installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_NEWTON=ON`.  You can also install it manually beforehand:
 
 ```bash
-pip install newton
+python3 -m pip install newton
 ```
+
+> **Tip — use `python3 -m pip`, not bare `pip`.**
+> Running `python3 -m pip install <pkg>` guarantees the package is installed into
+> the same Python that will run the demo.  Using bare `pip install` may silently
+> install into a *different* Python interpreter, causing `import` failures even
+> though `pip show <pkg>` appears to succeed.
 
 ### Newton + XLB + DEME (three-way coupling)
 
@@ -131,7 +137,7 @@ cmake -B build \
 cmake --build build
 
 # Run the Python demo (walking robot + XLB placeholder + DEME placeholder)
-PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
+PYTHONPATH=build/python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
 ```
 
 `NewtonXLBDEMCoupler` is a three-way co-simulation coupler:
@@ -143,7 +149,7 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
 - **XLB** (placeholder) — a JAX-based LBM fluid solver is instantiated but not
   yet seriously advanced.  Future work will feed the robot's geometry as a
   moving boundary condition.
-- **DEME** (placeholder) — a Python discrete-element solver (pip install deme)
+- **DEME** (placeholder) — a Python discrete-element solver (`python3 -m pip install deme`)
   is instantiated but not yet advanced.  Future work will introduce
   particle–robot coupling.
 
@@ -178,7 +184,7 @@ XLB is optionally installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_XLB=ON`.  You can also install it manually:
 
 ```bash
-pip install xlb
+python3 -m pip install xlb
 ```
 
 If you try to enable the co-simulation solver without first fetching the
@@ -241,9 +247,9 @@ Control which ones are fetched with the following options:
 |--------|---------|--------|
 | `-DMOPHI_FETCH_TLFEA=ON` | OFF | Download TLFEA FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
-| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
-| `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install xlb`) |
-| `-DMOPHI_FETCH_DEME=ON` | OFF | Install DEME Python package (`pip install deme`) |
+| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`python3 -m pip install newton`) |
+| `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`python3 -m pip install xlb`) |
+| `-DMOPHI_FETCH_DEME=ON` | OFF | Install DEME Python package (`python3 -m pip install deme`) |
 
 ### Adding a new external solver
 
@@ -292,12 +298,19 @@ configure time with instructions on how to resolve the problem.
 Python bindings are built automatically when `MOPHI_BUILD_PYTHON_BINDINGS=ON`
 (the default).  pybind11 is fetched automatically if not already available.
 
-After building, add the `python/` directory to your `PYTHONPATH`:
+After building, add the build's `python/` directory to your `PYTHONPATH`:
 
 ```bash
-export PYTHONPATH=/path/to/MoPhi/python:$PYTHONPATH
+export PYTHONPATH=/path/to/MoPhi/build/python:$PYTHONPATH
 python3 -c "import mophi; help(mophi)"
 ```
+
+> **Tip — keep pip and Python in sync.**  When manually installing optional
+> packages such as Newton, XLB, or DEME, always use
+> `python3 -m pip install <pkg>` (not bare `pip install <pkg>`).
+> This guarantees the package is installed into the **same** Python interpreter
+> that runs the demo, avoiding the common failure where `pip show <pkg>` reports
+> success but `import <pkg>` fails.
 
 Co-simulation solver classes are only exported when they have been compiled.
 The `mophi` package uses a graceful `try/except ImportError` pattern so that
@@ -311,9 +324,9 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 |--------|---------|--------|
 | `MOPHI_FETCH_TLFEA` | OFF | Download TLFEA into `external/TLFEA/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
-| `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
-| `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install xlb`) |
-| `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`pip install deme`) |
+| `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`python3 -m pip install newton`) |
+| `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`python3 -m pip install xlb`) |
+| `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`python3 -m pip install deme`) |
 | `MOPHI_BUILD_TLFEA_DEM` | OFF | Build the TLFEA+DEM co-simulation solver |
 | `MOPHI_BUILD_TLFEA_NEWTON` | OFF | Build the TLFEA+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
