@@ -72,3 +72,17 @@ mophi_register_external(
     URL  "https://github.com/Autodesk/XLB"
     TAG  "main"
 )
+
+# DEME is a Python discrete-element solver (pip install deme).  It has no CMake
+# build system and carries no C++ library to link against — the newton_xlb_dem
+# coupler imports it at runtime via pybind11 rather than linking against the C++
+# DEM-Engine.  When MOPHI_FETCH_DEME=ON, DEME is installed as a Python package
+# via pip rather than being compiled by ExternalProject_Add.  The
+# mophi_register_external entry records its URL for documentation and summary
+# purposes only; the actual installation is handled separately in
+# external/CMakeLists.txt.
+mophi_register_external(
+    NAME DEME
+    URL  "https://pypi.org/project/deme/"
+    TAG  "latest"
+)

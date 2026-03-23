@@ -2,38 +2,14 @@
 
 #include <core/Logger.hpp>
 
-// ── CUDA runtime ──────────────────────────────────────────────────────────────
-// Must appear before any DEM-Engine header.  DEM-Engine is a CUDA-based library
-// whose headers annotate functions with __host__ and __device__; without
-// cuda_runtime.h those keywords are undefined in a plain C++ translation unit.
-#include <cuda_runtime.h>
-
-// ── DEM-Engine ────────────────────────────────────────────────────────────────
-// API.h is DEM-Engine's single top-level header; it exposes deme::DEMSolver.
-#include <DEM/API.h>
-
 // ── pybind11 numpy support ────────────────────────────────────────────────────
 // Required for the numpy array conversions in GetRobotBodyTransforms().
 #include <pybind11/numpy.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DEMImpl — pimpl that hides deme::DEMSolver and CUDA headers
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct PyNewtonXLBDEMCoupler::DEMImpl {
-    /// DEM-Engine's top-level simulation driver.  Created (not yet initialized)
-    /// in Initialize(); torn down in Finalize().  In a full co-simulation the
-    /// caller would configure domain size, materials, and particle templates on
-    /// this object and then call dem->Initialize() before the time-stepping loop.
-    std::unique_ptr<deme::DEMSolver> dem;
-
-    bool initialized{false};
-};
-
 // ── Constructor / Destructor ───────────────────────────────────────────────────
 
 PyNewtonXLBDEMCoupler::PyNewtonXLBDEMCoupler()
-    : dem_(std::make_unique<DEMImpl>()),
+    : deme_solver(pybind11::none()),
       newton_model(pybind11::none()),
       newton_solver(pybind11::none()),
       newton_state_0(pybind11::none()),
@@ -45,7 +21,7 @@ PyNewtonXLBDEMCoupler::PyNewtonXLBDEMCoupler()
 }
 
 PyNewtonXLBDEMCoupler::~PyNewtonXLBDEMCoupler() {
-    if (dem_ && dem_->initialized) {
+    if (initialized) {
         Finalize();
     }
 }
@@ -55,17 +31,20 @@ PyNewtonXLBDEMCoupler::~PyNewtonXLBDEMCoupler() {
 void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
                                        pybind11::object newton_solver_in,
                                        pybind11::object xlb_simulation_in,
-                                       double dt,
-                                       unsigned int num_gpus) {
+                                       pybind11::object deme_solver_in,
+                                       double dt) {
     MOPHI_INFO("PyNewtonXLBDEMCoupler: initializing ...");
 
-    // ── DEM-Engine (placeholder) ──────────────────────────────────────────────
-    // Instantiate the solver to demonstrate real object creation; physics
-    // configuration and DEM-Engine's own Initialize() will be added later.
-    dem_->dem = std::make_unique<deme::DEMSolver>(num_gpus);
-    MOPHI_INFO("PyNewtonXLBDEMCoupler: deme::DEMSolver created (nGPUs=%u) [placeholder]", num_gpus);
-
-    dem_->initialized = true;
+    // ── DEME (Python, pip install deme) ───────────────────────────────────────
+    // Accept a pre-built deme.DEMSolver instance from the Python caller.
+    // Physics configuration and deme_solver.initialize() will be added later.
+    if (!deme_solver_in.is_none()) {
+        deme_solver = deme_solver_in;
+        deme_available = true;
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: deme.DEMSolver bound [placeholder]");
+    } else {
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: no DEME solver provided — DEME step will be skipped");
+    }
 
     // ── Newton ────────────────────────────────────────────────────────────────
     // Newton runs in Python; no C++ initialization is needed beyond storing the
@@ -102,11 +81,13 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
     }
 
     MOPHI_INFO("PyNewtonXLBDEMCoupler: initialized");
+
+    initialized = true;
 }
 
 //// TODO: No whole-sale stepper. Each physics step their own way.
 void PyNewtonXLBDEMCoupler::Step() {
-    if (!dem_->initialized) {
+    if (!initialized) {
         MOPHI_ERROR("PyNewtonXLBDEMCoupler::Step() called before Initialize().");
     }
 
@@ -123,15 +104,17 @@ void PyNewtonXLBDEMCoupler::Step() {
     // ── 2. Extract robot spatial representation (coupling output) ─────────────
     // GetRobotBodyTransforms() returns the body transforms from the just-updated
     // Newton state.  Future coupling logic should consume these transforms to:
-    //   • Update DEM-Engine's particle-field geometry (robot surface mesh).
+    //   • Update DEME's particle-field geometry (robot surface mesh).
     //   • Update XLB's fluid boundary (robot surface as moving obstacle).
     // auto transforms = GetRobotBodyTransforms();
-    // TODO: feed transforms into DEM-Engine and XLB.
+    // TODO: feed transforms into DEME and XLB.
 
-    // ── 3. DEM-Engine placeholder step ───────────────────────────────────────
+    // ── 3. DEME placeholder step ──────────────────────────────────────────────
     // No physics is advanced yet.  Once particle–robot coupling is implemented,
-    // this will call dem_->dem->DoDynamicsThenSync(sim_dt).
-    MOPHI_INFO("PyNewtonXLBDEMCoupler: DEM-Engine step (placeholder, no-op)");
+    // this will call the appropriate deme_solver step method.
+    if (deme_available) {
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: DEME step (placeholder, no-op)");
+    }
 
     // ── 4. XLB placeholder step ───────────────────────────────────────────────
     // No fluid physics is advanced yet.  Once fluid–robot coupling is implemented,
@@ -146,9 +129,11 @@ void PyNewtonXLBDEMCoupler::Step() {
 void PyNewtonXLBDEMCoupler::Finalize() {
     MOPHI_INFO("PyNewtonXLBDEMCoupler: finalizing ...");
 
-    // Release DEM-Engine resources.
-    dem_->dem.reset();
-    dem_->initialized = false;
+    // Release DEME Python reference so Python's reference counter can collect it.
+    deme_solver = pybind11::none();
+    deme_available = false;
+
+    initialized = false;
 
     // Release Newton references so Python's reference counter can collect them.
     newton_model = pybind11::none();
@@ -166,6 +151,10 @@ void PyNewtonXLBDEMCoupler::Finalize() {
     step_count = 0;
 
     MOPHI_INFO("PyNewtonXLBDEMCoupler: finalized");
+}
+
+void PyNewtonXLBDEMCoupler::SetVerbosity(mophi::verbosity_t verbose) {
+    mophi::Logger::GetInstance().SetVerbosity(verbose);
 }
 
 std::vector<std::array<double, 7>> PyNewtonXLBDEMCoupler::GetRobotBodyTransforms() const {

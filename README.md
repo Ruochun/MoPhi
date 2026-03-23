@@ -119,18 +119,18 @@ Newton is installed by MoPhi via pip at configure time when
 pip install newton
 ```
 
-### Newton + XLB + DEM-Engine (three-way coupling)
+### Newton + XLB + DEME (three-way coupling)
 
 ```bash
-# Configure: fetch DEM-Engine, install Newton + XLB via pip, and build the coupler
+# Configure: install Newton, XLB, and DEME via pip, and build the coupler
 cmake -B build \
-      -DMOPHI_FETCH_DEMENGINE=ON \
       -DMOPHI_FETCH_NEWTON=ON \
       -DMOPHI_FETCH_XLB=ON \
+      -DMOPHI_FETCH_DEME=ON \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
 cmake --build build
 
-# Run the Python demo (walking robot + XLB placeholder + DEM placeholder)
+# Run the Python demo (walking robot + XLB placeholder + DEME placeholder)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
 ```
 
@@ -143,8 +143,8 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
 - **XLB** (placeholder) — a JAX-based LBM fluid solver is instantiated but not
   yet seriously advanced.  Future work will feed the robot's geometry as a
   moving boundary condition.
-- **DEM-Engine** (placeholder) — a C++/CUDA discrete-element solver is
-  instantiated but not yet advanced.  Future work will introduce
+- **DEME** (placeholder) — a Python discrete-element solver (pip install deme)
+  is instantiated but not yet advanced.  Future work will introduce
   particle–robot coupling.
 
 ```python
@@ -243,6 +243,7 @@ Control which ones are fetched with the following options:
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
 | `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
 | `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install xlb`) |
+| `-DMOPHI_FETCH_DEME=ON` | OFF | Install DEME Python package (`pip install deme`) |
 
 ### Adding a new external solver
 
@@ -270,7 +271,7 @@ Control which ones are fetched with the following options:
 |--------|---------|-------------------|--------|
 | `-DMOPHI_BUILD_TLFEA_DEM=ON` | OFF | TLFEA + DEMEngine | Build TLFEA + DEM-Engine coupler |
 | `-DMOPHI_BUILD_TLFEA_NEWTON=ON` | OFF | TLFEA + Newton (pip) + CUDA Toolkit | Build TLFEA + Newton coupler |
-| `-DMOPHI_BUILD_NEWTON_XLB_DEM=ON` | OFF | DEMEngine + Newton (pip) + XLB (pip, optional) + CUDA Toolkit | Build Newton + XLB + DEM-Engine three-way coupler |
+| `-DMOPHI_BUILD_NEWTON_XLB_DEM=ON` | OFF | Newton (pip) + XLB (pip, optional) + DEME (pip, optional) | Build Newton + XLB + DEME three-way coupler |
 
 If a required external is not fetched, CMake emits a `FATAL_ERROR` at
 configure time with instructions on how to resolve the problem.
@@ -312,9 +313,10 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
 | `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
 | `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install xlb`) |
+| `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`pip install deme`) |
 | `MOPHI_BUILD_TLFEA_DEM` | OFF | Build the TLFEA+DEM co-simulation solver |
 | `MOPHI_BUILD_TLFEA_NEWTON` | OFF | Build the TLFEA+Newton co-simulation coupler |
-| `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEM-Engine three-way coupler |
+| `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
 
 ---
@@ -327,6 +329,7 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 | DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM | C++ / CUDA (CMake) |
 | Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
 | XLB | https://github.com/Autodesk/XLB | GPU lattice-Boltzmann fluid | Pure Python / JAX (pip) |
+| DEME | https://pypi.org/project/deme/ | Python discrete-element solver | Pure Python (pip) |
 
 ---
 

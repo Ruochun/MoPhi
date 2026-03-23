@@ -18,6 +18,14 @@ from . import mophi_core  # noqa: F401 — make the C++ module accessible
 
 __all__ = []
 
+# Verbosity constants (always available — come from mophi_core unconditionally).
+try:
+    from .mophi_core import VERBOSITY_ERROR, VERBOSITY_WARNING, VERBOSITY_INFO  # noqa: F401
+
+    __all__ += ["VERBOSITY_ERROR", "VERBOSITY_WARNING", "VERBOSITY_INFO"]
+except ImportError:
+    pass
+
 # TLFEADEMCoupler is only present when built with MOPHI_BUILD_TLFEA_DEM=ON.
 try:
     from .mophi_core import TLFEADEMCoupler  # noqa: F401

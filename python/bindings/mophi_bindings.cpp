@@ -1,6 +1,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <core/Logger.hpp>
+
 // TLFEADEMCoupler is only registered when the library was compiled with
 // MOPHI_BUILD_TLFEA_DEM=ON (both external projects fetched and built).
 // The CMake target sets MOPHI_HAS_TLFEA_DEM_COUPLER when that is the case.
@@ -19,12 +21,12 @@
 #endif
 
 // NewtonXLBDEMCoupler is only registered when the library was compiled with
-// MOPHI_BUILD_NEWTON_XLB_DEM=ON (DEMEngine external fetched and built).
-// Newton and XLB are pure Python packages and are not linked into this module.
+// MOPHI_BUILD_NEWTON_XLB_DEM=ON.  Newton, XLB, and DEME are all pure Python
+// packages and are not linked into this module.
 // PyNewtonXLBDEMCoupler (defined in src/couplers/newton_xlb_dem/PyNewtonXLBDEMCoupler.h)
 // bridges all three solvers: Newton drives a walking robot in Python, XLB provides
-// a placeholder LBM fluid solver in Python, and DEM-Engine is a placeholder C++
-// discrete-element solver held via a pimpl DEMImpl.
+// a placeholder LBM fluid solver in Python, and DEME is a placeholder Python
+// discrete-element solver (pip install deme) imported at runtime via pybind11.
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
     #include "PyNewtonXLBDEMCoupler.h"  // src/couplers/newton_xlb_dem/
 #endif
@@ -41,6 +43,14 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(mophi_core, m) {
     m.doc() = "MoPhi — multi-physics co-simulation framework (C++ core)";
+
+    // ── Verbosity constants ────────────────────────────────────────────────────
+    // Expose mophi::verbosity_t values so Python callers can write e.g.:
+    //   coupler.set_verbosity(mophi.VERBOSITY_INFO)
+    // The integer values match the constants defined in <core/Logger.hpp>.
+    m.attr("VERBOSITY_ERROR") = static_cast<int>(mophi::VERBOSITY_ERROR);
+    m.attr("VERBOSITY_WARNING") = static_cast<int>(mophi::VERBOSITY_WARNING);
+    m.attr("VERBOSITY_INFO") = static_cast<int>(mophi::VERBOSITY_INFO);
 
 #ifdef MOPHI_HAS_TLFEA_DEM_COUPLER
     // ── TLFEADEMCoupler ───────────────────────────────────────────────────────
@@ -112,21 +122,24 @@ PYBIND11_MODULE(mophi_core, m) {
     // PyNewtonXLBDEMCoupler is defined in src/couplers/newton_xlb_dem/.
     py::class_<PyNewtonXLBDEMCoupler>(m, "NewtonXLBDEMCoupler",
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "
-                                      "physics), XLB (lattice-Boltzmann fluid solver), and DEM-Engine (discrete "
-                                      "elements).\n\n"
+                                      "physics), XLB (lattice-Boltzmann fluid solver), and DEME (Python "
+                                      "discrete-element solver, pip install deme).\n\n"
                                       "Newton drives a walking robot and produces a spatial representation "
-                                      "(body transforms) at every step.  XLB and DEM-Engine are placeholder "
+                                      "(body transforms) at every step.  XLB and DEME are placeholder "
                                       "solvers that are instantiated but not seriously advanced yet; future "
                                       "work will feed the robot geometry into both.\n\n"
                                       "Usage::\n\n"
-                                      "    import mophi, newton, warp as wp\n"
+                                      "    import mophi, newton, warp as wp, deme\n"
                                       "    wp.init()\n"
                                       "    builder = newton.ModelBuilder()\n"
                                       "    # ... build walking robot ...\n"
                                       "    model  = builder.finalize()\n"
                                       "    solver = newton.solvers.SolverXPBD(model)\n"
+                                      "    dem = deme.DEMSolver(1)\n"
                                       "    coupler = mophi.NewtonXLBDEMCoupler()\n"
-                                      "    coupler.initialize(newton_model=model, newton_solver=solver)\n"
+                                      "    coupler.set_verbosity(mophi.VERBOSITY_INFO)\n"
+                                      "    coupler.initialize(newton_model=model, newton_solver=solver,\n"
+                                      "                       deme_solver=dem)\n"
                                       "    for step in range(steps):\n"
                                       "        # optionally update coupler.newton_control before each step\n"
                                       "        coupler.step()\n"
@@ -135,22 +148,24 @@ PYBIND11_MODULE(mophi_core, m) {
         .def(py::init<>())
         .def("initialize", &PyNewtonXLBDEMCoupler::Initialize, py::arg("newton_model") = py::none(),
              py::arg("newton_solver") = py::none(), py::arg("xlb_simulation") = py::none(),
-             py::arg("sim_dt") = 1.0 / 1000.0, py::arg("num_gpus") = 1u,
+             py::arg("deme_solver") = py::none(), py::arg("sim_dt") = 1.0 / 1000.0,
              "Initialize all three solvers.\n\n"
              "newton_model must be a newton.Model; newton_solver must be a Newton solver\n"
              "instance (e.g. newton.solvers.SolverXPBD(model)).  When both are provided\n"
              "the coupler evaluates initial forward kinematics and is ready to step.\n"
              "xlb_simulation may be an XLB simulation object or None (skip XLB).\n"
-             "sim_dt sets the co-simulation time step in seconds (default 1 ms).\n"
-             "num_gpus controls how many GPUs are handed to DEM-Engine (default 1).")
+             "deme_solver may be a deme.DEMSolver instance or None (skip DEME).\n"
+             "sim_dt sets the co-simulation time step in seconds (default 1 ms).")
         .def("step", &PyNewtonXLBDEMCoupler::Step,
              "Advance one co-simulation step.\n\n"
              "Sequence: clear Newton forces → Newton collide → Newton step → swap states\n"
-             "→ DEM-Engine placeholder (no-op) → XLB placeholder (no-op).\n"
+             "→ DEME placeholder (no-op) → XLB placeholder (no-op).\n"
              "Call get_robot_body_transforms() after step() to read the spatial\n"
              "representation of the robot.")
         .def("finalize", &PyNewtonXLBDEMCoupler::Finalize,
              "Finalize all solvers and release all resources including Python references.")
+        .def("set_verbosity", &PyNewtonXLBDEMCoupler::SetVerbosity, py::arg("verbose"),
+             "Set the MoPhi logger verbosity level (e.g. mophi.VERBOSITY_INFO).")
         .def("get_robot_body_transforms", &PyNewtonXLBDEMCoupler::GetRobotBodyTransforms,
              "Return the spatial representation of the robot as a list of body transforms.\n\n"
              "Each entry is [px, py, pz, qx, qy, qz, qw] — the world-space position\n"
