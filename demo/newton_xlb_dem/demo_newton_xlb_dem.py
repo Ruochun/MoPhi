@@ -407,25 +407,43 @@ except Exception as exc:
     )
 
 # ─── 13b. DEM placeholder sphere visualisation ───────────────────────────────
-# These static spheres represent placeholder DEME particle positions in the
-# visualisation window.  Their world-space positions and radii are hard-coded
-# for now; future work will replace them with live data from deme_solver so
-# that actual particle positions from DEM-Engine are shown each frame.
-_DEM_SPHERE_POSITIONS = [
-    [1.0, 0.0, 0.05],
-    [1.5, 0.3, 0.05],
-    [0.5, -0.4, 0.05],
-    [2.0, 0.0, 0.05],
-    [1.0, 0.8, 0.05],
-]
-_DEM_SPHERE_RADII = [0.05, 0.07, 0.04, 0.06, 0.05]
-_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — placeholder DEM particle colour
+# 50 spheres of 4 radius types, initially scattered ahead of the robot (+x)
+# near the ground — resembling a thin layer of dust or dirt on the surface.
+# All spheres share a constant velocity in the -x direction (opposite to the
+# robot's forward direction), so they appear to drift towards the robot's face.
+# Collision and DEM physics will be handled by DEME in a future update.
+_NUM_DEM_SPHERES = 50
+# Four representative radius types [m] — coarse dust grain size distribution.
+_DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
+
+_rng = np.random.default_rng(seed=42)
+_radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
+_dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
+
+# Initial positions: scattered in a band ahead of the robot along +x,
+# spread laterally across y, and resting on the ground (z = radius).
+_x_init = _rng.uniform(1.5, 5.0, size=_NUM_DEM_SPHERES).astype(np.float32)
+_y_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+_z_init = _dem_sphere_radii_np  # each sphere just touches the ground plane
+
+# _dem_sphere_positions_np shape (N, 3) — updated every frame.
+_dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
+
+# Velocity in -x direction [m/s] — opposite to robot's forward (+x) direction,
+# so the spheres move towards the robot's face.
+_DEM_SPHERE_VELOCITY_X = -0.5  # m/s
+_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
 
 if _viewer_available:
-    _dem_sphere_pos_wp = wp.array(np.array(_DEM_SPHERE_POSITIONS, dtype=np.float32), dtype=wp.vec3)
-    _dem_sphere_radii_wp = wp.array(np.array(_DEM_SPHERE_RADII, dtype=np.float32), dtype=wp.float32)
-    _dem_sphere_colors_wp = wp.array([_DEM_SPHERE_COLOR] * len(_DEM_SPHERE_POSITIONS), dtype=wp.vec3)
-    print(f"[Viewer] {len(_DEM_SPHERE_POSITIONS)} DEM placeholder sphere(s) registered for visualisation.\n")
+    # Radii and colours are constant throughout the simulation; allocate once.
+    # The position array (_dem_sphere_pos_wp) is rebuilt from _dem_sphere_positions_np
+    # every frame inside the simulation loop after positions are updated.
+    _dem_sphere_radii_wp = wp.array(_dem_sphere_radii_np, dtype=wp.float32)
+    _dem_sphere_colors_wp = wp.array(
+        np.tile(_DEM_SPHERE_COLOR, (_NUM_DEM_SPHERES, 1)).astype(np.float32),
+        dtype=wp.vec3,
+    )
+    print(f"[Viewer] {_NUM_DEM_SPHERES} DEM placeholder sphere(s) registered for visualisation.\n")
 
 # ─── 14. Co-simulation loop ───────────────────────────────────────────────────
 # The ANYmal C walking policy runs at 50 Hz (one inference per frame).
@@ -550,11 +568,14 @@ for frame in range(NUM_FRAMES):
 
     # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
+        # Advance sphere positions along -x (towards robot) each frame.
+        _dem_sphere_positions_np[:, 0] += _DEM_SPHERE_VELOCITY_X * FRAME_DT
+        _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
+
         viewer.begin_frame(sim_time)
         viewer.log_state(coupler.newton_state_0)
-        # Render DEM placeholder spheres.  These static spheres stand in for
-        # future DEME particle positions; eventually this call will use live
-        # positions and radii provided by deme_solver each step.
+        # Render DEM placeholder spheres moving towards the robot.
+        # Future work will replace these with live DEME particle positions.
         viewer.log_points(
             "dem_particles",
             _dem_sphere_pos_wp,
