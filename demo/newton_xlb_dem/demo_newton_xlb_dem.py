@@ -345,7 +345,8 @@ if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
     try:
         deme_solver = DEME.DEMSolver()
-        print("[DEME] DEME.DEMSolver created [placeholder].\n")
+        wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+        deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
     except Exception as exc:
         print(f"[DEME] Could not create DEME.DEMSolver ({exc}) — skipping DEME.\n")
         deme_solver = None
@@ -470,12 +471,6 @@ for frame in range(NUM_FRAMES):
         a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
         wp.copy(coupler.newton_control.joint_target_pos, a_wp)
 
-    # ── Physics substeps ──────────────────────────────────────────────────────
-    for _ in range(SIM_SUBSTEPS):
-        # TODO: No whole-sale stepper. Update this later.
-        coupler.step()
-    sim_time += FRAME_DT
-
     # ── Extract foot-tip contact proxy poses ─────────────────────────────────
     # Fetch all body transforms once; reuse for foot extraction and status line.
     #
@@ -539,13 +534,19 @@ for frame in range(NUM_FRAMES):
             ])
             foot_tip_rotations.append([qx, qy, qz, qw])
 
+    # ── Physics substeps ──────────────────────────────────────────────────────
+    for _ in range(SIM_SUBSTEPS):
+        # TODO: No whole-sale stepper. Update this later.
+        coupler.step()
+    sim_time += FRAME_DT
+
     # ── Print foot-tip positions every frame ──────────────────────────────────
-    if foot_tip_positions:
-        tip_str = "  ".join(
-            f"{d['label']}=({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})"
-            for d, p in zip(foot_tip_descriptors, foot_tip_positions)
-        )
-        print(f"[f{frame + 1:04d}] foot_tip_positions: {tip_str}")
+    # if foot_tip_positions:
+    #     tip_str = "  ".join(
+    #         f"{d['label']}=({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})"
+    #         for d, p in zip(foot_tip_descriptors, foot_tip_positions)
+    #     )
+    #     print(f"[f{frame + 1:04d}] foot_tip_positions: {tip_str}")
 
     # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
