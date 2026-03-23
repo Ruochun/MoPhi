@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include <core/Logger.hpp>
 #include <pybind11/pybind11.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ struct PyNewtonXLBDEMCoupler {
     bool deme_available{false};
     bool newton_available{false};
     bool xlb_available{false};
-    bool initialized{false};  ///< True after all Initialize() steps complete
+    bool initialized{false};  ///< True after Initialize() completes; checked in Step() and destructor
 
     PyNewtonXLBDEMCoupler();
     ~PyNewtonXLBDEMCoupler();
@@ -79,13 +80,13 @@ struct PyNewtonXLBDEMCoupler {
     /// @param newton_solver_in   A Newton solver instance, e.g. newton.solvers.SolverXPBD
     ///                           (or None to skip Newton).
     /// @param xlb_simulation_in  An XLB simulation instance (or None to skip XLB).
+    /// @param deme_solver_in     A deme.DEMSolver Python instance (or None to skip DEME).
     /// @param dt                 Co-simulation time step [s].
-    /// @param num_gpus           Number of GPUs to pass to the DEME solver.
     void Initialize(pybind11::object newton_model_in,
                     pybind11::object newton_solver_in,
                     pybind11::object xlb_simulation_in,
-                    double dt,
-                    unsigned int num_gpus);
+                    pybind11::object deme_solver_in,
+                    double dt);
 
     /// @brief Advance one co-simulation step.
     ///
@@ -95,6 +96,9 @@ struct PyNewtonXLBDEMCoupler {
 
     /// @brief Finalize all solvers and release all resources.
     void Finalize();
+
+    /// @brief Set the MoPhi logger verbosity level.
+    void SetVerbosity(mophi::verbosity_t verbose);
 
     /// @brief Return the current spatial representation of the robot.
     ///

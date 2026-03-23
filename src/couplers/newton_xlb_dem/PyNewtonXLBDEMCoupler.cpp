@@ -31,24 +31,19 @@ PyNewtonXLBDEMCoupler::~PyNewtonXLBDEMCoupler() {
 void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
                                        pybind11::object newton_solver_in,
                                        pybind11::object xlb_simulation_in,
-                                       double dt,
-                                       unsigned int num_gpus) {
+                                       pybind11::object deme_solver_in,
+                                       double dt) {
     MOPHI_INFO("PyNewtonXLBDEMCoupler: initializing ...");
 
     // ── DEME (Python, pip install deme) ───────────────────────────────────────
-    // Import the Python deme package and create a solver instance.  DEME is
-    // used as a pure Python solver so no C++ build of DEM-Engine is required.
+    // Accept a pre-built deme.DEMSolver instance from the Python caller.
     // Physics configuration and deme_solver.initialize() will be added later.
-    namespace py = pybind11;
-    try {
-        py::module_ deme_mod = py::module_::import("deme");
-        deme_solver = deme_mod.attr("DEMSolver")(num_gpus);
+    if (!deme_solver_in.is_none()) {
+        deme_solver = deme_solver_in;
         deme_available = true;
-        MOPHI_INFO("PyNewtonXLBDEMCoupler: deme.DEMSolver created (nGPUs=%u) [placeholder]", num_gpus);
-    } catch (const py::error_already_set&) {
-        MOPHI_WARNING(
-            "PyNewtonXLBDEMCoupler: Python package 'deme' not available "
-            "(install with: pip install deme) — DEME step will be skipped");
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: deme.DEMSolver bound [placeholder]");
+    } else {
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: no DEME solver provided — DEME step will be skipped");
     }
 
     // ── Newton ────────────────────────────────────────────────────────────────
@@ -156,6 +151,10 @@ void PyNewtonXLBDEMCoupler::Finalize() {
     step_count = 0;
 
     MOPHI_INFO("PyNewtonXLBDEMCoupler: finalized");
+}
+
+void PyNewtonXLBDEMCoupler::SetVerbosity(mophi::verbosity_t verbose) {
+    mophi::Logger::GetInstance().SetVerbosity(verbose);
 }
 
 std::vector<std::array<double, 7>> PyNewtonXLBDEMCoupler::GetRobotBodyTransforms() const {
