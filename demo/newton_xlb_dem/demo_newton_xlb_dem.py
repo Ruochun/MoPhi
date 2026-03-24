@@ -50,7 +50,7 @@ import sys
 
 import numpy as np
 
-# ─── 1. Import MoPhi ─────────────────────────────────────────────────────────
+# ─── Import MoPhi ─────────────────────────────────────────────────────────
 try:
     import mophi
 except ImportError as exc:
@@ -67,7 +67,7 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
         "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# ─── 2. Import Newton + Warp + PyTorch ────────────────────────────────────────
+# ─── Import Newton + Warp + PyTorch ────────────────────────────────────────
 try:
     import torch
     import newton
@@ -84,7 +84,7 @@ except ImportError:
     )
     sys.exit(1)
 
-# ─── 3. Import XLB (optional) ─────────────────────────────────────────────────
+# ─── Import XLB (optional) ─────────────────────────────────────────────────
 try:
     import xlb
 
@@ -96,7 +96,7 @@ except ImportError:
         "      Install with:  pip install xlb"
     )
 
-# ─── 4. Import DEME (optional) ────────────────────────────────────────────────
+# ─── Import DEME (optional) ────────────────────────────────────────────────
 try:
     import DEME
 
@@ -110,7 +110,7 @@ except ImportError:
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
 
-# ─── 5. Joint-index remapping ─────────────────────────────────────────────────
+# ─── Joint-index remapping ─────────────────────────────────────────────────
 # The ANYmal C RL policy was trained with legs ordered [LF, RF, LH, RH] × [HAA, HFE, KFE]
 # ("lab" convention), while MuJoCo/Newton uses a different internal ordering.
 # These index arrays reorder the 12 joint outputs so they apply to the correct actuators.
@@ -119,7 +119,7 @@ lab_to_mujoco = [0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11]
 mujoco_to_lab = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
 
 
-# ─── 6. Policy observation helpers ───────────────────────────────────────────
+# ─── Policy observation helpers ───────────────────────────────────────────
 @torch.jit.script
 def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Rotate a vector by the inverse of a quaternion (last dimension is [x,y,z,w])."""
@@ -158,11 +158,11 @@ def compute_obs(actions, state, joint_pos_initial, torch_device, indices, gravit
     return obs
 
 
-# ─── 7. Initialize Warp ───────────────────────────────────────────────────────
+# ─── Initialize Warp ───────────────────────────────────────────────────────
 wp.init()
 torch_device = wp.device_to_torch(wp.get_device())
 
-# ─── 8. Load the ANYmal C robot model ─────────────────────────────────────────
+# ─── Load the ANYmal C robot model ─────────────────────────────────────────
 # newton.utils.download_asset("anybotics_anymal_c") downloads the ANYmal C URDF
 # and pre-trained RL walking policy from the Newton Assets repository.
 # The robot is placed at z = 0.62 m above the flat ground plane (z-up, x = forward).
@@ -268,7 +268,7 @@ print(
     f"{newton_model.joint_count} joints.\n"
 )
 
-# ─── 8b. Identify foot-tip contact proxies ───────────────────────────────────
+# ─── Identify foot-tip contact proxies ───────────────────────────────────
 # ANYmal C has a GeoType.SPHERE collision shape at the distal end of each SHANK
 # link.  These spheres are the ground-contact proxies and will serve as coupling
 # surfaces for DEM particles and XLB fluid boundaries in future co-sim work.
@@ -317,7 +317,25 @@ for d in foot_tip_descriptors:
     )
 print()
 
-# ─── 9. Build the XLB placeholder scene (if XLB is available) ─────────────────
+# ─── Set up Newton's OpenGL visualization window ─────────────────────────
+# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
+# render path: begin_frame() / log_state() / end_frame() update the display each
+# frame while the simulation continues to advance.  The window can be closed by
+# the user at any time; viewer.is_running() returns False once dismissed.
+try:
+    viewer = newton.viewer.ViewerGL()
+    viewer.set_model(newton_model)
+    _viewer_available = True
+    print("[Viewer] Newton OpenGL visualization window opened.\n")
+except Exception as exc:
+    viewer = None
+    _viewer_available = False
+    print(
+        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
+        "         The simulation will run without visualization."
+    )
+
+# ─── Build the XLB placeholder scene (if XLB is available) ─────────────────
 xlb_simulation = None
 
 if _xlb_available:
@@ -338,20 +356,73 @@ if _xlb_available:
         print(f"[XLB] Could not create XLB simulation ({exc}) — skipping XLB.\n")
         xlb_simulation = None
 
-# ─── 10. Build the DEME placeholder solver (if DEME is available) ─────────────
+# ─── Build the DEME placeholder solver (if DEME is available) ─────────────
+# Spheres are initially scattered ahead of the robot (+y)
+# near the ground — resembling a thin layer of dust or dirt on the surface.
+# All spheres share a constant velocity in the -y direction (opposite to the
+# robot's forward direction), so they appear to drift towards the robot's face.
+# Collision and DEM physics will be handled by DEME in a future update.
+_NUM_DEM_SPHERES = 150
+# Four representative radius types [m] — coarse dust grain size distribution.
+_DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
+
+_rng = np.random.default_rng(seed=42)
+_radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
+_dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
+
+# Initial positions: scattered in a band ahead of the robot along +xy,
+# spread laterally across y, and resting on the ground (z = radius).
+_x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+_y_init = _rng.uniform(1., 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+_z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.05).astype(np.float32)
+
+# _dem_sphere_positions_np shape (N, 3) — updated every frame.
+_dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
+
+# Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
+# so the spheres move towards the robot's face.
+_DEM_SPHERE_VELOCITY_Y = -0.5  # m/s
+_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
+
+if _viewer_available:
+    # Radii and colours are constant throughout the simulation; allocate once.
+    # The position array (_dem_sphere_pos_wp) is rebuilt from _dem_sphere_positions_np
+    # every frame inside the simulation loop after positions are updated.
+    _dem_sphere_radii_wp = wp.array(_dem_sphere_radii_np, dtype=wp.float32)
+    _dem_sphere_colors_wp = wp.array(
+        np.tile(_DEM_SPHERE_COLOR, (_NUM_DEM_SPHERES, 1)).astype(np.float32),
+        dtype=wp.vec3,
+    )
+    print(f"[Viewer] {_NUM_DEM_SPHERES} DEM placeholder sphere(s) registered for visualisation.\n")
+
 deme_solver = None
+shank_trackers = []
+particles_tracker = None
 
 if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
-    try:
-        deme_solver = DEME.DEMSolver()
-        wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
-        deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
-    except Exception as exc:
-        print(f"[DEME] Could not create DEME.DEMSolver ({exc}) — skipping DEME.\n")
-        deme_solver = None
+    deme_solver = DEME.DEMSolver()
+    wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+    deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
+    deme_solver.SetGravitationalAcceleration([0, -9.81, 0])
+    # Load the shank
+    ad_hoc_pos = [0., 0., 0.]
+    for i in range(len(foot_tip_sphere_radii)):
+        template_shank = deme_solver.LoadSphereType(1., foot_tip_sphere_radii[0], wall_mat)
+        shank_trackers.append(deme_solver.AddClumps(template_shank, [ad_hoc_pos]))
+    # Load particles
+    particle_templates = []
+    for i in range(len(_DEM_RADIUS_TYPES)):
+        particle_templates.append(deme_solver.LoadSphereType(1., _DEM_RADIUS_TYPES[i], wall_mat))
+    used_types = []
+    for i in range(_NUM_DEM_SPHERES):
+        used_types.append(particle_templates[_radius_indices[i]])
+    particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
+    particles_tracker = deme_solver.Track(particles)
+    # Init
+    deme_solver.Initialize()
 
-# ─── 11. Initialize the coupler ───────────────────────────────────────────────
+# ─── Initialize the coupler ───────────────────────────────────────────────
 # sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
 # matching the inner time step from Newton's anymal example).
 SIM_DT = 1.0 / 200.0
@@ -369,7 +440,7 @@ coupler.initialize(
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
-# ─── 12. Load the ANYmal C walking policy ────────────────────────────────────
+# ─── Load the ANYmal C walking policy ────────────────────────────────────
 print("[Policy] Loading ANYmal C walking policy ...")
 policy = torch.jit.load(policy_path, map_location=torch_device)
 
@@ -388,46 +459,7 @@ command[0, 0] = 1.0  # walk forward (x-direction)
 
 print("[Policy] ANYmal C walking policy loaded.\n")
 
-# ─── 13. Set up Newton's OpenGL visualization window ─────────────────────────
-# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
-# render path: begin_frame() / log_state() / end_frame() update the display each
-# frame while the simulation continues to advance.  The window can be closed by
-# the user at any time; viewer.is_running() returns False once dismissed.
-try:
-    viewer = newton.viewer.ViewerGL()
-    viewer.set_model(newton_model)
-    _viewer_available = True
-    print("[Viewer] Newton OpenGL visualization window opened.\n")
-except Exception as exc:
-    viewer = None
-    _viewer_available = False
-    print(
-        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
-        "         The simulation will run without visualization."
-    )
-
-# ─── 13b. DEM placeholder sphere visualisation ───────────────────────────────
-# These static spheres represent placeholder DEME particle positions in the
-# visualisation window.  Their world-space positions and radii are hard-coded
-# for now; future work will replace them with live data from deme_solver so
-# that actual particle positions from DEM-Engine are shown each frame.
-_DEM_SPHERE_POSITIONS = [
-    [1.0, 0.0, 0.05],
-    [1.5, 0.3, 0.05],
-    [0.5, -0.4, 0.05],
-    [2.0, 0.0, 0.05],
-    [1.0, 0.8, 0.05],
-]
-_DEM_SPHERE_RADII = [0.05, 0.07, 0.04, 0.06, 0.05]
-_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — placeholder DEM particle colour
-
-if _viewer_available:
-    _dem_sphere_pos_wp = wp.array(np.array(_DEM_SPHERE_POSITIONS, dtype=np.float32), dtype=wp.vec3)
-    _dem_sphere_radii_wp = wp.array(np.array(_DEM_SPHERE_RADII, dtype=np.float32), dtype=wp.float32)
-    _dem_sphere_colors_wp = wp.array([_DEM_SPHERE_COLOR] * len(_DEM_SPHERE_POSITIONS), dtype=wp.vec3)
-    print(f"[Viewer] {len(_DEM_SPHERE_POSITIONS)} DEM placeholder sphere(s) registered for visualisation.\n")
-
-# ─── 14. Co-simulation loop ───────────────────────────────────────────────────
+# ─── Co-simulation loop ───────────────────────────────────────────────────
 # The ANYmal C walking policy runs at 50 Hz (one inference per frame).
 # Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
 # 4-substep inner loop in Newton's anymal example (frame_dt = 1/50, sim_dt = 1/200).
@@ -550,11 +582,17 @@ for frame in range(NUM_FRAMES):
 
     # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
+        # Get particles positions
+        particles_positions = particles_tracker.Positions()
+        # print(particles_positions)
+        # Advance sphere positions along -y (towards robot) each frame.
+        _dem_sphere_positions_np[:, 1] += _DEM_SPHERE_VELOCITY_Y * FRAME_DT
+        _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
+
         viewer.begin_frame(sim_time)
         viewer.log_state(coupler.newton_state_0)
-        # Render DEM placeholder spheres.  These static spheres stand in for
-        # future DEME particle positions; eventually this call will use live
-        # positions and radii provided by deme_solver each step.
+        # Render DEM placeholder spheres moving towards the robot.
+        # Future work will replace these with live DEME particle positions.
         viewer.log_points(
             "dem_particles",
             _dem_sphere_pos_wp,
@@ -579,7 +617,7 @@ for frame in range(NUM_FRAMES):
 
 print()
 
-# ─── 15. Finalize ─────────────────────────────────────────────────────────────
+# ─── Finalize ─────────────────────────────────────────────────────────────
 if _viewer_available:
     viewer.close()
 
