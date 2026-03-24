@@ -29,6 +29,7 @@ except ImportError:
 # TLFEADEMCoupler is only present when built with MOPHI_BUILD_TLFEA_DEM=ON.
 try:
     from .mophi_core import TLFEADEMCoupler  # noqa: F401
+
     __all__.append("TLFEADEMCoupler")
 except ImportError:
     pass
@@ -36,6 +37,7 @@ except ImportError:
 # TLFEANewtonCoupler is only present when built with MOPHI_BUILD_TLFEA_NEWTON=ON.
 try:
     from .mophi_core import TLFEANewtonCoupler  # noqa: F401
+
     __all__.append("TLFEANewtonCoupler")
 except ImportError:
     pass
@@ -43,6 +45,7 @@ except ImportError:
 # NewtonXLBDEMCoupler is only present when built with MOPHI_BUILD_NEWTON_XLB_DEM=ON.
 try:
     from .mophi_core import NewtonXLBDEMCoupler  # noqa: F401
+
     __all__.append("NewtonXLBDEMCoupler")
 except ImportError:
     pass

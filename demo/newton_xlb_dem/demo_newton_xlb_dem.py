@@ -263,10 +263,7 @@ newton_solver = newton.solvers.SolverMuJoCo(
     nconmax=100,
 )
 
-print(
-    f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, "
-    f"{newton_model.joint_count} joints.\n"
-)
+print(f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, " f"{newton_model.joint_count} joints.\n")
 
 # ─── Identify foot-tip contact proxies ───────────────────────────────────
 # ANYmal C has a GeoType.SPHERE collision shape at the distal end of each SHANK
@@ -297,12 +294,14 @@ for shank_name in FOOT_SHANK_NAMES:
     sphere_info = builder_foot_spheres.get(b_idx)
     if sphere_info is None:
         raise RuntimeError(f"[FootTip] No sphere shape found attached to shank body '{shank_name}'")
-    foot_tip_descriptors.append({
-        "label": shank_name,
-        "body_idx": b_idx,
-        "local_offset": sphere_info["local_offset"],
-        "sphere_radius": sphere_info["sphere_radius"],
-    })
+    foot_tip_descriptors.append(
+        {
+            "label": shank_name,
+            "body_idx": b_idx,
+            "local_offset": sphere_info["local_offset"],
+            "sphere_radius": sphere_info["sphere_radius"],
+        }
+    )
 
 # Per-foot sphere radii are constant throughout the simulation.
 foot_tip_sphere_radii = [d["sphere_radius"] for d in foot_tip_descriptors]
@@ -373,7 +372,7 @@ _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices],
 # Initial positions: scattered in a band ahead of the robot along +xy,
 # spread laterally across y, and resting on the ground (z = radius).
 _x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_y_init = _rng.uniform(1., 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+_y_init = _rng.uniform(1.0, 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
 _z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.25).astype(np.float32)
 
 # _dem_sphere_positions_np shape (N, 3) — updated every frame.
@@ -381,7 +380,7 @@ _dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
 
 # Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
 # so the spheres move towards the robot's face.
-_DEM_SPHERE_INIT_VELOCITY_Y = [0., -1., 0.]  # m/s
+_DEM_SPHERE_INIT_VELOCITY_Y = [0.0, -1.0, 0.0]  # m/s
 _DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
 # sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
 # matching the inner time step from Newton's anymal example).
@@ -407,13 +406,13 @@ if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
     deme_solver = DEME.DEMSolver()
     wall_mat = deme_solver.LoadMaterial({"E": 1e6, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
-    deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
+    deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
     deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
     deme_solver.SetErrorOutAvgContacts(500)
     # Load the shank
-    ad_hoc_pos = [0., 0., 0.]
+    ad_hoc_pos = [0.0, 0.0, 0.0]
     for i in range(len(foot_tip_sphere_radii)):
-        template_shank = deme_solver.LoadSphereType(1., foot_tip_sphere_radii[0], wall_mat)
+        template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[0], wall_mat)
         shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
         shank.SetFamily(_FIXED_FAM)
         shank_trackers.append(deme_solver.Track(shank))
@@ -422,7 +421,7 @@ if _deme_available:
     # Load particles
     particle_templates = []
     for i in range(len(_DEM_RADIUS_TYPES)):
-        particle_templates.append(deme_solver.LoadSphereType(1., _DEM_RADIUS_TYPES[i], wall_mat))
+        particle_templates.append(deme_solver.LoadSphereType(1.0, _DEM_RADIUS_TYPES[i], wall_mat))
     used_types = []
     for i in range(_NUM_DEM_SPHERES):
         used_types.append(particle_templates[_radius_indices[i]])
@@ -471,10 +470,31 @@ print("[Policy] ANYmal C walking policy loaded.\n")
 # The ANYmal C walking policy runs at 50 Hz (one inference per frame).
 # Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
 # 4-substep inner loop in Newton's anymal example (frame_dt = 1/50, sim_dt = 1/200).
-SIM_SUBSTEPS = 4          # physics substeps per policy frame
+SIM_SUBSTEPS = 4  # physics substeps per policy frame
 FRAME_DT = SIM_DT * SIM_SUBSTEPS  # policy control rate
-NUM_FRAMES = 250          # ≈ 5 s at 50 Hz (or until the viewer is closed)
+NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
 sim_time = 0.0
+
+# ─── Movie recording settings ────────────────────────────────────────────
+# Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
+# Requires: pip install imageio imageio-ffmpeg
+SAVE_MOVIE = False
+MOVIE_OUTPUT_PATH = "demo_newton_xlb_dem.mp4"
+MOVIE_FPS = 50  # frames per second for the output video
+
+_movie_writer = None
+if SAVE_MOVIE and _viewer_available:
+    try:
+        import imageio
+
+        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
+    except ImportError:
+        print(
+            "WARNING: imageio is not installed — movie recording disabled.\n"
+            "         Install with:  pip install imageio imageio-ffmpeg"
+        )
+        SAVE_MOVIE = False
 
 print(
     f"Running up to {NUM_FRAMES} policy frame(s) "
@@ -548,7 +568,7 @@ for frame in range(NUM_FRAMES):
     foot_tip_rotations = []
     if all_transforms:
         for d in foot_tip_descriptors:
-            t = all_transforms[d["body_idx"]]   # [px, py, pz, qx, qy, qz, qw]
+            t = all_transforms[d["body_idx"]]  # [px, py, pz, qx, qy, qz, qw]
             px, py, pz = t[0], t[1], t[2]
             qx, qy, qz, qw = t[3], t[4], t[5], t[6]
             ox, oy, oz = d["local_offset"]
@@ -561,17 +581,19 @@ for frame in range(NUM_FRAMES):
             # The +o term (unrotated local offset) is part of the formula itself.
             # Combined with body_pos (p), the full world-space centre is:
             #   centre_world = p + o + 2*qw*(qv×o) + 2*(qv×(qv×o))
-            cx = qy * oz - qz * oy        # first cross: qv × o
+            cx = qy * oz - qz * oy  # first cross: qv × o
             cy = qz * ox - qx * oz
             cz = qx * oy - qy * ox
-            ccx = qy * cz - qz * cy       # second cross: qv × (qv × o)
+            ccx = qy * cz - qz * cy  # second cross: qv × (qv × o)
             ccy = qz * cx - qx * cz
             ccz = qx * cy - qy * cx
-            foot_tip_positions.append([
-                px + ox + 2.0 * (qw * cx + ccx),
-                py + oy + 2.0 * (qw * cy + ccy),
-                pz + oz + 2.0 * (qw * cz + ccz),
-            ])
+            foot_tip_positions.append(
+                [
+                    px + ox + 2.0 * (qw * cx + ccx),
+                    py + oy + 2.0 * (qw * cy + ccy),
+                    pz + oz + 2.0 * (qw * cz + ccz),
+                ]
+            )
             foot_tip_rotations.append([qx, qy, qz, qw])
 
         # Feed the info to DEME
@@ -605,6 +627,18 @@ for frame in range(NUM_FRAMES):
         _dem_sphere_positions_np = np.array(particles_positions)
         _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
 
+        # Follow-camera: position the camera behind the robot (−y direction) so
+        # the robot and the DEM particles ahead of it (+y) are both in view.
+        # The camera tracks the robot's XY position while staying at a fixed
+        # height offset and looking forward (+y, yaw=90) with a slight downward
+        # pitch to keep the ground plane visible.
+        base_pos = coupler.newton_state_0.joint_q.numpy()[:3]  # [x, y, z] world-space base position
+        viewer.set_camera(
+            pos=wp.vec3(base_pos[0], base_pos[1] - 4.0, base_pos[2] + 2.0),
+            pitch=-10.0,
+            yaw=90.0,
+        )
+
         viewer.begin_frame(sim_time)
         viewer.log_state(coupler.newton_state_0)
         # Render DEM placeholder spheres moving towards the robot.
@@ -616,6 +650,9 @@ for frame in range(NUM_FRAMES):
             colors=_dem_sphere_colors_wp,
         )
         viewer.end_frame()
+
+        if _movie_writer is not None:
+            _movie_writer.append_data(viewer.get_frame().numpy())
 
     # ── Console status (every 25 frames) ─────────────────────────────────────
     # if (frame + 1) % 25 == 0 or frame == 0:
@@ -634,6 +671,10 @@ for frame in range(NUM_FRAMES):
 print()
 
 # ─── Finalize ─────────────────────────────────────────────────────────────
+if _movie_writer is not None:
+    _movie_writer.close()
+    print(f"[Movie] Saved simulation recording to '{MOVIE_OUTPUT_PATH}'.\n")
+
 if _viewer_available:
     viewer.close()
 
@@ -655,4 +696,3 @@ print(
     "  Format: [px, py, pz, qx, qy, qz, qw]  (position [m] + quaternion).\n"
     "  Future work: feed these transforms to DEM-Engine and XLB for full coupling."
 )
-

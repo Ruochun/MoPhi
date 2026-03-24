@@ -52,12 +52,15 @@ if not hasattr(mophi, "TLFEANewtonCoupler"):
 try:
     import newton
     import warp as wp
+
     _newton_available = True
 except ImportError:
     _newton_available = False
-    print("WARNING: Newton (or warp) is not installed.  "
-          "The TLFEA side will still be demonstrated;\n"
-          "         install Newton with:  pip install newton")
+    print(
+        "WARNING: Newton (or warp) is not installed.  "
+        "The TLFEA side will still be demonstrated;\n"
+        "         install Newton with:  pip install newton"
+    )
 
 # ─── 3. Build the Newton scene (if Newton is available) ───────────────────────
 print("=== MoPhi TLFEA + Newton co-simulation demo ===\n")
