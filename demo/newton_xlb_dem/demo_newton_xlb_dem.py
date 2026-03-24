@@ -362,7 +362,7 @@ if _xlb_available:
 # All spheres share a constant velocity in the -y direction (opposite to the
 # robot's forward direction), so they appear to drift towards the robot's face.
 # Collision and DEM physics will be handled by DEME in a future update.
-_NUM_DEM_SPHERES = 150
+_NUM_DEM_SPHERES = 750
 # Four representative radius types [m] — coarse dust grain size distribution.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
@@ -374,15 +374,18 @@ _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices],
 # spread laterally across y, and resting on the ground (z = radius).
 _x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
 _y_init = _rng.uniform(1., 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.05).astype(np.float32)
+_z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.25).astype(np.float32)
 
 # _dem_sphere_positions_np shape (N, 3) — updated every frame.
 _dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
 
 # Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
 # so the spheres move towards the robot's face.
-_DEM_SPHERE_VELOCITY_Y = -0.5  # m/s
+_DEM_SPHERE_INIT_VELOCITY_Y = [0., -1., 0.]  # m/s
 _DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
+# sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
+# matching the inner time step from Newton's anymal example).
+SIM_DT = 1.0 / 200.0
 
 if _viewer_available:
     # Radii and colours are constant throughout the simulation; allocate once.
@@ -398,18 +401,24 @@ if _viewer_available:
 deme_solver = None
 shank_trackers = []
 particles_tracker = None
+_FIXED_FAM = 10
 
 if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
     deme_solver = DEME.DEMSolver()
-    wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+    wall_mat = deme_solver.LoadMaterial({"E": 1e6, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
     deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
-    deme_solver.SetGravitationalAcceleration([0, -9.81, 0])
+    deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
+    deme_solver.SetErrorOutAvgContacts(500)
     # Load the shank
     ad_hoc_pos = [0., 0., 0.]
     for i in range(len(foot_tip_sphere_radii)):
         template_shank = deme_solver.LoadSphereType(1., foot_tip_sphere_radii[0], wall_mat)
-        shank_trackers.append(deme_solver.AddClumps(template_shank, [ad_hoc_pos]))
+        shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
+        shank.SetFamily(_FIXED_FAM)
+        shank_trackers.append(deme_solver.Track(shank))
+    # Fix shanks physics for DEME
+    deme_solver.SetFamilyFixed(_FIXED_FAM)
     # Load particles
     particle_templates = []
     for i in range(len(_DEM_RADIUS_TYPES)):
@@ -418,15 +427,14 @@ if _deme_available:
     for i in range(_NUM_DEM_SPHERES):
         used_types.append(particle_templates[_radius_indices[i]])
     particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
+    # Init vel
+    particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
     particles_tracker = deme_solver.Track(particles)
     # Init
+    deme_solver.SetInitTimeStep(SIM_DT)
     deme_solver.Initialize()
 
 # ─── Initialize the coupler ───────────────────────────────────────────────
-# sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
-# matching the inner time step from Newton's anymal example).
-SIM_DT = 1.0 / 200.0
-
 coupler = mophi.NewtonXLBDEMCoupler()
 coupler.set_verbosity(mophi.VERBOSITY_INFO)
 
@@ -464,7 +472,7 @@ print("[Policy] ANYmal C walking policy loaded.\n")
 # Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
 # 4-substep inner loop in Newton's anymal example (frame_dt = 1/50, sim_dt = 1/200).
 SIM_SUBSTEPS = 4          # physics substeps per policy frame
-FRAME_DT = SIM_DT * SIM_SUBSTEPS  # = 1/50 s — policy control rate
+FRAME_DT = SIM_DT * SIM_SUBSTEPS  # policy control rate
 NUM_FRAMES = 250          # ≈ 5 s at 50 Hz (or until the viewer is closed)
 sim_time = 0.0
 
@@ -566,10 +574,18 @@ for frame in range(NUM_FRAMES):
             ])
             foot_tip_rotations.append([qx, qy, qz, qw])
 
+        # Feed the info to DEME
+        if _deme_available:
+            for i in range(len(foot_tip_positions)):
+                shank_trackers[i].SetPos(foot_tip_positions[i])
+                shank_trackers[i].SetOriQ(foot_tip_rotations[i])
+
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
         # TODO: No whole-sale stepper. Update this later.
         coupler.step()
+        deme_solver.DoStepDynamics()
+
     sim_time += FRAME_DT
 
     # ── Print foot-tip positions every frame ──────────────────────────────────
@@ -586,7 +602,7 @@ for frame in range(NUM_FRAMES):
         particles_positions = particles_tracker.Positions()
         # print(particles_positions)
         # Advance sphere positions along -y (towards robot) each frame.
-        _dem_sphere_positions_np[:, 1] += _DEM_SPHERE_VELOCITY_Y * FRAME_DT
+        _dem_sphere_positions_np = np.array(particles_positions)
         _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
 
         viewer.begin_frame(sim_time)
@@ -602,18 +618,18 @@ for frame in range(NUM_FRAMES):
         viewer.end_frame()
 
     # ── Console status (every 25 frames) ─────────────────────────────────────
-    if (frame + 1) % 25 == 0 or frame == 0:
-        if all_transforms:
-            base = all_transforms[0]
-            px, py, pz = base[0], base[1], base[2]
-            qx, qy, qz, qw = base[3], base[4], base[5], base[6]
-            print(
-                f"{frame + 1:>5}  {px:>12.4f}  {py:>12.4f}  {pz:>12.4f}  "
-                f"[{newton_model.body_count} bodies, "
-                f"base quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})]"
-            )
-        else:
-            print(f"{frame + 1:>5}  (Newton not available — no transforms)")
+    # if (frame + 1) % 25 == 0 or frame == 0:
+    #     if all_transforms:
+    #         base = all_transforms[0]
+    #         px, py, pz = base[0], base[1], base[2]
+    #         qx, qy, qz, qw = base[3], base[4], base[5], base[6]
+    #         print(
+    #             f"{frame + 1:>5}  {px:>12.4f}  {py:>12.4f}  {pz:>12.4f}  "
+    #             f"[{newton_model.body_count} bodies, "
+    #             f"base quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})]"
+    #         )
+    #     else:
+    #         print(f"{frame + 1:>5}  (Newton not available — no transforms)")
 
 print()
 
