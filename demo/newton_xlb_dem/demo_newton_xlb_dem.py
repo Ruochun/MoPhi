@@ -317,6 +317,24 @@ for d in foot_tip_descriptors:
     )
 print()
 
+# ─── 13. Set up Newton's OpenGL visualization window ─────────────────────────
+# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
+# render path: begin_frame() / log_state() / end_frame() update the display each
+# frame while the simulation continues to advance.  The window can be closed by
+# the user at any time; viewer.is_running() returns False once dismissed.
+try:
+    viewer = newton.viewer.ViewerGL()
+    viewer.set_model(newton_model)
+    _viewer_available = True
+    print("[Viewer] Newton OpenGL visualization window opened.\n")
+except Exception as exc:
+    viewer = None
+    _viewer_available = False
+    print(
+        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
+        "         The simulation will run without visualization."
+    )
+
 # ─── 9. Build the XLB placeholder scene (if XLB is available) ─────────────────
 xlb_simulation = None
 
@@ -339,17 +357,70 @@ if _xlb_available:
         xlb_simulation = None
 
 # ─── 10. Build the DEME placeholder solver (if DEME is available) ─────────────
+# Spheres are initially scattered ahead of the robot (+y)
+# near the ground — resembling a thin layer of dust or dirt on the surface.
+# All spheres share a constant velocity in the -y direction (opposite to the
+# robot's forward direction), so they appear to drift towards the robot's face.
+# Collision and DEM physics will be handled by DEME in a future update.
+_NUM_DEM_SPHERES = 150
+# Four representative radius types [m] — coarse dust grain size distribution.
+_DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
+
+_rng = np.random.default_rng(seed=42)
+_radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
+_dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
+
+# Initial positions: scattered in a band ahead of the robot along +xy,
+# spread laterally across y, and resting on the ground (z = radius).
+_x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+_y_init = _rng.uniform(1., 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+_z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.05).astype(np.float32)
+
+# _dem_sphere_positions_np shape (N, 3) — updated every frame.
+_dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
+
+# Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
+# so the spheres move towards the robot's face.
+_DEM_SPHERE_VELOCITY_Y = -0.5  # m/s
+_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
+
+if _viewer_available:
+    # Radii and colours are constant throughout the simulation; allocate once.
+    # The position array (_dem_sphere_pos_wp) is rebuilt from _dem_sphere_positions_np
+    # every frame inside the simulation loop after positions are updated.
+    _dem_sphere_radii_wp = wp.array(_dem_sphere_radii_np, dtype=wp.float32)
+    _dem_sphere_colors_wp = wp.array(
+        np.tile(_DEM_SPHERE_COLOR, (_NUM_DEM_SPHERES, 1)).astype(np.float32),
+        dtype=wp.vec3,
+    )
+    print(f"[Viewer] {_NUM_DEM_SPHERES} DEM placeholder sphere(s) registered for visualisation.\n")
+
 deme_solver = None
+shank_trackers = []
+particles_tracker = None
 
 if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
-    try:
-        deme_solver = DEME.DEMSolver()
-        wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
-        deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
-    except Exception as exc:
-        print(f"[DEME] Could not create DEME.DEMSolver ({exc}) — skipping DEME.\n")
-        deme_solver = None
+    deme_solver = DEME.DEMSolver()
+    wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+    deme_solver.AddBCPlane([0,0,0], [0,0,1], wall_mat)
+    deme_solver.SetGravitationalAcceleration([0, -9.81, 0])
+    # Load the shank
+    ad_hoc_pos = [0., 0., 0.]
+    for i in range(len(foot_tip_sphere_radii)):
+        template_shank = deme_solver.LoadSphereType(1., foot_tip_sphere_radii[0], wall_mat)
+        shank_trackers.append(deme_solver.AddClumps(template_shank, [ad_hoc_pos]))
+    # Load particles
+    particle_templates = []
+    for i in range(len(_DEM_RADIUS_TYPES)):
+        particle_templates.append(deme_solver.LoadSphereType(1., _DEM_RADIUS_TYPES[i], wall_mat))
+    used_types = []
+    for i in range(_NUM_DEM_SPHERES):
+        used_types.append(particle_templates[_radius_indices[i]])
+    particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
+    particles_tracker = deme_solver.Track(particles)
+    # Init
+    deme_solver.Initialize()
 
 # ─── 11. Initialize the coupler ───────────────────────────────────────────────
 # sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
@@ -387,63 +458,6 @@ command = torch.zeros((1, 3), device=torch_device, dtype=torch.float32)
 command[0, 0] = 1.0  # walk forward (x-direction)
 
 print("[Policy] ANYmal C walking policy loaded.\n")
-
-# ─── 13. Set up Newton's OpenGL visualization window ─────────────────────────
-# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
-# render path: begin_frame() / log_state() / end_frame() update the display each
-# frame while the simulation continues to advance.  The window can be closed by
-# the user at any time; viewer.is_running() returns False once dismissed.
-try:
-    viewer = newton.viewer.ViewerGL()
-    viewer.set_model(newton_model)
-    _viewer_available = True
-    print("[Viewer] Newton OpenGL visualization window opened.\n")
-except Exception as exc:
-    viewer = None
-    _viewer_available = False
-    print(
-        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
-        "         The simulation will run without visualization."
-    )
-
-# ─── 13b. DEM placeholder sphere visualisation ───────────────────────────────
-# 50 spheres of 4 radius types, initially scattered ahead of the robot (+x)
-# near the ground — resembling a thin layer of dust or dirt on the surface.
-# All spheres share a constant velocity in the -x direction (opposite to the
-# robot's forward direction), so they appear to drift towards the robot's face.
-# Collision and DEM physics will be handled by DEME in a future update.
-_NUM_DEM_SPHERES = 50
-# Four representative radius types [m] — coarse dust grain size distribution.
-_DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
-
-_rng = np.random.default_rng(seed=42)
-_radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
-_dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
-
-# Initial positions: scattered in a band ahead of the robot along +x,
-# spread laterally across y, and resting on the ground (z = radius).
-_x_init = _rng.uniform(1.5, 5.0, size=_NUM_DEM_SPHERES).astype(np.float32)
-_y_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_z_init = _dem_sphere_radii_np  # each sphere just touches the ground plane
-
-# _dem_sphere_positions_np shape (N, 3) — updated every frame.
-_dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
-
-# Velocity in -x direction [m/s] — opposite to robot's forward (+x) direction,
-# so the spheres move towards the robot's face.
-_DEM_SPHERE_VELOCITY_X = -0.5  # m/s
-_DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
-
-if _viewer_available:
-    # Radii and colours are constant throughout the simulation; allocate once.
-    # The position array (_dem_sphere_pos_wp) is rebuilt from _dem_sphere_positions_np
-    # every frame inside the simulation loop after positions are updated.
-    _dem_sphere_radii_wp = wp.array(_dem_sphere_radii_np, dtype=wp.float32)
-    _dem_sphere_colors_wp = wp.array(
-        np.tile(_DEM_SPHERE_COLOR, (_NUM_DEM_SPHERES, 1)).astype(np.float32),
-        dtype=wp.vec3,
-    )
-    print(f"[Viewer] {_NUM_DEM_SPHERES} DEM placeholder sphere(s) registered for visualisation.\n")
 
 # ─── 14. Co-simulation loop ───────────────────────────────────────────────────
 # The ANYmal C walking policy runs at 50 Hz (one inference per frame).
@@ -568,8 +582,11 @@ for frame in range(NUM_FRAMES):
 
     # ── Visualization ─────────────────────────────────────────────────────────
     if _viewer_available:
-        # Advance sphere positions along -x (towards robot) each frame.
-        _dem_sphere_positions_np[:, 0] += _DEM_SPHERE_VELOCITY_X * FRAME_DT
+        # Get particles positions
+        particles_positions = particles_tracker.Positions()
+        # print(particles_positions)
+        # Advance sphere positions along -y (towards robot) each frame.
+        _dem_sphere_positions_np[:, 1] += _DEM_SPHERE_VELOCITY_Y * FRAME_DT
         _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
 
         viewer.begin_frame(sim_time)
