@@ -4,7 +4,7 @@
 EXCLUDE_EXTERNAL="./external"
 EXCLUDE_BUILD="./build"
 
-# Recursively find source files and apply clang-format with -i -style=file
+# Recursively find C/C++ source files and apply clang-format with -i -style=file
 find . \( \
     -path "$EXCLUDE_EXTERNAL" -prune \
     -o -path "${EXCLUDE_BUILD}*" -prune \
@@ -18,4 +18,15 @@ find . \( \
     -name "*.cc" \
     \) -exec clang-format -i -style=file {} +
 
-echo "✔ All matching source files formatted (excluding external and build* folders) with clang-format -style=file"
+echo "✔ All matching C/C++ source files formatted (excluding external and build* folders) with clang-format -style=file"
+
+# Format Python files with black (reads configuration from pyproject.toml)
+if command -v black &> /dev/null; then
+    find . \( \
+        -path "$EXCLUDE_EXTERNAL" -prune \
+        -o -path "${EXCLUDE_BUILD}*" -prune \
+        \) -o -name "*.py" -print | xargs --no-run-if-empty black
+    echo "✔ Python source files formatted (excluding external and build* folders) with black"
+else
+    echo "⚠  black is not installed — Python files were not formatted  (pip install black)"
+fi

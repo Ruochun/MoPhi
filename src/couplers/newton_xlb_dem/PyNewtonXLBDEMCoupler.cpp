@@ -113,14 +113,14 @@ void PyNewtonXLBDEMCoupler::Step() {
     // No physics is advanced yet.  Once particle–robot coupling is implemented,
     // this will call the appropriate deme_solver step method.
     if (deme_available) {
-        MOPHI_INFO("PyNewtonXLBDEMCoupler: DEME step (placeholder, no-op)");
+        // MOPHI_INFO("PyNewtonXLBDEMCoupler: DEME step (placeholder, no-op)");
     }
 
     // ── 4. XLB placeholder step ───────────────────────────────────────────────
     // No fluid physics is advanced yet.  Once fluid–robot coupling is implemented,
     // this will call xlb_simulation.step() with the robot geometry boundary.
     if (xlb_available) {
-        MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB step (placeholder, no-op)");
+        // MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB step (placeholder, no-op)");
     }
 
     ++step_count;
