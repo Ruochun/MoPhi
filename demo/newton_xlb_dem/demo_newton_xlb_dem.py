@@ -50,7 +50,7 @@ import sys
 
 import numpy as np
 
-# ─── 1. Import MoPhi ─────────────────────────────────────────────────────────
+# ─── Import MoPhi ─────────────────────────────────────────────────────────
 try:
     import mophi
 except ImportError as exc:
@@ -67,7 +67,7 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
         "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# ─── 2. Import Newton + Warp + PyTorch ────────────────────────────────────────
+# ─── Import Newton + Warp + PyTorch ────────────────────────────────────────
 try:
     import torch
     import newton
@@ -84,7 +84,7 @@ except ImportError:
     )
     sys.exit(1)
 
-# ─── 3. Import XLB (optional) ─────────────────────────────────────────────────
+# ─── Import XLB (optional) ─────────────────────────────────────────────────
 try:
     import xlb
 
@@ -96,7 +96,7 @@ except ImportError:
         "      Install with:  pip install xlb"
     )
 
-# ─── 4. Import DEME (optional) ────────────────────────────────────────────────
+# ─── Import DEME (optional) ────────────────────────────────────────────────
 try:
     import DEME
 
@@ -110,7 +110,7 @@ except ImportError:
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
 
-# ─── 5. Joint-index remapping ─────────────────────────────────────────────────
+# ─── Joint-index remapping ─────────────────────────────────────────────────
 # The ANYmal C RL policy was trained with legs ordered [LF, RF, LH, RH] × [HAA, HFE, KFE]
 # ("lab" convention), while MuJoCo/Newton uses a different internal ordering.
 # These index arrays reorder the 12 joint outputs so they apply to the correct actuators.
@@ -119,7 +119,7 @@ lab_to_mujoco = [0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11]
 mujoco_to_lab = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
 
 
-# ─── 6. Policy observation helpers ───────────────────────────────────────────
+# ─── Policy observation helpers ───────────────────────────────────────────
 @torch.jit.script
 def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Rotate a vector by the inverse of a quaternion (last dimension is [x,y,z,w])."""
@@ -158,11 +158,11 @@ def compute_obs(actions, state, joint_pos_initial, torch_device, indices, gravit
     return obs
 
 
-# ─── 7. Initialize Warp ───────────────────────────────────────────────────────
+# ─── Initialize Warp ───────────────────────────────────────────────────────
 wp.init()
 torch_device = wp.device_to_torch(wp.get_device())
 
-# ─── 8. Load the ANYmal C robot model ─────────────────────────────────────────
+# ─── Load the ANYmal C robot model ─────────────────────────────────────────
 # newton.utils.download_asset("anybotics_anymal_c") downloads the ANYmal C URDF
 # and pre-trained RL walking policy from the Newton Assets repository.
 # The robot is placed at z = 0.62 m above the flat ground plane (z-up, x = forward).
@@ -268,7 +268,7 @@ print(
     f"{newton_model.joint_count} joints.\n"
 )
 
-# ─── 8b. Identify foot-tip contact proxies ───────────────────────────────────
+# ─── Identify foot-tip contact proxies ───────────────────────────────────
 # ANYmal C has a GeoType.SPHERE collision shape at the distal end of each SHANK
 # link.  These spheres are the ground-contact proxies and will serve as coupling
 # surfaces for DEM particles and XLB fluid boundaries in future co-sim work.
@@ -317,7 +317,7 @@ for d in foot_tip_descriptors:
     )
 print()
 
-# ─── 13. Set up Newton's OpenGL visualization window ─────────────────────────
+# ─── Set up Newton's OpenGL visualization window ─────────────────────────
 # ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
 # render path: begin_frame() / log_state() / end_frame() update the display each
 # frame while the simulation continues to advance.  The window can be closed by
@@ -335,7 +335,7 @@ except Exception as exc:
         "         The simulation will run without visualization."
     )
 
-# ─── 9. Build the XLB placeholder scene (if XLB is available) ─────────────────
+# ─── Build the XLB placeholder scene (if XLB is available) ─────────────────
 xlb_simulation = None
 
 if _xlb_available:
@@ -356,7 +356,7 @@ if _xlb_available:
         print(f"[XLB] Could not create XLB simulation ({exc}) — skipping XLB.\n")
         xlb_simulation = None
 
-# ─── 10. Build the DEME placeholder solver (if DEME is available) ─────────────
+# ─── Build the DEME placeholder solver (if DEME is available) ─────────────
 # Spheres are initially scattered ahead of the robot (+y)
 # near the ground — resembling a thin layer of dust or dirt on the surface.
 # All spheres share a constant velocity in the -y direction (opposite to the
@@ -422,7 +422,7 @@ if _deme_available:
     # Init
     deme_solver.Initialize()
 
-# ─── 11. Initialize the coupler ───────────────────────────────────────────────
+# ─── Initialize the coupler ───────────────────────────────────────────────
 # sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
 # matching the inner time step from Newton's anymal example).
 SIM_DT = 1.0 / 200.0
@@ -440,7 +440,7 @@ coupler.initialize(
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
-# ─── 12. Load the ANYmal C walking policy ────────────────────────────────────
+# ─── Load the ANYmal C walking policy ────────────────────────────────────
 print("[Policy] Loading ANYmal C walking policy ...")
 policy = torch.jit.load(policy_path, map_location=torch_device)
 
@@ -459,7 +459,7 @@ command[0, 0] = 1.0  # walk forward (x-direction)
 
 print("[Policy] ANYmal C walking policy loaded.\n")
 
-# ─── 14. Co-simulation loop ───────────────────────────────────────────────────
+# ─── Co-simulation loop ───────────────────────────────────────────────────
 # The ANYmal C walking policy runs at 50 Hz (one inference per frame).
 # Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
 # 4-substep inner loop in Newton's anymal example (frame_dt = 1/50, sim_dt = 1/200).
@@ -617,7 +617,7 @@ for frame in range(NUM_FRAMES):
 
 print()
 
-# ─── 15. Finalize ─────────────────────────────────────────────────────────────
+# ─── Finalize ─────────────────────────────────────────────────────────────
 if _viewer_available:
     viewer.close()
 
