@@ -478,7 +478,7 @@ sim_time = 0.0
 # ─── Movie recording settings ────────────────────────────────────────────
 # Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
 # Requires: pip install imageio imageio-ffmpeg
-SAVE_MOVIE = False
+SAVE_MOVIE = True
 MOVIE_OUTPUT_PATH = "demo_newton_xlb_dem.mp4"
 MOVIE_FPS = 50  # frames per second for the output video
 
@@ -634,7 +634,7 @@ for frame in range(NUM_FRAMES):
         # pitch to keep the ground plane visible.
         base_pos = coupler.newton_state_0.joint_q.numpy()[:3]  # [x, y, z] world-space base position
         viewer.set_camera(
-            pos=wp.vec3(base_pos[0], base_pos[1] - 4.0, base_pos[2] + 2.0),
+            pos=wp.vec3(base_pos[0], base_pos[1] - 6.0, base_pos[2] + 2.0),
             pitch=-10.0,
             yaw=90.0,
         )
