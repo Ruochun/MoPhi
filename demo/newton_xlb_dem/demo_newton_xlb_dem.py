@@ -355,6 +355,141 @@ if _xlb_available:
         print(f"[XLB] Could not create XLB simulation ({exc}) — skipping XLB.\n")
         xlb_simulation = None
 
+# ─── XLB flow-field visualization: fake LBM macro state ──────────────────────
+# Generates a fake but realistically-formatted LBM macro state (density ρ and
+# velocity u) that covers the co-simulation workspace x ∈ [-2,2], y ∈ [-2,2],
+# z ∈ [0,2].  This mirrors what xlb would return from a macro-state query:
+#
+#   _xlb_rho : (Nx, Ny, Nz)      density field  [LBM units ~ 1.0]
+#   _xlb_u   : (Nx, Ny, Nz, 3)   velocity field [m/s after unit conversion]
+#
+# The flow is a steady laminar wind in +y (the robot's walking direction) with
+# a parabolic z-profile (faster at mid-height) and a gentle sinusoidal upwelling
+# component, resembling a low-Reynolds-number channel flow.
+_XLB_NX, _XLB_NY, _XLB_NZ = 32, 32, 16
+_XLB_DOMAIN_MIN = np.array([-2.0, -2.0, 0.0], dtype=np.float64)
+_XLB_DOMAIN_MAX = np.array([2.0, 2.0, 2.0], dtype=np.float64)
+
+_xlb_rho = np.ones((_XLB_NX, _XLB_NY, _XLB_NZ), dtype=np.float32)
+
+_xlb_z_coords = np.linspace(0.0, 2.0, _XLB_NZ)
+# Parabolic z-profile: peak speed 0.8 m/s at mid-height z = 1.0 m.
+_xlb_z_profile = 4.0 * (_xlb_z_coords / 2.0) * (1.0 - _xlb_z_coords / 2.0)
+# Gentle sinusoidal upwelling / downwash: ±0.12 m/s.
+_xlb_vz_profile = 0.12 * np.sin(np.pi * _xlb_z_coords / 2.0)
+
+_xlb_u = np.zeros((_XLB_NX, _XLB_NY, _XLB_NZ, 3), dtype=np.float32)
+_xlb_u[:, :, :, 1] = 0.8 * _xlb_z_profile[np.newaxis, np.newaxis, :]  # Vy
+_xlb_u[:, :, :, 2] = _xlb_vz_profile[np.newaxis, np.newaxis, :]  # Vz
+
+
+def _xlb_build_streamlines(
+    u,
+    domain_min,
+    domain_max,
+    n_x_seeds=6,
+    n_z_seeds=4,
+    n_steps=40,
+    step_size=0.12,
+):
+    """Trace arc-length-parameterised streamlines through velocity field *u*.
+
+    Seeds a regular (n_x_seeds × n_z_seeds) grid on the upstream face
+    (y = domain_min[1] + 0.05) and advances each streamline with a normalised
+    Euler step until the path exits the domain or the local speed stalls.
+
+    Args:
+        u:          (Nx, Ny, Nz, 3) float32 velocity field [m/s].
+        domain_min: (3,) world-space lower corner of the LBM domain [m].
+        domain_max: (3,) world-space upper corner of the LBM domain [m].
+        n_x_seeds:  number of seed positions along x.
+        n_z_seeds:  number of seed positions along z.
+        n_steps:    maximum integration steps per streamline.
+        step_size:  arc-length step [m] — controls sample density along lines.
+
+    Returns:
+        pts: (N, 3) float32 — world-space positions along all streamlines.
+        spd: (N,)   float32 — velocity magnitude at each sample point [m/s].
+    """
+    nx, ny, nz, _ = u.shape
+
+    def _interp(pos):
+        """Trilinear velocity interpolation at world-space position *pos*."""
+        t = (pos - domain_min) / (domain_max - domain_min)
+        # Clamp so that the lower-cell index ix stays at most n-2, keeping ix+1
+        # in-bounds.  The 0.001 epsilon prevents ix == n-1 at the upper boundary.
+        gx = float(np.clip(t[0] * (nx - 1), 0.0, nx - 1.001))
+        gy = float(np.clip(t[1] * (ny - 1), 0.0, ny - 1.001))
+        gz = float(np.clip(t[2] * (nz - 1), 0.0, nz - 1.001))
+        ix, iy, iz = int(gx), int(gy), int(gz)
+        fx, fy, fz = gx - ix, gy - iy, gz - iz
+        return (
+            u[ix, iy, iz] * (1 - fx) * (1 - fy) * (1 - fz)
+            + u[ix + 1, iy, iz] * fx * (1 - fy) * (1 - fz)
+            + u[ix, iy + 1, iz] * (1 - fx) * fy * (1 - fz)
+            + u[ix, iy, iz + 1] * (1 - fx) * (1 - fy) * fz
+            + u[ix + 1, iy + 1, iz] * fx * fy * (1 - fz)
+            + u[ix + 1, iy, iz + 1] * fx * (1 - fy) * fz
+            + u[ix, iy + 1, iz + 1] * (1 - fx) * fy * fz
+            + u[ix + 1, iy + 1, iz + 1] * fx * fy * fz
+        )
+
+    # Inset seeds 0.4 m from the x-edges and 0.15 m from the z-edges to avoid
+    # the low-speed boundary layers where the parabolic profile approaches zero.
+    xs = np.linspace(domain_min[0] + 0.4, domain_max[0] - 0.4, n_x_seeds)
+    zs = np.linspace(0.15, domain_max[2] - 0.15, n_z_seeds)
+
+    all_pts: list = []
+    all_spd: list = []
+    for x0 in xs:
+        for z0 in zs:
+            # Start 0.05 m inside the upstream face so the first interpolation
+            # sample is well within the valid domain.
+            pos = np.array([x0, domain_min[1] + 0.05, z0], dtype=np.float64)
+            for _ in range(n_steps):
+                if not np.all((pos >= domain_min) & (pos <= domain_max)):
+                    break
+                vel = _interp(pos).astype(np.float64)
+                spd = float(np.linalg.norm(vel))
+                if spd < 1e-6:  # stall threshold: treat as zero-velocity region
+                    break
+                all_pts.append(pos.astype(np.float32).copy())
+                all_spd.append(spd)
+                pos += step_size * vel / spd  # arc-length step
+
+    if not all_pts:
+        return np.zeros((1, 3), dtype=np.float32), np.zeros(1, dtype=np.float32)
+    return np.array(all_pts, dtype=np.float32), np.array(all_spd, dtype=np.float32)
+
+
+_xlb_streamline_pts, _xlb_streamline_spd = _xlb_build_streamlines(_xlb_u, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX)
+print(f"[XLB] Generated {len(_xlb_streamline_pts)} streamline sample point(s) for flow visualisation.\n")
+
+if _viewer_available:
+    # Map speed to colour: slow → cornflower-blue (0.20, 0.55, 0.85),
+    #                       fast → cyan-white     (0.55, 0.90, 1.00).
+    # The cool, pale palette keeps the streamlines visually distinct from the
+    # warm-orange DEM particles while not obscuring the robot geometry.
+    _xlb_spd_max = float(_xlb_streamline_spd.max()) if _xlb_streamline_spd.max() > 0 else 1.0
+    _xlb_t = np.clip(_xlb_streamline_spd / _xlb_spd_max, 0.0, 1.0).astype(np.float32)
+    _xlb_colors_np = np.stack(
+        [
+            0.20 + 0.35 * _xlb_t,  # R: 0.20 → 0.55
+            0.55 + 0.35 * _xlb_t,  # G: 0.55 → 0.90
+            0.85 + 0.15 * _xlb_t,  # B: 0.85 → 1.00
+        ],
+        axis=1,
+    ).astype(np.float32)
+    _xlb_streamline_pos_wp = wp.array(_xlb_streamline_pts, dtype=wp.vec3)
+    _xlb_streamline_radii_wp = wp.array(
+        # 0.018 m radius: small enough to not obstruct the robot view, large
+        # enough to be clearly visible at camera distances of 4–8 m.
+        np.full(len(_xlb_streamline_pts), 0.018, dtype=np.float32),
+        dtype=wp.float32,
+    )
+    _xlb_streamline_colors_wp = wp.array(_xlb_colors_np, dtype=wp.vec3)
+    print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
+
 # ─── Build the DEME placeholder solver (if DEME is available) ─────────────
 # Spheres are initially scattered ahead of the robot (+y)
 # near the ground — resembling a thin layer of dust or dirt on the surface.
@@ -648,6 +783,16 @@ for frame in range(NUM_FRAMES):
             _dem_sphere_pos_wp,
             radii=_dem_sphere_radii_wp,
             colors=_dem_sphere_colors_wp,
+        )
+        # Render XLB flow field as dot-chain streamlines.
+        # Points are pre-computed from a steady fake LBM macro state; the cool-blue
+        # colour palette contrasts with the orange DEM particles and does not block
+        # the robot geometry or ground plane.
+        viewer.log_points(
+            "xlb_streamlines",
+            _xlb_streamline_pos_wp,
+            radii=_xlb_streamline_radii_wp,
+            colors=_xlb_streamline_colors_wp,
         )
         viewer.end_frame()
 
