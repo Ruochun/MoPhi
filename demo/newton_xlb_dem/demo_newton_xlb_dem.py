@@ -530,7 +530,7 @@ if _viewer_available:
         np.tile(_DEM_SPHERE_COLOR, (_NUM_DEM_SPHERES, 1)).astype(np.float32),
         dtype=wp.vec3,
     )
-    print(f"[Viewer] {_NUM_DEM_SPHERES} DEM placeholder sphere(s) registered for visualisation.\n")
+    print(f"[Viewer] {_NUM_DEM_SPHERES} DEM sphere(s) registered for visualisation.\n")
 
 deme_solver = None
 shank_trackers = []
@@ -635,8 +635,8 @@ print(
     f"Running up to {NUM_FRAMES} policy frame(s) "
     f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} substeps × {SIM_DT * 1000:.1f} ms) ...\n"
 )
-print(f"{'Frame':>5}  {'Base X [m]':>12}  {'Base Y [m]':>12}  {'Base Z [m]':>12}  Representation")
-print("-" * 72)
+# print(f"{'Frame':>5}  {'Base X [m]':>12}  {'Base Y [m]':>12}  {'Base Z [m]':>12}  Representation")
+# print("-" * 72)
 
 # Pre-allocate the 6-element zeros buffer used to prepend free-joint DOFs each frame.
 free_joint_zeros = torch.zeros(6, device=torch_device, dtype=torch.float32)
