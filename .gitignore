@@ -72,3 +72,7 @@ __pycache__/
 
 # debug information files
 *.dwo
+
+# Outputs
+*.mp4
+*.txt
