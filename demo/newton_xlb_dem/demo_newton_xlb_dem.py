@@ -10,11 +10,11 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                plane, and its spatial representation (body transforms) is extracted
                at every step.
   • XLB      — a real LBM fluid solver (D3Q19 Incompressible Navier-Stokes).
-               The robot's current axis-aligned bounding box is mapped to LBM
-               grid coordinates and used as a moving no-slip
-               HalfwayBounceBackBC internal boundary.  The stepper and masks
-               are rebuilt each frame whenever the grid-space bounding box
-               changes, so the obstacle tracks the robot during the simulation.
+               The robot is represented as a prescribed axis-aligned bounding
+               box that moves with the Newton base body position each frame.
+               bc_mask and missing_mask are updated in-place without rebuilding
+               the stepper, keeping per-frame overhead to a GPU upload of the
+               two mask arrays (~21 MB) instead of a full JIT re-compilation.
   • DEME     — a placeholder discrete-element solver (pip install deme).  A
                deme.DEMSolver is created in Python and passed to the coupler, but
                its simulation is not advanced yet.  Future work will introduce
@@ -366,11 +366,151 @@ _xlb_macro = None
 _xlb_rho_field = _xlb_u_field = None
 _xlb_timestep = 0
 _xlb_u_np = None  # velocity in (NX, NY, NZ, 3) layout; updated each vis interval
-_xlb_robot_gc_min = None  # last robot AABB grid-space min corner (int array or None)
-_xlb_robot_gc_max = None  # last robot AABB grid-space max corner (int array or None)
-_xlb_stepper_base = None  # baseline stepper without robot obstacle
-_xlb_bc_mask_base = None  # baseline bc_mask without robot obstacle
-_xlb_missing_mask_base = None  # baseline missing_mask without robot obstacle
+
+# ─── XLB robot-obstacle: constants, helpers, and per-frame state ──────────────
+# The robot is represented as a prescribed axis-aligned bounding box (AABB) in
+# the LBM grid, sized to enclose the ANYmal C body.  Box position follows
+# joint_q[:3] (Newton base body world-space position) — no full body-transform
+# query is required.
+#
+# Efficient mask update (no stepper rebuild):
+#   bc_mask and missing_mask are maintained as CPU numpy arrays.  When the
+#   grid-space box changes, the old cells are reset from the stored base masks,
+#   the new cells are stamped analytically, and the arrays are uploaded to the
+#   GPU as fresh Warp arrays.  The stepper is built ONCE and never changed.
+#
+# missing_mask correctness (pull-streaming halfway bounce-back):
+#   missing_mask[l, x, y, z] = True iff node (x,y,z) is a solid robot cell AND
+#   its pull-from source (x - c[l,0], y - c[l,1], z - c[l,2]) lies outside the
+#   solid box (i.e., is a fluid cell or out of domain).  Interior solid cells
+#   where every pull source is also solid remain False and do not interact with
+#   the fluid, which is physically correct.
+
+# Fixed half-extents [m] of the prescribed robot box around the base body centre.
+# Sized to enclose the full ANYmal C geometry (torso + leg reach) with margin.
+_XLB_ROBOT_HALF_EXT_X = 0.55  # ±0.55 m in x (walking direction)
+_XLB_ROBOT_HALF_EXT_Y = 0.45  # ±0.45 m in y (lateral direction)
+_XLB_ROBOT_BELOW_BASE = 0.62  # m below base centre (base is at ~0.62 m when standing)
+_XLB_ROBOT_ABOVE_BASE = 0.28  # m above base centre (to top of torso)
+
+# Per-frame state (populated by the XLB setup block below).
+_xlb_robot_gc_min = None  # last robot box grid-space min corner (int array or None)
+_xlb_robot_gc_max = None  # last robot box grid-space max corner (int array or None)
+_xlb_robot_bc_id = None  # HalfwayBounceBackBC ID assigned to the robot obstacle
+_xlb_bc_mask_base_np = None  # CPU numpy copy of bc_mask WITHOUT robot cells
+_xlb_missing_mask_base_np = None  # CPU numpy copy of missing_mask WITHOUT robot cells
+_xlb_bc_mask_np = None  # current working CPU copy of bc_mask (base + robot)
+_xlb_missing_mask_np = None  # current working CPU copy of missing_mask (base + robot)
+_xlb_vel_c_np = None  # D3Q19 velocity stencil, shape (q, 3) int32
+
+
+def _world_to_grid_idx(world_pos):
+    """Map a world-space 3-D point to the nearest interior LBM grid cell index.
+
+    Returns a 3-element int numpy array clamped to [1, N−2] so the obstacle
+    never overlaps the wall / inlet / outlet cells at grid indices 0 and N−1.
+    """
+    t = (np.asarray(world_pos, dtype=np.float64) - _XLB_DOMAIN_MIN) / (_XLB_DOMAIN_MAX - _XLB_DOMAIN_MIN)
+    t = np.clip(t, 0.0, 1.0)
+    idx = (t * np.array([_XLB_NX, _XLB_NY, _XLB_NZ], dtype=np.float64)).astype(int)
+    return np.clip(idx, [1, 1, 1], [_XLB_NX - 2, _XLB_NY - 2, _XLB_NZ - 2])
+
+
+def _prescribed_robot_box_grid(base_pos):
+    """Return (gc_min, gc_max) integer grid arrays for the prescribed robot AABB.
+
+    The box is centred on *base_pos* (world-space [x, y, z] of the Newton base
+    body) with fixed half-extents that enclose the full ANYmal C geometry.
+    Returns (None, None) when the box is entirely outside the LBM domain.
+    """
+    if base_pos is None:
+        return None, None
+    world_min = np.array(
+        [
+            base_pos[0] - _XLB_ROBOT_HALF_EXT_X,
+            base_pos[1] - _XLB_ROBOT_HALF_EXT_Y,
+            # z_min is clamped to 0 because the ground plane is at z=0 and the
+            # LBM domain starts there; the box must not extend below the ground.
+            # No upper-z clamp is needed here — _world_to_grid_idx clips to the
+            # domain interior before the box is used.
+            max(0.0, base_pos[2] - _XLB_ROBOT_BELOW_BASE),
+        ]
+    )
+    world_max = np.array(
+        [
+            base_pos[0] + _XLB_ROBOT_HALF_EXT_X,
+            base_pos[1] + _XLB_ROBOT_HALF_EXT_Y,
+            base_pos[2] + _XLB_ROBOT_ABOVE_BASE,
+        ]
+    )
+    if np.any(world_max <= _XLB_DOMAIN_MIN) or np.any(world_min >= _XLB_DOMAIN_MAX):
+        return None, None
+    gc_min = _world_to_grid_idx(np.maximum(world_min, _XLB_DOMAIN_MIN))
+    gc_max = _world_to_grid_idx(np.minimum(world_max, _XLB_DOMAIN_MAX))
+    if np.any(gc_max < gc_min):
+        return None, None
+    return gc_min, gc_max
+
+
+def _xlb_update_robot_box(new_gc_min, new_gc_max):
+    """Update bc_mask and missing_mask in-place for a new robot obstacle position.
+
+    Resets the previous robot box to its base (no-robot) state, then stamps the
+    new box into the working CPU numpy arrays and uploads new Warp GPU arrays.
+    Pass new_gc_min = None to clear the robot obstacle entirely (robot outside
+    the LBM domain).  The stepper is NOT rebuilt — only the masks change.
+
+    missing_mask is computed analytically from the box geometry:
+      missing_mask[l, x, y, z] = True iff (x - c[l,0], y - c[l,1], z - c[l,2])
+      is outside the solid box.  Only surface solid cells (adjacent to fluid)
+      end up with True entries; interior cells remain False.
+    """
+    global _xlb_bc_mask, _xlb_missing_mask, _xlb_bc_mask_np, _xlb_missing_mask_np
+    global _xlb_robot_gc_min, _xlb_robot_gc_max
+
+    # ── Clear previous robot cells ─────────────────────────────────────────────
+    if _xlb_robot_gc_min is not None:
+        ox0, oy0, oz0 = _xlb_robot_gc_min
+        ox1, oy1, oz1 = _xlb_robot_gc_max
+        _xlb_bc_mask_np[0, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1] = (
+            _xlb_bc_mask_base_np[0, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1]
+        )
+        _xlb_missing_mask_np[:, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1] = (
+            _xlb_missing_mask_base_np[:, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1]
+        )
+
+    # ── Stamp new robot cells ──────────────────────────────────────────────────
+    if new_gc_min is not None:
+        x0, y0, z0 = new_gc_min
+        x1, y1, z1 = new_gc_max
+
+        # Every solid cell in the box gets the robot BC ID.
+        _xlb_bc_mask_np[0, x0 : x1 + 1, y0 : y1 + 1, z0 : z1 + 1] = _xlb_robot_bc_id
+
+        # missing_mask[l, x, y, z] = True iff pull-from source
+        # (x - c[l,0], y - c[l,1], z - c[l,2]) is outside the solid box.
+        # Interior cells (all sources still inside) stay False.
+        xs = np.arange(x0, x1 + 1)
+        ys = np.arange(y0, y1 + 1)
+        zs = np.arange(z0, z1 + 1)
+        X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+        for l in range(_xlb_vel_c_np.shape[0]):
+            cx = int(_xlb_vel_c_np[l, 0])
+            cy = int(_xlb_vel_c_np[l, 1])
+            cz = int(_xlb_vel_c_np[l, 2])
+            outside = (
+                (X - cx < x0) | (X - cx > x1) | (Y - cy < y0) | (Y - cy > y1) | (Z - cz < z0) | (Z - cz > z1)
+            )
+            _xlb_missing_mask_np[l, x0 : x1 + 1, y0 : y1 + 1, z0 : z1 + 1] = outside
+
+    _xlb_robot_gc_min = new_gc_min
+    _xlb_robot_gc_max = new_gc_max
+
+    # ── Upload updated masks to GPU ────────────────────────────────────────────
+    bc_dtype, bc_device = _xlb_bc_mask.dtype, _xlb_bc_mask.device
+    mm_dtype, mm_device = _xlb_missing_mask.dtype, _xlb_missing_mask.device
+    _xlb_bc_mask = wp.array(_xlb_bc_mask_np, dtype=bc_dtype, device=bc_device)
+    _xlb_missing_mask = wp.array(_xlb_missing_mask_np, dtype=mm_dtype, device=mm_device)
 
 if _xlb_available:
     print("[XLB] Setting up real LBM simulation ...")
@@ -415,18 +555,91 @@ if _xlb_available:
         _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
         _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
 
+        # Build the robot obstacle BC at the initial base-body position (0, 0, 0.62).
+        # The BC is added to the stepper once and never removed; bc_mask and
+        # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
+        _robot_init_gc_min, _robot_init_gc_max = _prescribed_robot_box_grid(np.array([0.0, 0.0, 0.62]))
+        if _robot_init_gc_min is None:
+            # Fallback: initial position outside domain — use a single interior cell
+            # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
+            # correctly on the very first simulation frame.
+            _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
+            _robot_init_gc_max = _robot_init_gc_min.copy()
+        _rxi = np.arange(_robot_init_gc_min[0], _robot_init_gc_max[0] + 1)
+        _ryi = np.arange(_robot_init_gc_min[1], _robot_init_gc_max[1] + 1)
+        _rzi = np.arange(_robot_init_gc_min[2], _robot_init_gc_max[2] + 1)
+        _rgx, _rgy, _rgz = np.meshgrid(_rxi, _ryi, _rzi, indexing="ij")
+        _xlb_robot_bc = _HalfwayBounceBackBC(
+            indices=[_rgx.flatten().tolist(), _rgy.flatten().tolist(), _rgz.flatten().tolist()]
+        )
+
         _xlb_stepper = _NSEStepper(
             grid=_xlb_grid,
-            boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc],
+            boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
             collision_type="BGK",
         )
         _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask = _xlb_stepper.prepare_fields()
+
+        # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
+        _xlb_robot_bc_id = _xlb_robot_bc.id
+        _c = _xlb_vel_set.c
+        try:
+            _c_arr = np.asarray(_c.numpy() if hasattr(_c, "numpy") else _c, dtype=np.int32)
+            if _c_arr.ndim != 2:
+                raise ValueError(f"vel_set.c has unexpected ndim={_c_arr.ndim}")
+            # vel_set.c is stored as (d, q) = (3, 19); transpose to (q, d) = (19, 3).
+            _xlb_vel_c_np = _c_arr.T if _c_arr.shape[0] == _xlb_vel_set.d else _c_arr
+            if _xlb_vel_c_np.shape != (_xlb_vel_set.q, _xlb_vel_set.d):
+                raise ValueError(f"Unexpected vel_c shape after transpose: {_xlb_vel_c_np.shape}")
+        except (AttributeError, ValueError, AssertionError):
+            # Hardcoded fallback: standard D3Q19 velocity ordering.
+            _xlb_vel_c_np = np.array(
+                [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                    [-1, 0, 0],
+                    [0, 1, 0],
+                    [0, -1, 0],
+                    [0, 0, 1],
+                    [0, 0, -1],
+                    [1, 1, 0],
+                    [-1, -1, 0],
+                    [1, -1, 0],
+                    [-1, 1, 0],
+                    [1, 0, 1],
+                    [-1, 0, -1],
+                    [1, 0, -1],
+                    [-1, 0, 1],
+                    [0, 1, 1],
+                    [0, -1, -1],
+                    [0, 1, -1],
+                    [0, -1, 1],
+                ],
+                dtype=np.int32,
+            )
+
+        # Base masks: CPU numpy copies with the initial robot cells zeroed so that
+        # any sub-region can be restored to its no-robot state during mask updates.
+        _xlb_bc_mask_base_np = _xlb_bc_mask.numpy().copy().astype(np.uint8)
+        _xlb_missing_mask_base_np = _xlb_missing_mask.numpy().copy()
+        _rx0, _ry0, _rz0 = _robot_init_gc_min
+        _rx1, _ry1, _rz1 = _robot_init_gc_max
+        _xlb_bc_mask_base_np[0, _rx0 : _rx1 + 1, _ry0 : _ry1 + 1, _rz0 : _rz1 + 1] = 0
+        _xlb_missing_mask_base_np[:, _rx0 : _rx1 + 1, _ry0 : _ry1 + 1, _rz0 : _rz1 + 1] = False
+
+        # Working masks start as the full prepare_fields() output (robot at the
+        # initial position); _xlb_update_robot_box() updates them each frame.
+        _xlb_bc_mask_np = _xlb_bc_mask.numpy().copy().astype(np.uint8)
+        _xlb_missing_mask_np = _xlb_missing_mask.numpy().copy()
+        _xlb_robot_gc_min = _robot_init_gc_min
+        _xlb_robot_gc_max = _robot_init_gc_max
 
         _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
         _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
         _xlb_u_field = _xlb_grid.create_field(cardinality=3, dtype=_XLBPrecision.FP32)
 
-        # Warm-up: advance the LBM toward an initial near-steady state.
+        # Warm-up: advance the LBM toward an initial near-steady state with the
+        # robot obstacle already in place at its initial position.
         print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
         for _ws in range(_XLB_WARMUP_STEPS):
             _xlb_f0, _xlb_f1 = _xlb_stepper(
@@ -441,12 +654,11 @@ if _xlb_available:
         _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
 
         xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
-        # Retain baseline stepper and masks (without robot obstacle) so they can
-        # be restored if the robot moves outside the LBM domain.
-        _xlb_stepper_base = _xlb_stepper
-        _xlb_bc_mask_base = _xlb_bc_mask
-        _xlb_missing_mask_base = _xlb_missing_mask
-        print(f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid.\n")
+        print(
+            f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
+            f"(robot BC id={_xlb_robot_bc_id}, "
+            f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
+        )
     except Exception as exc:
         print(f"[XLB] Could not set up XLB simulation ({exc}) — disabling XLB.\n")
         _xlb_stepper = None
@@ -585,102 +797,6 @@ if _viewer_available:
         _xlb_streamline_pts, _xlb_streamline_spd
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
-
-
-# ─── XLB moving robot-obstacle helpers ────────────────────────────────────────
-# These functions compute the robot's axis-aligned bounding box in LBM grid
-# coordinates and rebuild the stepper + masks to include it as a no-slip
-# HalfwayBounceBackBC internal boundary.  They are called once per policy frame
-# (whenever the integer grid-space bounding box changes) so the obstacle tracks
-# the robot without rebuilding the stepper every LBM micro-step.
-_XLB_ROBOT_BBOX_PADDING = 0.05  # world-space padding added around robot body AABB [m]
-
-
-def _world_to_grid_idx(world_pos):
-    """Map a world-space 3-D point to the nearest interior LBM grid cell index.
-
-    Returns a 3-element integer numpy array clamped to [1, N−2] in every axis so
-    the robot obstacle never overlaps with the fixed wall / inlet / outlet cells
-    that occupy the outermost layer (index 0 and N−1) of the grid.
-    """
-    t = (np.asarray(world_pos, dtype=np.float64) - _XLB_DOMAIN_MIN) / (_XLB_DOMAIN_MAX - _XLB_DOMAIN_MIN)
-    t = np.clip(t, 0.0, 1.0)
-    idx = (t * np.array([_XLB_NX, _XLB_NY, _XLB_NZ], dtype=np.float64)).astype(int)
-    return np.clip(idx, [1, 1, 1], [_XLB_NX - 2, _XLB_NY - 2, _XLB_NZ - 2])
-
-
-def _compute_robot_bbox_grid(all_transforms):
-    """Compute the robot's AABB in LBM grid coordinates from body transforms.
-
-    Pads the body-position AABB by _XLB_ROBOT_BBOX_PADDING metres in every
-    direction to account for robot geometry larger than the body-origin points.
-
-    Returns:
-        (gc_min, gc_max) — integer numpy arrays for the inclusive grid-space
-        corners of the bounding box, clamped to interior cells [1, N−2].
-        Returns (None, None) when the robot is completely outside the LBM
-        domain or when no transforms are provided.
-    """
-    if not all_transforms:
-        return None, None
-    positions = np.array([[t[0], t[1], t[2]] for t in all_transforms], dtype=np.float64)
-    world_min = positions.min(axis=0) - _XLB_ROBOT_BBOX_PADDING
-    world_max = positions.max(axis=0) + _XLB_ROBOT_BBOX_PADDING
-    # Reject trivially if the padded AABB is entirely outside the LBM domain.
-    if np.any(world_max <= _XLB_DOMAIN_MIN) or np.any(world_min >= _XLB_DOMAIN_MAX):
-        return None, None
-    gc_min = _world_to_grid_idx(np.maximum(world_min, _XLB_DOMAIN_MIN))
-    gc_max = _world_to_grid_idx(np.minimum(world_max, _XLB_DOMAIN_MAX))
-    if np.any(gc_max < gc_min):
-        return None, None
-    return gc_min, gc_max
-
-
-def _rebuild_xlb_stepper_with_robot(gc_min, gc_max):
-    """Rebuild the XLB stepper and masks to include a no-slip robot bounding box.
-
-    Creates fresh wall / inlet / outlet / robot boundary conditions and calls
-    prepare_fields() to produce consistent bc_mask and missing_mask arrays.
-    The caller must preserve and continue using the existing f0/f1 distribution
-    functions — only the stepper and masks are replaced.
-
-    The robot obstacle occupies all interior LBM cells in the closed box
-    [gc_min[i], gc_max[i]] for i ∈ {x, y, z}.  Because _world_to_grid_idx
-    clamps indices to [1, N−2], this box never overlaps with the fixed
-    wall / inlet / outlet boundary cells on the outermost grid layer.
-
-    Args:
-        gc_min: (3,) int array — grid-space minimum corner of the robot AABB.
-        gc_max: (3,) int array — grid-space maximum corner of the robot AABB.
-
-    Returns:
-        (new_stepper, new_bc_mask, new_missing_mask)
-    """
-    xi = np.arange(gc_min[0], gc_max[0] + 1)
-    yi = np.arange(gc_min[1], gc_max[1] + 1)
-    zi = np.arange(gc_min[2], gc_max[2] + 1)
-    gx, gy, gz = np.meshgrid(xi, yi, zi, indexing="ij")
-    robot_x = gx.flatten().tolist()
-    robot_y = gy.flatten().tolist()
-    robot_z = gz.flatten().tolist()
-
-    # Recreate all BCs fresh to avoid stale state from the previous stepper.
-    fresh_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
-    fresh_inlet_bc = _ZouHeBC(
-        bc_type="velocity",
-        prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
-        indices=_xlb_inlet_idx,
-    )
-    fresh_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
-    robot_bc = _HalfwayBounceBackBC(indices=[robot_x, robot_y, robot_z])
-
-    new_stepper = _NSEStepper(
-        grid=_xlb_grid,
-        boundary_conditions=[fresh_wall_bc, fresh_inlet_bc, fresh_outlet_bc, robot_bc],
-        collision_type="BGK",
-    )
-    _, _, new_bc_mask, new_missing_mask = new_stepper.prepare_fields()
-    return new_stepper, new_bc_mask, new_missing_mask
 
 # ─── Build the DEME placeholder solver (if DEME is available) ─────────────
 # Spheres are initially scattered ahead of the robot (+y)
@@ -938,32 +1054,22 @@ for frame in range(NUM_FRAMES):
     sim_time += FRAME_DT
 
     # ── XLB LBM steps with moving robot no-slip obstacle ──────────────────────
-    # The robot's current body transforms are mapped to an axis-aligned bounding
-    # box in LBM grid coordinates.  When the integer grid-space bbox changes the
-    # stepper and masks are rebuilt with the new robot HalfwayBounceBackBC so the
-    # obstacle tracks the robot.  The existing f0/f1 distribution functions are
-    # preserved across rebuilds — the flow field adapts naturally over the
-    # subsequent LBM steps.  When the robot leaves the LBM domain the baseline
-    # stepper (wall / inlet / outlet only) is restored.
+    # The robot's prescribed box is computed from the current base body position
+    # (first body of all_transforms, already available from the foot-tip query
+    # above) with fixed half-extents.  When the grid-space box changes since the
+    # last frame, _xlb_update_robot_box() updates bc_mask and missing_mask in-
+    # place on the CPU and uploads fresh Warp arrays — the stepper is never
+    # rebuilt.  When the robot walks outside the LBM domain the obstacle is
+    # cleared automatically (robot BC cells reset to base / no-robot state).
     if _xlb_stepper is not None:
-        _xlb_new_gc_min, _xlb_new_gc_max = _compute_robot_bbox_grid(all_transforms)
-        if _xlb_new_gc_min is not None:
-            bbox_changed = _xlb_robot_gc_min is None or not (
-                np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
-                and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
-            )
-            if bbox_changed:
-                _xlb_stepper, _xlb_bc_mask, _xlb_missing_mask = _rebuild_xlb_stepper_with_robot(
-                    _xlb_new_gc_min, _xlb_new_gc_max
-                )
-                _xlb_robot_gc_min, _xlb_robot_gc_max = _xlb_new_gc_min, _xlb_new_gc_max
-        elif _xlb_robot_gc_min is not None:
-            # Robot has left the LBM domain — restore the baseline stepper.
-            _xlb_stepper = _xlb_stepper_base
-            _xlb_bc_mask = _xlb_bc_mask_base
-            _xlb_missing_mask = _xlb_missing_mask_base
-            _xlb_robot_gc_min = None
-            _xlb_robot_gc_max = None
+        _robot_base_pos = np.array(all_transforms[0][:3]) if all_transforms else None
+        _xlb_new_gc_min, _xlb_new_gc_max = _prescribed_robot_box_grid(_robot_base_pos)
+        _bbox_same = _xlb_new_gc_min is not None and _xlb_robot_gc_min is not None and (
+            np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
+            and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
+        )
+        if not _bbox_same:
+            _xlb_update_robot_box(_xlb_new_gc_min, _xlb_new_gc_max)
 
         for _ in range(_XLB_STEPS_PER_FRAME):
             _xlb_f0, _xlb_f1 = _xlb_stepper(
