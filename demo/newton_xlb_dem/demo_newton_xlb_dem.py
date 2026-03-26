@@ -345,13 +345,14 @@ except Exception as exc:
 # LBM unit convention:
 #   Inlet lattice speed   _XLB_INLET_SPEED  [lu/ts], Mach number Ma ≈ 0.035.
 #   Kinematic viscosity   _XLB_NU           [lu],    BGK relaxation ω = 1/(3ν+0.5).
-_XLB_NX, _XLB_NY, _XLB_NZ = 32, 32, 16
-_XLB_DOMAIN_MIN = np.array([-2.0, -2.0, 0.0], dtype=np.float64)
-_XLB_DOMAIN_MAX = np.array([2.0, 2.0, 2.0], dtype=np.float64)
+_XLB_SCALE = 4
+_XLB_NX, _XLB_NY, _XLB_NZ = 32 * _XLB_SCALE, 32 * _XLB_SCALE, 16 * _XLB_SCALE
+_XLB_DOMAIN_MIN = np.array([-2.0, -1.0, 0.0], dtype=np.float64)
+_XLB_DOMAIN_MAX = np.array([2.0, 3.0, 2.0], dtype=np.float64)
 _XLB_INLET_SPEED = 0.02  # LBM inlet speed [lattice units/timestep]; Ma ≈ 0.035
 _XLB_NU = 0.01  # LBM kinematic viscosity [lattice units]
 _XLB_OMEGA = 1.0 / (3.0 * _XLB_NU + 0.5)  # BGK relaxation parameter
-_XLB_WARMUP_STEPS = 200  # LBM steps to advance before the main loop
+_XLB_WARMUP_STEPS = 600  # LBM steps to advance before the main loop
 _XLB_STEPS_PER_FRAME = 4  # LBM steps advanced per Newton co-simulation frame
 _XLB_VIS_INTERVAL = 5  # refresh streamline visualisation every N Newton frames
 
@@ -386,31 +387,15 @@ if _xlb_available:
         _xlb_grid = _xlb_grid_factory((_XLB_NX, _XLB_NY, _XLB_NZ), compute_backend=_xlb_backend)
 
         # Build non-overlapping boundary index sets.
-        # BC indices must be Python lists (not numpy arrays) to avoid a numpy ≥ 2.0
-        # broadcast incompatibility inside xlb.helper.check_bc_overlaps.
-        #
-        # Priority: inlet > outlet > wall (each cell belongs to at most one BC).
-        # Inlet:  y = NY−1, all x, all z  (full face — highest priority)
-        # Outlet: y = 0,    all x, z = 1…NZ−1  (exclude z=0 corner shared with wall)
-        # Wall:   z = 0,    all x, y = 1…NY−2  (exclude edges shared with inlet/outlet)
-        _ix_iz = np.meshgrid(range(_XLB_NX), range(_XLB_NZ), indexing="ij")
-        _xlb_inlet_idx = [
-            list(_ix_iz[0].flatten()),
-            [_XLB_NY - 1] * (_XLB_NX * _XLB_NZ),
-            list(_ix_iz[1].flatten()),
-        ]
-        _ix_iz2 = np.meshgrid(range(_XLB_NX), range(1, _XLB_NZ), indexing="ij")
-        _xlb_outlet_idx = [
-            list(_ix_iz2[0].flatten()),
-            [0] * (_XLB_NX * (_XLB_NZ - 1)),
-            list(_ix_iz2[1].flatten()),
-        ]
-        _wx_wy = np.meshgrid(range(_XLB_NX), range(1, _XLB_NY - 1), indexing="ij")
+        _box = _xlb_grid.bounding_box_indices()
+        _box_no_e = _xlb_grid.bounding_box_indices(remove_edges=True)
+
+        _xlb_inlet_idx = _box_no_e["back"]  # y_max face  –  incoming flow (-y direction)
+        _xlb_outlet_idx = _box_no_e["front"]  # y_min face  –  outflow
         _xlb_wall_idx = [
-            list(_wx_wy[0].flatten()),
-            list(_wx_wy[1].flatten()),
-            [0] * (_XLB_NX * (_XLB_NY - 2)),
+            _box["bottom"][i] + _box["top"][i] + _box["left"][i] + _box["right"][i] for i in range(_xlb_vel_set.d)
         ]
+        _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
 
         # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
         # (the normal component).  For the y = NY−1 face the outward normal is +y, so
@@ -584,8 +569,8 @@ _xlb_streamline_pts, _xlb_streamline_spd = _xlb_build_streamlines(_xlb_sl_u, _XL
 print(f"[XLB] Generated {len(_xlb_streamline_pts)} streamline sample point(s) for flow visualisation.\n")
 
 if _viewer_available:
-    _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-        _xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd)
+    _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = _xlb_make_streamline_warp_arrays(
+        _xlb_streamline_pts, _xlb_streamline_spd
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
