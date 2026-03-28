@@ -494,6 +494,7 @@ def _xlb_update_robot_box(new_gc_min, new_gc_max):
         ys = np.arange(y0, y1 + 1)
         zs = np.arange(z0, z1 + 1)
         X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+        # _xlb_vel_c_np is the velocity (direction) stencil
         for l in range(_xlb_vel_c_np.shape[0]):
             cx = int(_xlb_vel_c_np[l, 0])
             cy = int(_xlb_vel_c_np[l, 1])
@@ -509,6 +510,7 @@ def _xlb_update_robot_box(new_gc_min, new_gc_max):
     # ── Upload updated masks to GPU ────────────────────────────────────────────
     bc_dtype, bc_device = _xlb_bc_mask.dtype, _xlb_bc_mask.device
     mm_dtype, mm_device = _xlb_missing_mask.dtype, _xlb_missing_mask.device
+    # _xlb_bc_mask and _xlb_bc_mask are global and they update the device directly
     _xlb_bc_mask = wp.array(_xlb_bc_mask_np, dtype=bc_dtype, device=bc_device)
     _xlb_missing_mask = wp.array(_xlb_missing_mask_np, dtype=mm_dtype, device=mm_device)
 
@@ -642,6 +644,7 @@ if _xlb_available:
         # robot obstacle already in place at its initial position.
         print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
         for _ws in range(_XLB_WARMUP_STEPS):
+            # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
             _xlb_f0, _xlb_f1 = _xlb_stepper(
                 _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
             )
@@ -670,8 +673,8 @@ def _xlb_build_streamlines(
     u,
     domain_min,
     domain_max,
-    n_x_seeds=6,
-    n_z_seeds=4,
+    n_x_seeds=12,
+    n_z_seeds=8,
     n_steps=40,
     step_size=0.12,
     seed_y=None,
@@ -1072,6 +1075,7 @@ for frame in range(NUM_FRAMES):
             _xlb_update_robot_box(_xlb_new_gc_min, _xlb_new_gc_max)
 
         for _ in range(_XLB_STEPS_PER_FRAME):
+            # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
             _xlb_f0, _xlb_f1 = _xlb_stepper(
                 _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
             )
