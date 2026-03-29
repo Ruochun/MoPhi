@@ -49,3 +49,12 @@ try:
     __all__.append("NewtonXLBDEMCoupler")
 except ImportError:
     pass
+
+# OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
+# Available whenever newton is installed; no special CMake flag required.
+try:
+    from .opengl_visualizer import OpenGLVisualizer  # noqa: F401
+
+    __all__.append("OpenGLVisualizer")
+except ImportError:
+    pass

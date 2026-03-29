@@ -324,21 +324,22 @@ for d in foot_tip_descriptors:
     )
 print()
 
-# ─── Set up Newton's OpenGL visualization window ─────────────────────────
-# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
-# render path: begin_frame() / log_state() / end_frame() update the display each
-# frame while the simulation continues to advance.  The window can be closed by
+# ─── Set up MoPhi OpenGL visualization window ────────────────────────────
+# mophi.OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi
+# interface.  The viewer is non-blocking in the render path:
+# begin_frame() / log_state() / end_frame() update the display each frame
+# while the simulation continues to advance.  The window can be closed by
 # the user at any time; viewer.is_running() returns False once dismissed.
 try:
-    viewer = newton.viewer.ViewerGL()
+    viewer = mophi.OpenGLVisualizer()
     viewer.set_model(newton_model)
     _viewer_available = True
-    print("[Viewer] Newton OpenGL visualization window opened.\n")
+    print("[Viewer] MoPhi OpenGL visualization window opened.\n")
 except Exception as exc:
     viewer = None
     _viewer_available = False
     print(
-        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
+        f"[Viewer] Could not open MoPhi OpenGL viewer ({exc}).\n"
         "         The simulation will run without visualization."
     )
 
