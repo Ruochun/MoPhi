@@ -18,12 +18,12 @@
 // articulated walking robot and produces a spatial representation of the robot
 // (body position + orientation quaternions) at every time step.
 //
-// XLB (jax-lattice-boltzmann) is a placeholder for now: the solver is
-// instantiated inside Initialize() but its step() method is not called with
-// any real physics during Step().  Future work will feed the robot's spatial
-// representation into XLB as a moving boundary condition.
+// XLB (jax-lattice-boltzmann) is a real LBM fluid solver.  The robot is
+// represented as a prescribed AABB obstacle that moves with the Newton base
+// body each frame.  bc_mask and missing_mask are updated on-device via Warp
+// kernels without any CPU round-trip.
 //
-// DEME is likewise a placeholder: a deme.DEMSolver Python object is created
+// DEME is a placeholder: a deme.DEMSolver Python object is created
 // inside Initialize() but the simulation is not advanced during Step().
 // Future work will introduce particle–robot coupling (particles interacting
 // with the robot's surface mesh).  DEME is used via pip install deme so that
@@ -36,6 +36,26 @@
 //   4. TODO: feed robot geometry into XLB fluid boundary.
 //   5. DEME placeholder step (no-op for now).
 //   6. XLB placeholder step (no-op for now).
+//
+// On-device data communication infrastructure
+// ──────────────────────────────────────────
+// All three solvers are built on NVIDIA Warp and keep their physics state
+// in device-resident wp.array objects.  This coupler exposes the following
+// accessor methods so that callers can reach device arrays directly, without
+// a GPU→CPU copy:
+//
+//   GetBodyQArray()        — returns newton_state_0.body_q  (Warp array,
+//                            shape (body_count, 7), dtype wp.transform)
+//   GetBCMaskArray()       — returns the stored XLB bc_mask Warp array
+//                            (shape (1, NX, NY, NZ), dtype uint8)
+//   GetMissingMaskArray()  — returns the stored XLB missing_mask Warp array
+//                            (shape (Q, NX, NY, NZ), dtype bool)
+//   SetXLBMasks(bc, mm)    — binds the XLB bc_mask / missing_mask Warp arrays
+//                            to this coupler instance
+//
+// The demo uses GetBodyQArray() to derive the robot AABB on GPU and then
+// launches Warp kernels that write directly into GetBCMaskArray() and
+// GetMissingMaskArray(), replacing the former CPU numpy path entirely.
 //
 // Lives in src/couplers/newton_xlb_dem/.
 // The declaration is compiled as part of the mophi_core Python extension module
@@ -59,6 +79,12 @@ struct PyNewtonXLBDEMCoupler {
 
     // XLB object: kept alive via pybind11 reference counting (may be None).
     pybind11::object xlb_simulation;  ///< XLB simulation instance, or None
+
+    // XLB device-resident mask arrays (Warp arrays, bound via SetXLBMasks()).
+    // Kept here so that GPU-kernel-based coupling code can obtain the device
+    // handles in one place without holding additional module-level references.
+    pybind11::object xlb_bc_mask;       ///< wp.array (1, NX, NY, NZ) uint8,  or None
+    pybind11::object xlb_missing_mask;  ///< wp.array (Q, NX, NY, NZ) bool,   or None
 
     double sim_dt{1.0 / 1000.0};  ///< Co-simulation time step [s]
     int step_count{0};            ///< Number of Step() calls completed
@@ -107,9 +133,43 @@ struct PyNewtonXLBDEMCoupler {
     /// per Newton body (model.body_count).  Returns an empty vector when Newton
     /// has not been initialized.
     ///
-    /// This is the primary coupling output: the Python layer (or future C++
-    /// coupling code) reads these transforms after every Newton step and uses
-    /// them to update DEME's particle field geometry and XLB's moving
-    /// boundary condition.
+    /// @note This method performs a synchronous GPU→CPU copy via body_q.numpy().
+    ///       For GPU-native (zero-copy) access, use GetBodyQArray() instead and
+    ///       work directly with the returned Warp array (e.g. wp.to_torch()).
     std::vector<std::array<double, 7>> GetRobotBodyTransforms() const;
+
+    // ── On-device data communication infrastructure ────────────────────────────
+    // These methods expose the device-resident Warp arrays owned by each solver
+    // so that coupling code can read from Newton and write to XLB entirely on-
+    // device, with no CPU round-trip.
+
+    /// @brief Return the device-resident body_q Warp array from newton_state_0.
+    ///
+    /// body_q has shape (body_count, 7) and dtype wp.transform — each row stores
+    /// [px, py, pz, qx, qy, qz, qw] for one robot body.
+    /// Returns None when Newton has not been initialized.
+    ///
+    /// Callers can use this to avoid the full GPU→CPU copy of GetRobotBodyTransforms():
+    ///   • body_q.numpy()           — CPU copy, same as before but through the
+    ///                                 device-handle interface (good for small reads)
+    ///   • wp.to_torch(body_q)[...]  — zero-copy PyTorch view on the same device
+    pybind11::object GetBodyQArray() const;
+
+    /// @brief Bind the XLB bc_mask and missing_mask Warp arrays to this coupler.
+    ///
+    /// Both arrays are device-resident wp.array objects returned by the XLB
+    /// stepper's prepare_fields() call.  After binding, GetBCMaskArray() and
+    /// GetMissingMaskArray() return these handles so that Warp GPU kernels in
+    /// the demo can update the obstacle masks in-place without any CPU copy or
+    /// array reallocation.
+    ///
+    /// @param bc_mask       wp.array of shape (1, NX, NY, NZ), dtype uint8.
+    /// @param missing_mask  wp.array of shape (Q, NX, NY, NZ), dtype bool.
+    void SetXLBMasks(pybind11::object bc_mask, pybind11::object missing_mask);
+
+    /// @brief Return the stored XLB bc_mask Warp array, or None if not yet set.
+    pybind11::object GetBCMaskArray() const;
+
+    /// @brief Return the stored XLB missing_mask Warp array, or None if not yet set.
+    pybind11::object GetMissingMaskArray() const;
 };

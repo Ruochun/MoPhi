@@ -26,6 +26,9 @@ endif()
 # ── Python extension module ───────────────────────────────────────────────────
 pybind11_add_module(mophi_core
     bindings/mophi_bindings.cpp
+    bindings/tlfea_dem_bindings.cpp
+    bindings/tlfea_newton_bindings.cpp
+    bindings/newton_xlb_dem_bindings.cpp
 )
 
 target_link_libraries(mophi_core

@@ -136,19 +136,25 @@ def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     return a - b + c
 
 
-def compute_obs(actions, state, joint_pos_initial, torch_device, indices, gravity_vec, command):
+def compute_obs(actions, joint_q_t, joint_qd_t, joint_pos_initial, indices, gravity_vec, command):
     """Compute the 48-D observation vector required by the ANYmal C walking policy.
 
     Mirrors newton/examples/robot/example_robot_anymal_c_walk.py::compute_obs().
     The observation concatenates: base linear velocity (body frame), base angular
     velocity (body frame), projected gravity, velocity command, joint position
     error (lab order), joint velocity (lab order), previous actions.
+
+    Args:
+        joint_q_t:   1-D float32 GPU torch tensor — Newton state joint_q (zero-copy
+                     from wp.to_torch(coupler.newton_state_0.joint_q)).
+        joint_qd_t:  1-D float32 GPU torch tensor — Newton state joint_qd (zero-copy
+                     from wp.to_torch(coupler.newton_state_0.joint_qd)).
     """
-    root_quat_w = torch.tensor(state.joint_q[3:7], device=torch_device, dtype=torch.float32).unsqueeze(0)
-    root_lin_vel_w = torch.tensor(state.joint_qd[:3], device=torch_device, dtype=torch.float32).unsqueeze(0)
-    root_ang_vel_w = torch.tensor(state.joint_qd[3:6], device=torch_device, dtype=torch.float32).unsqueeze(0)
-    joint_pos_current = torch.tensor(state.joint_q[7:], device=torch_device, dtype=torch.float32).unsqueeze(0)
-    joint_vel_current = torch.tensor(state.joint_qd[6:], device=torch_device, dtype=torch.float32).unsqueeze(0)
+    root_quat_w = joint_q_t[3:7].to(dtype=torch.float32).unsqueeze(0)
+    root_lin_vel_w = joint_qd_t[:3].to(dtype=torch.float32).unsqueeze(0)
+    root_ang_vel_w = joint_qd_t[3:6].to(dtype=torch.float32).unsqueeze(0)
+    joint_pos_current = joint_q_t[7:].to(dtype=torch.float32).unsqueeze(0)
+    joint_vel_current = joint_qd_t[6:].to(dtype=torch.float32).unsqueeze(0)
     vel_b = quat_rotate_inverse(root_quat_w, root_lin_vel_w)
     a_vel_b = quat_rotate_inverse(root_quat_w, root_ang_vel_w)
     grav = quat_rotate_inverse(root_quat_w, gravity_vec)
@@ -397,11 +403,152 @@ _XLB_ROBOT_ABOVE_BASE = 0.28  # m above base centre (to top of torso)
 _xlb_robot_gc_min = None  # last robot box grid-space min corner (int array or None)
 _xlb_robot_gc_max = None  # last robot box grid-space max corner (int array or None)
 _xlb_robot_bc_id = None  # HalfwayBounceBackBC ID assigned to the robot obstacle
-_xlb_bc_mask_base_np = None  # CPU numpy copy of bc_mask WITHOUT robot cells
-_xlb_missing_mask_base_np = None  # CPU numpy copy of missing_mask WITHOUT robot cells
-_xlb_bc_mask_np = None  # current working CPU copy of bc_mask (base + robot)
-_xlb_missing_mask_np = None  # current working CPU copy of missing_mask (base + robot)
-_xlb_vel_c_np = None  # D3Q19 velocity stencil, shape (q, 3) int32
+_xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (q, 3) int32
+
+
+# ── GPU-resident Warp kernels for robot obstacle mask updates ──────────────────
+# These kernels replace the CPU numpy-based _xlb_update_robot_box() function,
+# eliminating the ~21 MB/frame host↔device traffic by writing directly into the
+# device-resident bc_mask and missing_mask Warp arrays.
+#
+# bc_mask layout  : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; 0 = fluid
+# missing_mask layout: (Q, NX, NY, NZ), dtype bool — True when lattice direction l
+#   at cell (x,y,z) pulls from outside the solid box (halfway bounce-back flag)
+
+
+@wp.kernel
+def _kernel_clear_bc_mask_box(
+    bc_mask: wp.array4d(dtype=wp.uint8),
+    x0: int,
+    y0: int,
+    z0: int,
+):
+    """Set one rectangular box region (channel 0) of bc_mask to 0 (fluid)."""
+    xi, yi, zi = wp.tid()
+    bc_mask[0, x0 + xi, y0 + yi, z0 + zi] = wp.uint8(0)
+
+
+@wp.kernel
+def _kernel_stamp_bc_mask_box(
+    bc_mask: wp.array4d(dtype=wp.uint8),
+    x0: int,
+    y0: int,
+    z0: int,
+    robot_bc_id: int,
+):
+    """Stamp one rectangular box region (channel 0) of bc_mask with robot_bc_id."""
+    xi, yi, zi = wp.tid()
+    bc_mask[0, x0 + xi, y0 + yi, z0 + zi] = wp.uint8(robot_bc_id)
+
+
+@wp.kernel
+def _kernel_clear_missing_mask_channel(
+    missing_mask: wp.array4d(dtype=wp.bool),
+    l: int,
+    x0: int,
+    y0: int,
+    z0: int,
+):
+    """Set one (l, box) region of missing_mask to False."""
+    xi, yi, zi = wp.tid()
+    missing_mask[l, x0 + xi, y0 + yi, z0 + zi] = False
+
+
+@wp.kernel
+def _kernel_compute_missing_mask_channel(
+    missing_mask: wp.array4d(dtype=wp.bool),
+    vel_c: wp.array2d(dtype=wp.int32),
+    l: int,
+    x0: int,
+    y0: int,
+    z0: int,
+    x1: int,
+    y1: int,
+    z1: int,
+):
+    """Compute missing_mask for one lattice direction l and a solid box.
+
+    missing_mask[l, x, y, z] = True iff the pull-from source
+    (x - vel_c[l,0], y - vel_c[l,1], z - vel_c[l,2]) lies outside the
+    solid box.  Only surface solid cells end up with True entries; interior
+    cells where every pull source is still inside the box remain False.
+    """
+    xi, yi, zi = wp.tid()
+    x = x0 + xi
+    y = y0 + yi
+    z = z0 + zi
+    src_x = x - vel_c[l, 0]
+    src_y = y - vel_c[l, 1]
+    src_z = z - vel_c[l, 2]
+    outside = src_x < x0 or src_x > x1 or src_y < y0 or src_y > y1 or src_z < z0 or src_z > z1
+    missing_mask[l, x, y, z] = outside
+
+
+def _xlb_update_robot_box_gpu(new_gc_min, new_gc_max):
+    """GPU-resident robot obstacle update.  Modifies bc_mask and missing_mask in-place.
+
+    Replaces the former CPU-numpy _xlb_update_robot_box():
+      • no CPU numpy copies
+      • no GPU reallocation (wp.array(numpy, ...))
+      • the existing wp.array objects are modified via kernel writes
+
+    The robot box region is always in the LBM interior (indices [1, N−2] on every
+    axis, guaranteed by _world_to_grid_idx clamping), so the fluid base value for
+    those cells is always 0 / False.  Clearing therefore does not require a base
+    mask copy — kernels simply write the fluid defaults directly.
+
+    Pass new_gc_min = None to clear the robot obstacle entirely.
+    """
+    global _xlb_robot_gc_min, _xlb_robot_gc_max
+
+    bc_mask = coupler.get_bc_mask_array()
+    missing_mask = coupler.get_missing_mask_array()
+    q = _xlb_vel_set.q  # 19 for D3Q19
+    device = bc_mask.device
+
+    # ── Clear previous robot cells on GPU ─────────────────────────────────────
+    if _xlb_robot_gc_min is not None:
+        ox0 = int(_xlb_robot_gc_min[0])
+        oy0 = int(_xlb_robot_gc_min[1])
+        oz0 = int(_xlb_robot_gc_min[2])
+        ox1 = int(_xlb_robot_gc_max[0])
+        oy1 = int(_xlb_robot_gc_max[1])
+        oz1 = int(_xlb_robot_gc_max[2])
+        onx, ony, onz = ox1 - ox0 + 1, oy1 - oy0 + 1, oz1 - oz0 + 1
+        wp.launch(_kernel_clear_bc_mask_box, dim=(onx, ony, onz), device=device, inputs=[bc_mask, ox0, oy0, oz0])
+        for l in range(q):
+            wp.launch(
+                _kernel_clear_missing_mask_channel,
+                dim=(onx, ony, onz),
+                device=device,
+                inputs=[missing_mask, l, ox0, oy0, oz0],
+            )
+
+    # ── Stamp new robot cells on GPU ──────────────────────────────────────────
+    if new_gc_min is not None:
+        x0 = int(new_gc_min[0])
+        y0 = int(new_gc_min[1])
+        z0 = int(new_gc_min[2])
+        x1 = int(new_gc_max[0])
+        y1 = int(new_gc_max[1])
+        z1 = int(new_gc_max[2])
+        nx, ny, nz = x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1
+        wp.launch(
+            _kernel_stamp_bc_mask_box,
+            dim=(nx, ny, nz),
+            device=device,
+            inputs=[bc_mask, x0, y0, z0, int(_xlb_robot_bc_id)],
+        )
+        for l in range(q):
+            wp.launch(
+                _kernel_compute_missing_mask_channel,
+                dim=(nx, ny, nz),
+                device=device,
+                inputs=[missing_mask, _xlb_vel_c_wp, l, x0, y0, z0, x1, y1, z1],
+            )
+
+    _xlb_robot_gc_min = new_gc_min
+    _xlb_robot_gc_max = new_gc_max
 
 
 def _world_to_grid_idx(world_pos):
@@ -451,68 +598,6 @@ def _prescribed_robot_box_grid(base_pos):
         return None, None
     return gc_min, gc_max
 
-
-def _xlb_update_robot_box(new_gc_min, new_gc_max):
-    """Update bc_mask and missing_mask in-place for a new robot obstacle position.
-
-    Resets the previous robot box to its base (no-robot) state, then stamps the
-    new box into the working CPU numpy arrays and uploads new Warp GPU arrays.
-    Pass new_gc_min = None to clear the robot obstacle entirely (robot outside
-    the LBM domain).  The stepper is NOT rebuilt — only the masks change.
-
-    missing_mask is computed analytically from the box geometry:
-      missing_mask[l, x, y, z] = True iff (x - c[l,0], y - c[l,1], z - c[l,2])
-      is outside the solid box.  Only surface solid cells (adjacent to fluid)
-      end up with True entries; interior cells remain False.
-    """
-    global _xlb_bc_mask, _xlb_missing_mask, _xlb_bc_mask_np, _xlb_missing_mask_np
-    global _xlb_robot_gc_min, _xlb_robot_gc_max
-
-    # ── Clear previous robot cells ─────────────────────────────────────────────
-    if _xlb_robot_gc_min is not None:
-        ox0, oy0, oz0 = _xlb_robot_gc_min
-        ox1, oy1, oz1 = _xlb_robot_gc_max
-        _xlb_bc_mask_np[0, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1] = (
-            _xlb_bc_mask_base_np[0, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1]
-        )
-        _xlb_missing_mask_np[:, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1] = (
-            _xlb_missing_mask_base_np[:, ox0 : ox1 + 1, oy0 : oy1 + 1, oz0 : oz1 + 1]
-        )
-
-    # ── Stamp new robot cells ──────────────────────────────────────────────────
-    if new_gc_min is not None:
-        x0, y0, z0 = new_gc_min
-        x1, y1, z1 = new_gc_max
-
-        # Every solid cell in the box gets the robot BC ID.
-        _xlb_bc_mask_np[0, x0 : x1 + 1, y0 : y1 + 1, z0 : z1 + 1] = _xlb_robot_bc_id
-
-        # missing_mask[l, x, y, z] = True iff pull-from source
-        # (x - c[l,0], y - c[l,1], z - c[l,2]) is outside the solid box.
-        # Interior cells (all sources still inside) stay False.
-        xs = np.arange(x0, x1 + 1)
-        ys = np.arange(y0, y1 + 1)
-        zs = np.arange(z0, z1 + 1)
-        X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
-        # _xlb_vel_c_np is the velocity (direction) stencil
-        for l in range(_xlb_vel_c_np.shape[0]):
-            cx = int(_xlb_vel_c_np[l, 0])
-            cy = int(_xlb_vel_c_np[l, 1])
-            cz = int(_xlb_vel_c_np[l, 2])
-            outside = (
-                (X - cx < x0) | (X - cx > x1) | (Y - cy < y0) | (Y - cy > y1) | (Z - cz < z0) | (Z - cz > z1)
-            )
-            _xlb_missing_mask_np[l, x0 : x1 + 1, y0 : y1 + 1, z0 : z1 + 1] = outside
-
-    _xlb_robot_gc_min = new_gc_min
-    _xlb_robot_gc_max = new_gc_max
-
-    # ── Upload updated masks to GPU ────────────────────────────────────────────
-    bc_dtype, bc_device = _xlb_bc_mask.dtype, _xlb_bc_mask.device
-    mm_dtype, mm_device = _xlb_missing_mask.dtype, _xlb_missing_mask.device
-    # _xlb_bc_mask and _xlb_bc_mask are global and they update the device directly
-    _xlb_bc_mask = wp.array(_xlb_bc_mask_np, dtype=bc_dtype, device=bc_device)
-    _xlb_missing_mask = wp.array(_xlb_missing_mask_np, dtype=mm_dtype, device=mm_device)
 
 if _xlb_available:
     print("[XLB] Setting up real LBM simulation ...")
@@ -620,19 +705,13 @@ if _xlb_available:
                 dtype=np.int32,
             )
 
-        # Base masks: CPU numpy copies with the initial robot cells zeroed so that
-        # any sub-region can be restored to its no-robot state during mask updates.
-        _xlb_bc_mask_base_np = _xlb_bc_mask.numpy().copy().astype(np.uint8)
-        _xlb_missing_mask_base_np = _xlb_missing_mask.numpy().copy()
-        _rx0, _ry0, _rz0 = _robot_init_gc_min
-        _rx1, _ry1, _rz1 = _robot_init_gc_max
-        _xlb_bc_mask_base_np[0, _rx0 : _rx1 + 1, _ry0 : _ry1 + 1, _rz0 : _rz1 + 1] = 0
-        _xlb_missing_mask_base_np[:, _rx0 : _rx1 + 1, _ry0 : _ry1 + 1, _rz0 : _rz1 + 1] = False
+        # Upload the velocity stencil to device once as a Warp array so that
+        # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
+        _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
 
-        # Working masks start as the full prepare_fields() output (robot at the
-        # initial position); _xlb_update_robot_box() updates them each frame.
-        _xlb_bc_mask_np = _xlb_bc_mask.numpy().copy().astype(np.uint8)
-        _xlb_missing_mask_np = _xlb_missing_mask.numpy().copy()
+        # Record the initial robot box position.  The GPU kernels do not need CPU
+        # base-mask copies: interior cells (guaranteed by _world_to_grid_idx) always
+        # have a fluid base value of 0 / False, so clearing = writing those defaults.
         _xlb_robot_gc_min = _robot_init_gc_min
         _xlb_robot_gc_max = _robot_init_gc_max
 
@@ -893,15 +972,23 @@ coupler.initialize(
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
+# ── Bind XLB device-resident mask arrays to the coupler ──────────────────────
+# After initialization, hand the coupler the device handles for XLB's bc_mask
+# and missing_mask.  The GPU kernels in _xlb_update_robot_box_gpu() then
+# retrieve them via coupler.get_bc_mask_array() / coupler.get_missing_mask_array()
+# and write to them in-place, with no CPU round-trip.
+if _xlb_stepper is not None:
+    coupler.set_xlb_masks(_xlb_bc_mask, _xlb_missing_mask)
+    print("[Coupler] XLB bc_mask and missing_mask device handles bound.\n")
+
 # ─── Load the ANYmal C walking policy ────────────────────────────────────
 print("[Policy] Loading ANYmal C walking policy ...")
 policy = torch.jit.load(policy_path, map_location=torch_device)
 
-# Initial joint positions (from the state after coupler initialization and FK eval).
+# Initial joint positions — zero-copy view from the Warp array (GPU torch tensor),
+# then clone to snapshot the initial state before the simulation advances.
 # joint_q[0:7] = free-joint pose (position + quaternion); joint_q[7:] = revolute DOFs.
-joint_pos_initial = torch.tensor(
-    coupler.newton_state_0.joint_q[7:], device=torch_device, dtype=torch.float32
-).unsqueeze(0)
+joint_pos_initial = wp.to_torch(coupler.newton_state_0.joint_q)[7:].to(dtype=torch.float32).unsqueeze(0).clone()
 
 act = torch.zeros(1, 12, device=torch_device, dtype=torch.float32)
 lab_to_mujoco_indices = torch.tensor(lab_to_mujoco, device=torch_device)
@@ -959,11 +1046,16 @@ for frame in range(NUM_FRAMES):
         break
 
     # ── Policy inference: compute observation and get joint targets ──────────
+    # Zero-copy conversion of the Warp GPU arrays to PyTorch tensors.  This
+    # avoids the former torch.tensor(state.joint_q[...], device=...) pattern
+    # which triggered a synchronous GPU→CPU copy via Warp's __getitem__.
+    joint_q_t = wp.to_torch(coupler.newton_state_0.joint_q)
+    joint_qd_t = wp.to_torch(coupler.newton_state_0.joint_qd)
     obs = compute_obs(
         act,
-        coupler.newton_state_0,
+        joint_q_t,
+        joint_qd_t,
         joint_pos_initial,
-        torch_device,
         lab_to_mujoco_indices,
         gravity_vec,
         command,
@@ -978,22 +1070,14 @@ for frame in range(NUM_FRAMES):
         wp.copy(coupler.newton_control.joint_target_pos, a_wp)
 
     # ── Extract foot-tip contact proxy poses ─────────────────────────────────
-    # Fetch all body transforms once; reuse for foot extraction and status line.
+    # Retrieve body transforms via get_body_q_array() — this returns the device-
+    # resident Warp array directly, and .numpy() then copies only the body_q
+    # data to CPU (~1 KB for ANYmal C with ~35 bodies) rather than constructing
+    # a Python list of transforms as get_robot_body_transforms() did.
     #
-    # NOTE on GPU→CPU data movement:
-    #   get_robot_body_transforms() calls body_q.numpy() internally, which
-    #   performs a synchronous GPU→CPU copy when Newton runs on a CUDA device.
-    #   This is acceptable for a demo, but in production co-simulation the copy
-    #   will become a bottleneck.
-    #
-    # TODO (GPU-native foot data): Replace get_robot_body_transforms() with a
-    #   GPU-resident path that keeps foot_tip_positions and foot_tip_rotations
-    #   as wp.array (or torch.Tensor on the GPU) so they can be fed directly
-    #   into DEM-Engine particle contact detection and XLB immersed-boundary
-    #   kernels without any CPU round-trip.  Candidate approach: expose the
-    #   body_q warp array directly and run a small warp.kernel that reads the
-    #   four shank rows + local offsets and writes world-space sphere centres
-    #   into a pre-allocated wp.array of shape (4, 3).
+    # robot_base_pos is the 3-float base position, used as the AABB centre for
+    # the XLB mask update below.  Foot-tip positions are needed by DEME for
+    # contact geometry; they are passed to shank_trackers each frame.
     #
     # foot_tip_positions : list[4 × [px, py, pz]]
     #   World-space sphere centre for each foot, in [LF, RF, LH, RH] order [m].
@@ -1009,14 +1093,15 @@ for frame in range(NUM_FRAMES):
     #
     # TODO: pass (foot_tip_positions, foot_tip_rotations, foot_tip_sphere_radii)
     #       into DEM-Engine and XLB once coupling logic is implemented.
-    all_transforms = coupler.get_robot_body_transforms()
+    body_q_arr = coupler.get_body_q_array()
+    body_q_np = body_q_arr.numpy() if body_q_arr is not None else None
     foot_tip_positions = []
     foot_tip_rotations = []
-    if all_transforms:
+    if body_q_np is not None and len(body_q_np) > 0:
         for d in foot_tip_descriptors:
-            t = all_transforms[d["body_idx"]]  # [px, py, pz, qx, qy, qz, qw]
-            px, py, pz = t[0], t[1], t[2]
-            qx, qy, qz, qw = t[3], t[4], t[5], t[6]
+            t = body_q_np[d["body_idx"]]  # [px, py, pz, qx, qy, qz, qw]
+            px, py, pz = float(t[0]), float(t[1]), float(t[2])
+            qx, qy, qz, qw = float(t[3]), float(t[4]), float(t[5]), float(t[6])
             ox, oy, oz = d["local_offset"]
             # Compute world-space sphere centre:
             #   centre_world = body_pos + rotate(body_quat, local_offset)
@@ -1056,26 +1141,29 @@ for frame in range(NUM_FRAMES):
 
     sim_time += FRAME_DT
 
-    # ── XLB LBM steps with moving robot no-slip obstacle ──────────────────────
-    # The robot's prescribed box is computed from the current base body position
-    # (first body of all_transforms, already available from the foot-tip query
-    # above) with fixed half-extents.  When the grid-space box changes since the
-    # last frame, _xlb_update_robot_box() updates bc_mask and missing_mask in-
-    # place on the CPU and uploads fresh Warp arrays — the stepper is never
-    # rebuilt.  When the robot walks outside the LBM domain the obstacle is
-    # cleared automatically (robot BC cells reset to base / no-robot state).
+    # ── XLB LBM steps with GPU-resident robot obstacle update ─────────────────
+    # The robot AABB is computed from body_q_np[0, :3] (the base body position
+    # already fetched above for foot-tip extraction) — just 3 floats from the
+    # pre-step CPU snapshot.  When the grid-space box changes, _xlb_update_robot_box_gpu()
+    # fires Warp kernels that write directly into the device-resident bc_mask and
+    # missing_mask arrays, with no CPU numpy copies and no GPU reallocation.
     if _xlb_stepper is not None:
-        _robot_base_pos = np.array(all_transforms[0][:3]) if all_transforms else None
+        _robot_base_pos = body_q_np[0, :3] if body_q_np is not None else None
         _xlb_new_gc_min, _xlb_new_gc_max = _prescribed_robot_box_grid(_robot_base_pos)
-        _bbox_same = _xlb_new_gc_min is not None and _xlb_robot_gc_min is not None and (
-            np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
-            and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
+        _bbox_same = (
+            _xlb_new_gc_min is not None
+            and _xlb_robot_gc_min is not None
+            and (
+                np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
+                and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
+            )
         )
         if not _bbox_same:
-            _xlb_update_robot_box(_xlb_new_gc_min, _xlb_new_gc_max)
+            _xlb_update_robot_box_gpu(_xlb_new_gc_min, _xlb_new_gc_max)
 
         for _ in range(_XLB_STEPS_PER_FRAME):
             # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
+            # Method _xlb_update_robot_box_gpu may have changed _xlb_bc_mask and _xlb_missing_mask
             _xlb_f0, _xlb_f1 = _xlb_stepper(
                 _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
             )
@@ -1113,7 +1201,10 @@ for frame in range(NUM_FRAMES):
         # The camera tracks the robot's XY position while staying at a fixed
         # height offset and looking forward (+y, yaw=90) with a slight downward
         # pitch to keep the ground plane visible.
-        base_pos = coupler.newton_state_0.joint_q.numpy()[:3]  # [x, y, z] world-space base position
+        # After the physics substeps, newton_state_0 has been swapped to the new
+        # state.  We read joint_q[:3] as a zero-copy torch view and copy 3 floats
+        # to CPU — negligible cost compared to the per-frame physics.
+        base_pos = wp.to_torch(coupler.newton_state_0.joint_q)[:3].cpu().numpy()
         viewer.set_camera(
             pos=wp.vec3(base_pos[0], base_pos[1] - 6.0, base_pos[2] + 2.0),
             pitch=-10.0,
