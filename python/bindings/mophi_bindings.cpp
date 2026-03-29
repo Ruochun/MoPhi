@@ -171,7 +171,34 @@ PYBIND11_MODULE(mophi_core, m) {
              "Each entry is [px, py, pz, qx, qy, qz, qw] — the world-space position\n"
              "and orientation quaternion (Warp convention: x,y,z,w) of one robot body.\n"
              "The list has one entry per Newton body (model.body_count).\n"
-             "Returns an empty list when Newton has not been initialized.")
+             "Returns an empty list when Newton has not been initialized.\n\n"
+             "NOTE: this method performs a synchronous GPU→CPU copy.  For the\n"
+             "GPU-native path, use get_body_q_array() instead.")
+        .def("get_body_q_array", &PyNewtonXLBDEMCoupler::GetBodyQArray,
+             "Return the device-resident body_q Warp array from newton_state_0.\n\n"
+             "body_q has shape (body_count, 7) and stores each body's world-space\n"
+             "transform as [px, py, pz, qx, qy, qz, qw].\n"
+             "Returns None when Newton has not been initialized.\n\n"
+             "Usage patterns:\n"
+             "  body_q.numpy()          — synchronous GPU→CPU copy (small reads OK)\n"
+             "  wp.to_torch(body_q)[...] — zero-copy PyTorch view, stays on device")
+        .def("set_xlb_masks", &PyNewtonXLBDEMCoupler::SetXLBMasks, py::arg("bc_mask"), py::arg("missing_mask"),
+             "Bind the XLB bc_mask and missing_mask Warp arrays to this coupler.\n\n"
+             "Both arrays are device-resident wp.array objects returned by the XLB\n"
+             "stepper's prepare_fields() call.  After binding, get_bc_mask_array()\n"
+             "and get_missing_mask_array() provide the device handles so that Warp\n"
+             "GPU kernels can update the obstacle masks in-place without any CPU copy.\n\n"
+             "  bc_mask      : wp.array shape (1, NX, NY, NZ), dtype uint8\n"
+             "  missing_mask : wp.array shape (Q, NX, NY, NZ), dtype bool")
+        .def("get_bc_mask_array", &PyNewtonXLBDEMCoupler::GetBCMaskArray,
+             "Return the stored XLB bc_mask Warp array, or None if not yet set.\n\n"
+             "The array lives on the same device as the XLB stepper.  Warp kernels\n"
+             "can write to it in-place to update the robot obstacle boundary condition.")
+        .def("get_missing_mask_array", &PyNewtonXLBDEMCoupler::GetMissingMaskArray,
+             "Return the stored XLB missing_mask Warp array, or None if not yet set.\n\n"
+             "The array lives on the same device as the XLB stepper.  Warp kernels\n"
+             "can write to it in-place to update the lattice pull-direction flags\n"
+             "for the robot obstacle boundary condition.")
         .def_readwrite("newton_control", &PyNewtonXLBDEMCoupler::newton_control,
                        "The Newton control object.  Write joint_target_pos values here before\n"
                        "calling step() to drive the robot's joints.")

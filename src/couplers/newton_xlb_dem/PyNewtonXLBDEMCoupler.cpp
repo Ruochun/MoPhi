@@ -16,7 +16,9 @@ PyNewtonXLBDEMCoupler::PyNewtonXLBDEMCoupler()
       newton_state_1(pybind11::none()),
       newton_control(pybind11::none()),
       newton_contacts(pybind11::none()),
-      xlb_simulation(pybind11::none()) {
+      xlb_simulation(pybind11::none()),
+      xlb_bc_mask(pybind11::none()),
+      xlb_missing_mask(pybind11::none()) {
     MOPHI_INFO("PyNewtonXLBDEMCoupler: created");
 }
 
@@ -148,6 +150,11 @@ void PyNewtonXLBDEMCoupler::Finalize() {
     xlb_simulation = pybind11::none();
     xlb_available = false;
 
+    // Release XLB device-array references (the underlying GPU memory is owned by
+    // the XLB stepper; releasing here just drops the Python reference count).
+    xlb_bc_mask = pybind11::none();
+    xlb_missing_mask = pybind11::none();
+
     step_count = 0;
 
     MOPHI_INFO("PyNewtonXLBDEMCoupler: finalized");
@@ -200,4 +207,31 @@ std::vector<std::array<double, 7>> PyNewtonXLBDEMCoupler::GetRobotBodyTransforms
     }
 
     return transforms;
+}
+
+// ── On-device data communication infrastructure ────────────────────────────
+
+pybind11::object PyNewtonXLBDEMCoupler::GetBodyQArray() const {
+    if (!newton_available) {
+        return pybind11::none();
+    }
+    // Return the Warp array directly — no CPU copy.
+    // Callers can:
+    //   • call .numpy() for a (body_count, 7) CPU copy (dtype float32)
+    //   • use wp.to_torch() for a zero-copy GPU PyTorch view
+    return newton_state_0.attr("body_q");
+}
+
+void PyNewtonXLBDEMCoupler::SetXLBMasks(pybind11::object bc_mask, pybind11::object missing_mask) {
+    xlb_bc_mask = bc_mask;
+    xlb_missing_mask = missing_mask;
+    MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB bc_mask and missing_mask device handles stored");
+}
+
+pybind11::object PyNewtonXLBDEMCoupler::GetBCMaskArray() const {
+    return xlb_bc_mask;
+}
+
+pybind11::object PyNewtonXLBDEMCoupler::GetMissingMaskArray() const {
+    return xlb_missing_mask;
 }
