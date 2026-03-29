@@ -1150,15 +1150,20 @@ for frame in range(NUM_FRAMES):
     if _xlb_stepper is not None:
         _robot_base_pos = body_q_np[0, :3] if body_q_np is not None else None
         _xlb_new_gc_min, _xlb_new_gc_max = _prescribed_robot_box_grid(_robot_base_pos)
-        _bbox_same = _xlb_new_gc_min is not None and _xlb_robot_gc_min is not None and (
-            np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
-            and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
+        _bbox_same = (
+            _xlb_new_gc_min is not None
+            and _xlb_robot_gc_min is not None
+            and (
+                np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
+                and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
+            )
         )
         if not _bbox_same:
             _xlb_update_robot_box_gpu(_xlb_new_gc_min, _xlb_new_gc_max)
 
         for _ in range(_XLB_STEPS_PER_FRAME):
             # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
+            # Method _xlb_update_robot_box_gpu may have changed _xlb_bc_mask and _xlb_missing_mask
             _xlb_f0, _xlb_f1 = _xlb_stepper(
                 _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
             )
