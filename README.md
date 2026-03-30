@@ -18,9 +18,13 @@ MoPhi/
 │   ├── ExternalProjects.cmake   # ← add new solver URLs here
 │   └── CMakeLists.txt           # Fetches selected external projects
 ├── src/
-│   └── couplers/                # Multi-physics co-simulation solvers
-│       ├── TLFEADEMCoupler.{h,cpp}    # Direct coupling of TLFEA + DEM-Engine
-│       └── TLFEANewtonCoupler.{h,cpp} # TLFEA (C++) + Newton (Python) coupling
+│   ├── couplers/                # Multi-physics co-simulation solvers
+│   │   ├── TLFEADEMCoupler.{h,cpp}    # Direct coupling of TLFEA + DEM-Engine
+│   │   └── TLFEANewtonCoupler.{h,cpp} # TLFEA (C++) + Newton (Python) coupling
+│   └── visualization/           # Backend-agnostic visualization layer (pure Python)
+│       ├── README.md            # ← design philosophy and API contract
+│       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
+│       └── omniverse_visualizer.py # Offline USD export backend
 └── python/
     ├── CMakeLists.txt           # pybind11 module — fetched automatically
     ├── bindings/
@@ -302,6 +306,25 @@ python3 -c "import mophi; help(mophi)"
 Co-simulation solver classes are only exported when they have been compiled.
 The `mophi` package uses a graceful `try/except ImportError` pattern so that
 `import mophi` always succeeds regardless of which solvers were built.
+
+---
+
+## Visualization
+
+MoPhi ships a backend-agnostic visualization layer in `src/visualization/`.
+Two backends are provided out of the box:
+
+| Class | Backend | Output |
+|-------|---------|--------|
+| `mophi.OpenGLVisualizer(model)` | Newton `ViewerGL` | Real-time OpenGL window |
+| `mophi.OmniverseVisualizer(output_path, fps)` | OpenUSD (`pip install usd-core`) | Offline `.usdc` / `.usda` file |
+
+Demos switch backends by changing a single constructor call; the rest of the
+simulation loop is identical for both.
+
+See [`src/visualization/README.md`](src/visualization/README.md) for the full
+design philosophy, the public API contract, and instructions for adding new
+backends.
 
 ---
 

@@ -49,3 +49,22 @@ try:
     __all__.append("NewtonXLBDEMCoupler")
 except ImportError:
     pass
+
+# OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
+# Available whenever newton is installed; no special CMake flag required.
+try:
+    from .opengl_visualizer import OpenGLVisualizer  # noqa: F401
+
+    __all__.append("OpenGLVisualizer")
+except ImportError:
+    pass
+
+# OmniverseVisualizer writes co-simulation state to a USD/USDC scene file.
+# Same public interface as OpenGLVisualizer; switch backends with a single flag.
+# Available whenever pxr (OpenUSD) is installed: pip install usd-core
+try:
+    from .omniverse_visualizer import OmniverseVisualizer  # noqa: F401
+
+    __all__.append("OmniverseVisualizer")
+except ImportError:
+    pass

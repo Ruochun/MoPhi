@@ -324,23 +324,41 @@ for d in foot_tip_descriptors:
     )
 print()
 
-# ─── Set up Newton's OpenGL visualization window ─────────────────────────
-# ViewerGL opens a real-time OpenGL window.  The viewer is non-blocking in the
-# render path: begin_frame() / log_state() / end_frame() update the display each
-# frame while the simulation continues to advance.  The window can be closed by
-# the user at any time; viewer.is_running() returns False once dismissed.
-try:
-    viewer = newton.viewer.ViewerGL()
-    viewer.set_model(newton_model)
-    _viewer_available = True
-    print("[Viewer] Newton OpenGL visualization window opened.\n")
-except Exception as exc:
-    viewer = None
-    _viewer_available = False
-    print(
-        f"[Viewer] Could not open Newton OpenGL viewer ({exc}).\n"
-        "         The simulation will run without visualization."
-    )
+# ─── Visualization backend selection ─────────────────────────────────────────
+# Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD scene file
+# (requires:  pip install usd-core).
+# Set USE_OMNIVERSE_VISUALIZATION = False (default) to use Newton's real-time
+# OpenGL window via mophi.OpenGLVisualizer.
+# The simulation loop body (begin_frame / log_state / log_points / end_frame)
+# is identical for both backends; only the constructor and close() differ.
+USE_OMNIVERSE_VISUALIZATION = False
+
+vis = None
+_vis_available = False
+
+if USE_OMNIVERSE_VISUALIZATION:
+    vis = mophi.OmniverseVisualizer(output_path="demo_newton_xlb_dem.usdc", fps=50.0)
+    _vis_available = vis.pxr_available
+    if _vis_available:
+        print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
+    else:
+        print(
+            "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"
+            "      Install with:  pip install usd-core\n"
+            "      The simulation will run without visualization."
+        )
+else:
+    try:
+        vis = mophi.OpenGLVisualizer(newton_model)
+        _vis_available = True
+        print("[Viewer] MoPhi OpenGL visualization window opened.\n")
+    except Exception as exc:
+        vis = None
+        _vis_available = False
+        print(
+            f"[Viewer] Could not open MoPhi OpenGL viewer ({exc}).\n"
+            "         The simulation will run without visualization."
+        )
 
 # ─── XLB real LBM simulation setup ───────────────────────────────────────────
 # Configures a real 3-D incompressible Navier-Stokes LBM simulation using XLB.
@@ -874,7 +892,7 @@ else:
 _xlb_streamline_pts, _xlb_streamline_spd = _xlb_build_streamlines(_xlb_sl_u, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX)
 print(f"[XLB] Generated {len(_xlb_streamline_pts)} streamline sample point(s) for flow visualisation.\n")
 
-if _viewer_available:
+if _vis_available:
     _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = _xlb_make_streamline_warp_arrays(
         _xlb_streamline_pts, _xlb_streamline_spd
     )
@@ -911,7 +929,7 @@ _DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
 # matching the inner time step from Newton's anymal example).
 SIM_DT = 1.0 / 200.0
 
-if _viewer_available:
+if _vis_available:
     # Radii and colours are constant throughout the simulation; allocate once.
     # The position array (_dem_sphere_pos_wp) is rebuilt from _dem_sphere_positions_np
     # every frame inside the simulation loop after positions are updated.
@@ -1016,7 +1034,7 @@ MOVIE_OUTPUT_PATH = "demo_newton_xlb_dem.mp4"
 MOVIE_FPS = 50  # frames per second for the output video
 
 _movie_writer = None
-if SAVE_MOVIE and _viewer_available:
+if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
     try:
         import imageio
 
@@ -1040,8 +1058,9 @@ print(
 free_joint_zeros = torch.zeros(6, device=torch_device, dtype=torch.float32)
 
 for frame in range(NUM_FRAMES):
-    # Stop early if the viewer window has been closed by the user.
-    if _viewer_available and not viewer.is_running():
+    # Stop early if the OpenGL viewer window has been closed by the user.
+    # For OmniverseVisualizer, vis.is_running() always returns True.
+    if _vis_available and not vis.is_running():
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
@@ -1169,7 +1188,7 @@ for frame in range(NUM_FRAMES):
             )
             _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
             _xlb_timestep += 1
-        if _viewer_available and frame % _XLB_VIS_INTERVAL == 0:
+        if _vis_available and frame % _XLB_VIS_INTERVAL == 0:
             _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
             _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
             _xlb_streamline_pts, _xlb_streamline_spd = _xlb_build_streamlines(
@@ -1188,10 +1207,9 @@ for frame in range(NUM_FRAMES):
     #     print(f"[f{frame + 1:04d}] foot_tip_positions: {tip_str}")
 
     # ── Visualization ─────────────────────────────────────────────────────────
-    if _viewer_available:
+    if _vis_available:
         # Get particles positions
         particles_positions = particles_tracker.Positions()
-        # print(particles_positions)
         # Advance sphere positions along -y (towards robot) each frame.
         _dem_sphere_positions_np = np.array(particles_positions)
         _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
@@ -1204,18 +1222,20 @@ for frame in range(NUM_FRAMES):
         # After the physics substeps, newton_state_0 has been swapped to the new
         # state.  We read joint_q[:3] as a zero-copy torch view and copy 3 floats
         # to CPU — negligible cost compared to the per-frame physics.
+        # For OmniverseVisualizer, set_camera() is a no-op but is called here so
+        # the loop body is identical for both backends.
         base_pos = wp.to_torch(coupler.newton_state_0.joint_q)[:3].cpu().numpy()
-        viewer.set_camera(
+        vis.set_camera(
             pos=wp.vec3(base_pos[0], base_pos[1] - 6.0, base_pos[2] + 2.0),
             pitch=-10.0,
             yaw=90.0,
         )
 
-        viewer.begin_frame(sim_time)
-        viewer.log_state(coupler.newton_state_0)
+        vis.begin_frame(sim_time)
+        vis.log_state(coupler.newton_state_0)
         # Render DEM placeholder spheres moving towards the robot.
         # Future work will replace these with live DEME particle positions.
-        viewer.log_points(
+        vis.log_points(
             "dem_particles",
             _dem_sphere_pos_wp,
             radii=_dem_sphere_radii_wp,
@@ -1225,16 +1245,18 @@ for frame in range(NUM_FRAMES):
         # Points are traced from the live LBM macro state (updated every
         # _XLB_VIS_INTERVAL frames); the cool-blue colour palette contrasts with
         # the orange DEM particles and does not block the robot geometry or ground plane.
-        viewer.log_points(
+        vis.log_points(
             "xlb_streamlines",
             _xlb_streamline_pos_wp,
             radii=_xlb_streamline_radii_wp,
             colors=_xlb_streamline_colors_wp,
         )
-        viewer.end_frame()
+        vis.end_frame()
 
+        # Movie recording is only supported with the OpenGL backend (get_frame()
+        # returns None for OmniverseVisualizer).
         if _movie_writer is not None:
-            _movie_writer.append_data(viewer.get_frame().numpy())
+            _movie_writer.append_data(vis.get_frame().numpy())
 
     # ── Console status (every 25 frames) ─────────────────────────────────────
     # if (frame + 1) % 25 == 0 or frame == 0:
@@ -1257,8 +1279,8 @@ if _movie_writer is not None:
     _movie_writer.close()
     print(f"[Movie] Saved simulation recording to '{MOVIE_OUTPUT_PATH}'.\n")
 
-if _viewer_available:
-    viewer.close()
+if vis is not None:
+    vis.close()
 
 print("[Coupler] Finalizing NewtonXLBDEMCoupler ...")
 coupler.finalize()
