@@ -50,6 +50,20 @@ try:
 except ImportError:
     pass
 
+# xlb helpers are pure-NumPy utilities; numpy is always available.
+# xlb_make_streamline_warp_arrays additionally requires warp (Newton dependency)
+# and performs a lazy import internally, so it is safe to re-export here.
+try:
+    from .xlb_helpers import (  # noqa: F401
+        xlb_build_streamlines,
+        xlb_make_streamline_warp_arrays,
+        xlb_make_y_plane_seeds,
+    )
+
+    __all__ += ["xlb_build_streamlines", "xlb_make_streamline_warp_arrays", "xlb_make_y_plane_seeds"]
+except ImportError:
+    pass
+
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.
 try:
