@@ -6,7 +6,7 @@ real-time OpenGL rendering and offline USD export by changing a single flag:
 
 .. code-block:: python
 
-    USE_OMNIVERSE = False
+    USE_OMNIVERSE_VISUALIZATION = False
 
     if USE_OMNIVERSE_VISUALIZATION:
         vis = mophi.OmniverseVisualizer(output_path="scene.usdc", fps=50.0)
