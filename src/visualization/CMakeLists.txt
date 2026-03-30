@@ -22,3 +22,8 @@ configure_file(
     "${CMAKE_SOURCE_DIR}/python/mophi/opengl_visualizer.py"
     COPYONLY
 )
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/omniverse_visualizer.py"
+    "${CMAKE_SOURCE_DIR}/python/mophi/omniverse_visualizer.py"
+    COPYONLY
+)
