@@ -35,16 +35,20 @@ MoPhi/
 │   └── MoPhiEssentials/         # Required git submodule — always present
 │                                #   Provides Logger, Real3, and other utilities
 ├── src/
-│   └── couplers/                # One sub-directory per co-simulation coupler
-│       ├── CMakeLists.txt       # Dispatches to per-coupler add_subdirectory; creates
-│       │                        #   the aggregate mophi_couplers INTERFACE target
-│       ├── tlfea_dem/           # TLFEA + DEM-Engine coupler
-│       │   ├── CMakeLists.txt
-│       │   └── TLFEADEMCoupler.{h,cpp}
-│       └── tlfea_newton/        # TLFEA + Newton coupler
-│           ├── CMakeLists.txt
-│           ├── TLFEANewtonCoupler.{h,cpp}
-│           └── PyTLFEANewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
+│   ├── couplers/                # One sub-directory per co-simulation coupler
+│   │   ├── CMakeLists.txt       # Dispatches to per-coupler add_subdirectory; creates
+│   │   │                        #   the aggregate mophi_couplers INTERFACE target
+│   │   ├── tlfea_dem/           # TLFEA + DEM-Engine coupler
+│   │   │   ├── CMakeLists.txt
+│   │   │   └── TLFEADEMCoupler.{h,cpp}
+│   │   └── tlfea_newton/        # TLFEA + Newton coupler
+│   │       ├── CMakeLists.txt
+│   │       ├── TLFEANewtonCoupler.{h,cpp}
+│   │       └── PyTLFEANewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
+│   └── visualization/           # Backend-agnostic visualization layer (pure Python)
+│       ├── README.md            # Design philosophy, API contract, extension guide
+│       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
+│       └── omniverse_visualizer.py # Offline USD export backend
 ├── python/
 │   ├── CMakeLists.txt           # pybind11 extension (fetched automatically)
 │   ├── bindings/
@@ -153,6 +157,29 @@ log but are not printed to stdout unless the caller raises the verbosity:
 ```cpp
 mophi::Logger::GetInstance().SetVerbosity(mophi::VERBOSITY_INFO);
 ```
+
+---
+
+## Visualization layer
+
+MoPhi provides a backend-agnostic Python visualization layer in
+`src/visualization/`.  The full design philosophy, public API contract, and
+instructions for adding new backends are documented in
+[`src/visualization/README.md`](src/visualization/README.md).
+
+Key rules for agents:
+
+- **No `set_model` method** — solver-specific setup is handled at
+  construction time (`OpenGLVisualizer(model)`) or inferred lazily from data
+  (`OmniverseVisualizer` reads `state.body_q.shape` on the first
+  `log_state` call).
+- **`log_state` is the only solver-coupled method** — it receives a physics
+  solver state object; all other `log_*` / rendering methods are fully
+  solver-agnostic.
+- **Both backends share the same public interface** — demos switch backends
+  with a single constructor change; the simulation loop body is identical.
+- The files in `src/visualization/` are **mirrored** to `python/mophi/`
+  (they must be kept in sync).
 
 ---
 
@@ -477,6 +504,10 @@ Update `README.md` to document:
 - The new `MOPHI_FETCH_*` and `MOPHI_BUILD_*` CMake options
 - The new external solvers in the "External solvers" table
 - Any new prerequisites in the "Prerequisites" table
+
+If the new coupler introduces a new visualization backend, update
+`src/visualization/README.md` instead of adding visualization detail to the
+main README.
 
 ---
 
