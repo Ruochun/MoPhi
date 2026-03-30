@@ -338,7 +338,6 @@ _vis_available = False
 
 if USE_OMNIVERSE_VISUALIZATION:
     vis = mophi.OmniverseVisualizer(output_path="demo_newton_xlb_dem.usdc", fps=50.0)
-    vis.set_model(newton_model)
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
@@ -350,8 +349,7 @@ if USE_OMNIVERSE_VISUALIZATION:
         )
 else:
     try:
-        vis = mophi.OpenGLVisualizer()
-        vis.set_model(newton_model)
+        vis = mophi.OpenGLVisualizer(newton_model)
         _vis_available = True
         print("[Viewer] MoPhi OpenGL visualization window opened.\n")
     except Exception as exc:

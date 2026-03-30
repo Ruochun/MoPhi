@@ -11,9 +11,7 @@ real-time OpenGL rendering and offline USD export by changing a single flag:
     if USE_OMNIVERSE_VISUALIZATION:
         vis = mophi.OmniverseVisualizer(output_path="scene.usdc", fps=50.0)
     else:
-        vis = mophi.OpenGLVisualizer()
-
-    vis.set_model(newton_model)
+        vis = mophi.OpenGLVisualizer(newton_model)
 
     while vis.is_running():
         vis.set_camera(pos=..., pitch=..., yaw=...)   # no-op for USD backend
@@ -74,7 +72,6 @@ class OmniverseVisualizer:
     Usage::
 
         vis = mophi.OmniverseVisualizer(output_path="scene.usdc", fps=50.0)
-        vis.set_model(newton_model)
 
         while vis.is_running():
             vis.begin_frame(sim_time)
@@ -97,7 +94,6 @@ class OmniverseVisualizer:
         self._closed = False
         self._current_time: float = 0.0
         self._stage = None
-        self._body_count: int = 0
         self._robot_translate_ops: list = []
         self._robot_orient_ops: list = []
         # name → UsdGeom.PointInstancer
@@ -122,23 +118,6 @@ class OmniverseVisualizer:
     def pxr_available(self) -> bool:
         """``True`` when the *pxr* (OpenUSD) Python package is importable."""
         return self._pxr_available
-
-    # ── Model ──────────────────────────────────────────────────────────────────
-
-    def set_model(self, model) -> None:
-        """Register the Newton model whose body transforms will be recorded.
-
-        Stores the body count so that the USD scene can be set up with the
-        correct number of ``UsdGeom.Xform`` prims the first time
-        :meth:`begin_frame` is called.
-
-        Args:
-            model: A ``newton.Model`` (or compatible object) with a
-                   ``body_count`` attribute.
-        """
-        if not self._pxr_available:
-            return
-        self._body_count = int(getattr(model, "body_count", 0))
 
     # ── Window state ───────────────────────────────────────────────────────────
 
@@ -192,13 +171,14 @@ class OmniverseVisualizer:
         ``[px, py, pz, qx, qy, qz, qw]`` (Newton xyzw quaternion) to a USD
         ``TranslateOp`` + ``OrientOp`` sample at the current simulation time.
 
+        The ``/World/Robot`` xform hierarchy is created lazily on the first
+        call, sized to match the body count found in *state*.
+
         Args:
             state: A ``newton.State`` with a ``body_q`` Warp array of shape
                    ``(body_count, 7)`` (or flat ``(body_count * 7,)``).
         """
         if not self._pxr_available or self._stage is None:
-            return
-        if not self._robot_translate_ops:
             return
         try:
             body_q_np = state.body_q.numpy()
@@ -206,9 +186,15 @@ class OmniverseVisualizer:
             return
         if body_q_np.ndim == 1:
             body_q_np = body_q_np.reshape(-1, 7)
+        body_count = len(body_q_np)
+        if body_count == 0:
+            return
+        # Lazily create the /World/Robot xform hierarchy on the first call.
+        if not self._robot_translate_ops:
+            self._ensure_robot_xforms(body_count)
         Gf = self._Gf
         time_code = self._Usd.TimeCode(self._current_time * self._fps)
-        n = min(len(body_q_np), len(self._robot_translate_ops))
+        n = min(body_count, len(self._robot_translate_ops))
         for i in range(n):
             t = body_q_np[i]
             px, py, pz = float(t[0]), float(t[1]), float(t[2])
@@ -400,15 +386,20 @@ class OmniverseVisualizer:
         ground.GetFaceVertexIndicesAttr().Set(Vt.IntArray([0, 1, 2, 3]))
         ground.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.70, 0.70, 0.70)]))
 
-        # ── /World/Robot : one Xform per Newton body ──────────────────────────
-        # Newton body_q row : [px, py, pz,  qx, qy, qz, qw]  (xyzw quaternion)
-        # TranslateOp       : Vec3d(px, py, pz)
-        # OrientOp          : Quatf(qw, qx, qy, qz)  ← USD convention: w-first
-        if self._body_count > 0:
-            UsdGeom.Xform.Define(self._stage, "/World/Robot")
-            for i in range(self._body_count):
-                xf = UsdGeom.Xform.Define(self._stage, f"/World/Robot/Body_{i:03d}")
-                self._robot_translate_ops.append(xf.AddTranslateOp())
-                self._robot_orient_ops.append(xf.AddOrientOp())
-
+        # /World/Robot xforms are created lazily by _ensure_robot_xforms() the
+        # first time log_state() is called.
         # /World/Points prim is created lazily by log_points() for each named cloud.
+
+    def _ensure_robot_xforms(self, body_count: int) -> None:
+        """Create the ``/World/Robot`` xform hierarchy for *body_count* bodies.
+
+        Called lazily by :meth:`log_state` on its first invocation so that the
+        body count is always derived directly from the Newton state array rather
+        than from a separate :meth:`set_model` call.
+        """
+        UsdGeom = self._UsdGeom
+        UsdGeom.Xform.Define(self._stage, "/World/Robot")
+        for i in range(body_count):
+            xf = UsdGeom.Xform.Define(self._stage, f"/World/Robot/Body_{i:03d}")
+            self._robot_translate_ops.append(xf.AddTranslateOp())
+            self._robot_orient_ops.append(xf.AddOrientOp())

@@ -23,8 +23,7 @@ class OpenGLVisualizer:
 
     Usage::
 
-        visualizer = mophi.OpenGLVisualizer()
-        visualizer.set_model(newton_model)
+        visualizer = mophi.OpenGLVisualizer(newton_model)
 
         while visualizer.is_running():
             visualizer.set_camera(pos=..., pitch=..., yaw=...)
@@ -36,8 +35,12 @@ class OpenGLVisualizer:
         visualizer.close()
     """
 
-    def __init__(self) -> None:
-        """Open a real-time OpenGL window.
+    def __init__(self, model) -> None:
+        """Open a real-time OpenGL window and register the Newton model.
+
+        Args:
+            model: A ``newton.Model`` (or compatible object) that describes the
+                   articulated body geometry to be rendered.
 
         Raises:
             ImportError: if the ``newton`` package is not installed.
@@ -47,16 +50,6 @@ class OpenGLVisualizer:
         import newton  # imported here so that the rest of MoPhi works without newton
 
         self._viewer = newton.viewer.ViewerGL()
-
-    # ── Model ──────────────────────────────────────────────────────────────────
-
-    def set_model(self, model) -> None:
-        """Register the Newton model whose geometry should be rendered.
-
-        Args:
-            model: A ``newton.Model`` (or compatible object) that describes the
-                   articulated body geometry of the scene.
-        """
         self._viewer.set_model(model)
 
     # ── Window state ───────────────────────────────────────────────────────────
