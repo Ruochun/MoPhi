@@ -288,9 +288,7 @@ class OmniverseVisualizer:
         # ── Update structural attributes when the point count changes ──────────
         if n != prev_n:
             instancer.GetProtoIndicesAttr().Set(Vt.IntArray([0] * n), time_code)
-            instancer.GetOrientationsAttr().Set(
-                Vt.QuathArray([Gf.Quath(1.0, 0.0, 0.0, 0.0)] * n), time_code
-            )
+            instancer.GetOrientationsAttr().Set(Vt.QuathArray([Gf.Quath(1.0, 0.0, 0.0, 0.0)] * n), time_code)
             self._instancer_sizes[name] = n
 
         # ── Radii → per-instance uniform scale ────────────────────────────────
@@ -396,9 +394,7 @@ class OmniverseVisualizer:
         ground = UsdGeom.Mesh.Define(self._stage, "/World/Ground")
         h = 10.0
         ground.GetPointsAttr().Set(
-            Vt.Vec3fArray(
-                [Gf.Vec3f(-h, -h, 0.0), Gf.Vec3f(h, -h, 0.0), Gf.Vec3f(h, h, 0.0), Gf.Vec3f(-h, h, 0.0)]
-            )
+            Vt.Vec3fArray([Gf.Vec3f(-h, -h, 0.0), Gf.Vec3f(h, -h, 0.0), Gf.Vec3f(h, h, 0.0), Gf.Vec3f(-h, h, 0.0)])
         )
         ground.GetFaceVertexCountsAttr().Set(Vt.IntArray([4]))
         ground.GetFaceVertexIndicesAttr().Set(Vt.IntArray([0, 1, 2, 3]))
