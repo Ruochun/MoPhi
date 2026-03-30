@@ -767,34 +767,6 @@ if _xlb_available:
 
 # ─── XLB flow-field visualisation helpers ─────────────────────────────────────
 
-def _xlb_make_streamline_warp_arrays(pts, spd):
-    """Convert streamline sample arrays to Warp arrays for ViewerGL rendering.
-
-    Colours are mapped from slow → cornflower-blue (0.20, 0.55, 0.85) to
-    fast → cyan-white (0.55, 0.90, 1.00); this cool palette contrasts with the
-    warm-orange DEM particles without occluding the robot or ground plane.
-    """
-    spd_max = float(spd.max()) if spd.max() > 0 else 1.0
-    t = np.clip(spd / spd_max, 0.0, 1.0).astype(np.float32)
-    colors_np = np.stack(
-        [
-            0.20 + 0.35 * t,  # R: 0.20 → 0.55
-            0.55 + 0.35 * t,  # G: 0.55 → 0.90
-            0.85 + 0.15 * t,  # B: 0.85 → 1.00
-        ],
-        axis=1,
-    ).astype(np.float32)
-    pos_wp = wp.array(pts, dtype=wp.vec3)
-    radii_wp = wp.array(
-        # 0.018 m radius: small enough to not obstruct the robot view, large
-        # enough to be clearly visible at camera distances of 4–8 m.
-        np.full(len(pts), 0.018, dtype=np.float32),
-        dtype=wp.float32,
-    )
-    colors_wp = wp.array(colors_np, dtype=wp.vec3)
-    return pos_wp, radii_wp, colors_wp
-
-
 # Build initial streamline visualisation from the LBM macro state.
 # If XLB is available use the real macro state; otherwise fall back to an
 # analytically-constructed approximation (laminar channel flow in −y direction).
@@ -807,12 +779,17 @@ else:
     _xlb_sl_profile = 4.0 * (_xlb_sl_z / 2.0) * (1.0 - _xlb_sl_z / 2.0)
     _xlb_sl_u[:, :, :, 1] = -0.8 * _xlb_sl_profile[np.newaxis, np.newaxis, :]  # −y
 
-_xlb_streamline_pts, _xlb_streamline_spd = mophi.xlb_build_streamlines(_xlb_sl_u, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX)
+# Seed streamlines on a regular (12 × 8) y-plane grid just inside the inlet face
+# (y ≈ domain_max[1], flow in −y direction).
+_xlb_seed_pts = mophi.xlb_make_y_plane_seeds(_XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX)
+_xlb_streamline_pts, _xlb_streamline_spd = mophi.xlb_build_streamlines(
+    _xlb_sl_u, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
+)
 print(f"[XLB] Generated {len(_xlb_streamline_pts)} streamline sample point(s) for flow visualisation.\n")
 
 if _vis_available:
-    _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = _xlb_make_streamline_warp_arrays(
-        _xlb_streamline_pts, _xlb_streamline_spd
+    _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
+        mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd)
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
@@ -1110,10 +1087,10 @@ for frame in range(NUM_FRAMES):
             _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
             _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
             _xlb_streamline_pts, _xlb_streamline_spd = mophi.xlb_build_streamlines(
-                _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX
+                _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
             )
             _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-                _xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd)
+                mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd)
             )
 
     # ── Print foot-tip positions every frame ──────────────────────────────────
