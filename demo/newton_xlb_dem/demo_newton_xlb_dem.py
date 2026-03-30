@@ -788,8 +788,8 @@ _xlb_streamline_pts, _xlb_streamline_spd = mophi.xlb_build_streamlines(
 print(f"[XLB] Generated {len(_xlb_streamline_pts)} streamline sample point(s) for flow visualisation.\n")
 
 if _vis_available:
-    _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-        mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd)
+    _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = mophi.xlb_make_streamline_warp_arrays(
+        _xlb_streamline_pts, _xlb_streamline_spd
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
