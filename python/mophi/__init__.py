@@ -50,6 +50,14 @@ try:
 except ImportError:
     pass
 
+# xlb_build_streamlines is a pure-NumPy utility; numpy is always available.
+try:
+    from .xlb_helpers import xlb_build_streamlines  # noqa: F401
+
+    __all__.append("xlb_build_streamlines")
+except ImportError:
+    pass
+
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.
 try:
