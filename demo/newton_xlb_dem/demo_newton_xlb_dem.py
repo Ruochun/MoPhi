@@ -76,7 +76,7 @@ try:
     import warp as wp
 
     _newton_available = True
-    from newton import GeoType
+    from newton import GeoType, ShapeFlags
 except ImportError:
     _newton_available = False
     print(
@@ -227,6 +227,51 @@ for i in range(len(builder.shape_type)):
 # Save builder body-name→index mapping before finalize() is called.
 builder_body_name_to_idx = {lbl.split("/")[-1]: i for i, lbl in enumerate(builder.body_label)}
 
+# ─── Enumerate visual body-part shapes ───────────────────────────────────────
+# Newton's add_urdf() loads both collision shapes (from <collision> tags) and
+# visual shapes (from <visual> tags) because load_visual_shapes=True by default.
+# Visual shapes carry the actual 3-D geometry of each robot link — typically
+# triangle-mesh representations loaded from STL or DAE files referenced in the
+# URDF.  They are not used for contact detection (ShapeFlags.COLLIDE_SHAPES is
+# not set), but they are what Newton's renderer displays and what we can use for
+# a higher-fidelity XLB wall boundary in future work.
+#
+# body_part_visual_descriptors — list of dicts, one per visual shape:
+#   "body_idx"    : int            — row index into body_q / body_qd arrays
+#   "body_name"   : str            — short body name, e.g. "base"
+#   "shape_label" : str            — full shape label from the builder
+#   "geo_type"    : GeoType        — geometry kind (usually GeoType.MESH)
+#   "local_xform" : wp.transform   — shape pose in the body's local frame
+#   "scale"       : list[float]    — [sx, sy, sz] scale factors [m]
+#   "mesh"        : newton.Mesh | None — triangle mesh with .vertices (N×3
+#                                        float32) and .indices (M int32 =
+#                                        3×num_tris); None for non-mesh shapes
+body_part_visual_descriptors: list[dict] = []
+for i in range(len(builder.shape_type)):
+    flags = builder.shape_flags[i]
+    # Keep only shapes that are visible but do not participate in collision.
+    if not (flags & ShapeFlags.VISIBLE):
+        continue
+    if flags & ShapeFlags.COLLIDE_SHAPES:
+        continue
+    b_idx = builder.shape_body[i]
+    if b_idx < 0:
+        continue  # world-attached shape (e.g. a stray ground shape)
+    body_name = builder.body_label[b_idx].split("/")[-1]
+    geo_type = GeoType(builder.shape_type[i])
+    scale = builder.shape_scale[i]
+    body_part_visual_descriptors.append(
+        {
+            "body_idx": b_idx,
+            "body_name": body_name,
+            "shape_label": builder.shape_label[i],
+            "geo_type": geo_type,
+            "local_xform": builder.shape_transform[i],
+            "scale": [float(scale[0]), float(scale[1]), float(scale[2])],
+            "mesh": builder.shape_source[i],
+        }
+    )
+
 # Flat ground plane only — no procedural terrain.
 builder.add_ground_plane()
 
@@ -321,6 +366,29 @@ for d in foot_tip_descriptors:
         f"         {d['label']}: body_idx={d['body_idx']}, "
         f"local_offset=[{lo[0]:.4f}, {lo[1]:.4f}, {lo[2]:.4f}] m, "
         f"sphere_radius={d['sphere_radius']:.4f} m"
+    )
+print()
+
+# ─── Print visual body-part summary ──────────────────────────────────────────
+# Demonstrates that handles to every robot body part (and its visual mesh) are
+# available via body_part_visual_descriptors.  These handles are the foundation
+# for a higher-fidelity XLB robot representation beyond the current AABB box.
+_n_bodies_with_visuals = len({d["body_idx"] for d in body_part_visual_descriptors})
+print(
+    f"[BodyParts] Robot visual shapes from URDF <visual> tags: "
+    f"{len(body_part_visual_descriptors)} shape(s) across {_n_bodies_with_visuals} body(-ies)."
+)
+for d in body_part_visual_descriptors:
+    mesh_info = ""
+    if d["mesh"] is not None:
+        nv = len(d["mesh"].vertices)
+        nt = len(d["mesh"].indices) // 3
+        mesh_info = f", mesh: {nv} verts / {nt} tris"
+    print(
+        f"            body_idx={d['body_idx']} [{d['body_name']}]  "
+        f"geo={d['geo_type'].name}  "
+        f"scale=[{d['scale'][0]:.3f},{d['scale'][1]:.3f},{d['scale'][2]:.3f}]"
+        + mesh_info
     )
 print()
 
