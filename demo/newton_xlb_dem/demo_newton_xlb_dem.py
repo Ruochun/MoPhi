@@ -235,9 +235,9 @@ foot_tip_descriptors, foot_tip_sphere_radii = demo_utils.build_foot_tip_descript
     builder_body_name_to_idx, builder_foot_spheres, FOOT_SHANK_NAMES
 )
 
-demo_utils.print_foot_tip_descriptors(foot_tip_descriptors)
-
-demo_utils.print_visual_body_part_descriptors(body_part_visual_descriptors)
+# Visual meshes are nice, but for the production code we don't print them
+# demo_utils.print_foot_tip_descriptors(foot_tip_descriptors)
+# demo_utils.print_visual_body_part_descriptors(body_part_visual_descriptors)
 
 # ─── Visualization backend selection ─────────────────────────────────────────
 # Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD scene file
