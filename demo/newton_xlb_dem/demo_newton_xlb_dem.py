@@ -48,6 +48,7 @@ Or from the repository root after installing the mophi package:
     python -m demo.newton_xlb_dem.demo_newton_xlb_dem
 """
 
+import os
 import sys
 
 import numpy as np
@@ -76,7 +77,6 @@ try:
     import warp as wp
 
     _newton_available = True
-    from newton import GeoType, ShapeFlags
 except ImportError:
     _newton_available = False
     print(
@@ -85,6 +85,13 @@ except ImportError:
         "         Install with:  pip install newton warp-lang torch"
     )
     sys.exit(1)
+
+# ─── Import demo-specific utilities ──────────────────────────────────────────
+# newton_xlb_dem_utils.py lives in the same directory as this script.
+# Prepend the script's own directory so the module can be found whether the
+# demo is run directly (python demo/...) or via -m.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
 # ─── Import XLB (optional) ─────────────────────────────────────────────────
 try:
@@ -119,52 +126,6 @@ print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===
 # Mirrors newton/examples/robot/example_robot_anymal_c_walk.py.
 lab_to_mujoco = [0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11]
 mujoco_to_lab = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
-
-
-# ─── Policy observation helpers ───────────────────────────────────────────
-@torch.jit.script
-def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    """Rotate a vector by the inverse of a quaternion (last dimension is [x,y,z,w])."""
-    q_w = q[..., 3]
-    q_vec = q[..., :3]
-    a = v * (2.0 * q_w**2 - 1.0).unsqueeze(-1)
-    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-    if q_vec.dim() == 2:
-        c = q_vec * torch.bmm(q_vec.view(q.shape[0], 1, 3), v.view(q.shape[0], 3, 1)).squeeze(-1) * 2.0
-    else:
-        c = q_vec * torch.einsum("...i,...i->...", q_vec, v).unsqueeze(-1) * 2.0
-    return a - b + c
-
-
-def compute_obs(actions, joint_q_t, joint_qd_t, joint_pos_initial, indices, gravity_vec, command):
-    """Compute the 48-D observation vector required by the ANYmal C walking policy.
-
-    Mirrors newton/examples/robot/example_robot_anymal_c_walk.py::compute_obs().
-    The observation concatenates: base linear velocity (body frame), base angular
-    velocity (body frame), projected gravity, velocity command, joint position
-    error (lab order), joint velocity (lab order), previous actions.
-
-    Args:
-        joint_q_t:   1-D float32 GPU torch tensor — Newton state joint_q (zero-copy
-                     from wp.to_torch(coupler.newton_state_0.joint_q)).
-        joint_qd_t:  1-D float32 GPU torch tensor — Newton state joint_qd (zero-copy
-                     from wp.to_torch(coupler.newton_state_0.joint_qd)).
-    """
-    root_quat_w = joint_q_t[3:7].to(dtype=torch.float32).unsqueeze(0)
-    root_lin_vel_w = joint_qd_t[:3].to(dtype=torch.float32).unsqueeze(0)
-    root_ang_vel_w = joint_qd_t[3:6].to(dtype=torch.float32).unsqueeze(0)
-    joint_pos_current = joint_q_t[7:].to(dtype=torch.float32).unsqueeze(0)
-    joint_vel_current = joint_qd_t[6:].to(dtype=torch.float32).unsqueeze(0)
-    vel_b = quat_rotate_inverse(root_quat_w, root_lin_vel_w)
-    a_vel_b = quat_rotate_inverse(root_quat_w, root_ang_vel_w)
-    grav = quat_rotate_inverse(root_quat_w, gravity_vec)
-    joint_pos_rel = joint_pos_current - joint_pos_initial
-    joint_vel_rel = joint_vel_current
-    rearranged_joint_pos_rel = torch.index_select(joint_pos_rel, 1, indices)
-    rearranged_joint_vel_rel = torch.index_select(joint_vel_rel, 1, indices)
-    obs = torch.cat([vel_b, a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
-    return obs
-
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
 wp.init()
@@ -207,70 +168,16 @@ builder.add_urdf(
     ignore_inertial_definitions=False,
 )
 
-# Enlarge foot collision spheres for walking stability on the ground plane.
-# Doubling the URDF's small sphere radii prevents the robot from stumbling.
-# While scanning, also record each sphere's body index and local offset so that
-# we can build the foot-tip contact proxy descriptors after finalization.
-# Maps builder body-index → {"local_offset": [x,y,z], "sphere_radius": float}
-builder_foot_spheres: dict = {}
-for i in range(len(builder.shape_type)):
-    if builder.shape_type[i] == GeoType.SPHERE:
-        r = builder.shape_scale[i][0]
-        builder.shape_scale[i] = (r * 2.0, 0.0, 0.0)
-        # shape_transform[i].p is the sphere-centre offset in the body's local frame.
-        local_p = builder.shape_transform[i].p
-        builder_foot_spheres[builder.shape_body[i]] = {
-            "local_offset": [float(local_p[0]), float(local_p[1]), float(local_p[2])],
-            "sphere_radius": float(r * 2.0),
-        }
+# Enlarge foot collision spheres for walking stability on the ground plane and
+# record each sphere's body index and local offset for foot-tip contact proxies.
+# Also build the body-name→index mapping (needed for foot_tip_descriptors below).
+# Side-effect: builder.shape_scale is modified in-place (sphere radii doubled).
+builder_foot_spheres, builder_body_name_to_idx = demo_utils.scan_and_enlarge_foot_spheres(builder)
 
-# Save builder body-name→index mapping before finalize() is called.
-builder_body_name_to_idx = {lbl.split("/")[-1]: i for i, lbl in enumerate(builder.body_label)}
-
-# ─── Enumerate visual body-part shapes ───────────────────────────────────────
-# Newton's add_urdf() loads both collision shapes (from <collision> tags) and
-# visual shapes (from <visual> tags) because load_visual_shapes=True by default.
-# Visual shapes carry the actual 3-D geometry of each robot link — typically
-# triangle-mesh representations loaded from STL or DAE files referenced in the
-# URDF.  They are not used for contact detection (ShapeFlags.COLLIDE_SHAPES is
-# not set), but they are what Newton's renderer displays and what we can use for
-# a higher-fidelity XLB wall boundary in future work.
-#
-# body_part_visual_descriptors — list of dicts, one per visual shape:
-#   "body_idx"    : int            — row index into body_q / body_qd arrays
-#   "body_name"   : str            — short body name, e.g. "base"
-#   "shape_label" : str            — full shape label from the builder
-#   "geo_type"    : GeoType        — geometry kind (usually GeoType.MESH)
-#   "local_xform" : wp.transform   — shape pose in the body's local frame
-#   "scale"       : list[float]    — [sx, sy, sz] scale factors [m]
-#   "mesh"        : newton.Mesh | None — triangle mesh with .vertices (N×3
-#                                        float32) and .indices (M int32 =
-#                                        3×num_tris); None for non-mesh shapes
-body_part_visual_descriptors: list[dict] = []
-for i in range(len(builder.shape_type)):
-    flags = builder.shape_flags[i]
-    # Keep only shapes that are visible but do not participate in collision.
-    if not (flags & ShapeFlags.VISIBLE):
-        continue
-    if flags & ShapeFlags.COLLIDE_SHAPES:
-        continue
-    b_idx = builder.shape_body[i]
-    if b_idx < 0:
-        continue  # world-attached shape (e.g. a stray ground shape)
-    body_name = builder.body_label[b_idx].split("/")[-1]
-    geo_type = GeoType(builder.shape_type[i])
-    scale = builder.shape_scale[i]
-    body_part_visual_descriptors.append(
-        {
-            "body_idx": b_idx,
-            "body_name": body_name,
-            "shape_label": builder.shape_label[i],
-            "geo_type": geo_type,
-            "local_xform": builder.shape_transform[i],
-            "scale": [float(scale[0]), float(scale[1]), float(scale[2])],
-            "mesh": builder.shape_source[i],
-        }
-    )
+# Collect the robot's visual body-part descriptors (URDF <visual> mesh shapes).
+# These provide the actual per-link triangle-mesh geometry for future use as a
+# higher-fidelity XLB wall boundary beyond the current AABB box representation.
+body_part_visual_descriptors = demo_utils.collect_visual_body_part_descriptors(builder)
 
 # Flat ground plane only — no procedural terrain.
 builder.add_ground_plane()
@@ -322,75 +229,15 @@ print(f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, " f"{ne
 # ANYmal C has a GeoType.SPHERE collision shape at the distal end of each SHANK
 # link.  These spheres are the ground-contact proxies and will serve as coupling
 # surfaces for DEM particles and XLB fluid boundaries in future co-sim work.
-#
-# Geometry representation:
-#   Newton represents each foot tip as a sphere shape attached to the SHANK body.
-#   The contact proxy is fully described by:
-#     • sphere centre in world space: body_pos + rotate(body_quat, local_offset)
-#     • sphere radius [m]
-#   This is the minimal geometry needed for both particle (DEM) contact detection
-#   and fluid (LBM) immersed-boundary coupling.
-#
-# foot_tip_descriptors — static list (4 entries, [LF, RF, LH, RH]) of dicts:
-#   "label"         : str   — short body name, e.g. "LF_SHANK"
-#   "body_idx"      : int   — row index into the body_q / body_qd arrays
-#   "local_offset"  : list  — sphere centre offset in the shank's body frame [m]
-#   "sphere_radius" : float — sphere radius [m]  (constant throughout simulation)
-#
-# foot_tip_sphere_radii — list[float], per-foot radii in [LF, RF, LH, RH] order.
+# See demo_utils.build_foot_tip_descriptors for the full descriptor schema.
 FOOT_SHANK_NAMES = ["LF_SHANK", "RF_SHANK", "LH_SHANK", "RH_SHANK"]
-foot_tip_descriptors = []
-for shank_name in FOOT_SHANK_NAMES:
-    b_idx = builder_body_name_to_idx.get(shank_name)
-    if b_idx is None:
-        raise RuntimeError(f"[FootTip] Shank body '{shank_name}' not found in builder body labels")
-    sphere_info = builder_foot_spheres.get(b_idx)
-    if sphere_info is None:
-        raise RuntimeError(f"[FootTip] No sphere shape found attached to shank body '{shank_name}'")
-    foot_tip_descriptors.append(
-        {
-            "label": shank_name,
-            "body_idx": b_idx,
-            "local_offset": sphere_info["local_offset"],
-            "sphere_radius": sphere_info["sphere_radius"],
-        }
-    )
-
-# Per-foot sphere radii are constant throughout the simulation.
-foot_tip_sphere_radii = [d["sphere_radius"] for d in foot_tip_descriptors]
-
-print("[FootTip] Leg-tip contact proxies (sphere geometry):")
-for d in foot_tip_descriptors:
-    lo = d["local_offset"]
-    print(
-        f"         {d['label']}: body_idx={d['body_idx']}, "
-        f"local_offset=[{lo[0]:.4f}, {lo[1]:.4f}, {lo[2]:.4f}] m, "
-        f"sphere_radius={d['sphere_radius']:.4f} m"
-    )
-print()
-
-# ─── Print visual body-part summary ──────────────────────────────────────────
-# Demonstrates that handles to every robot body part (and its visual mesh) are
-# available via body_part_visual_descriptors.  These handles are the foundation
-# for a higher-fidelity XLB robot representation beyond the current AABB box.
-_n_bodies_with_visuals = len({d["body_idx"] for d in body_part_visual_descriptors})
-print(
-    f"[BodyParts] Robot visual shapes from URDF <visual> tags: "
-    f"{len(body_part_visual_descriptors)} shape(s) across {_n_bodies_with_visuals} body(-ies)."
+foot_tip_descriptors, foot_tip_sphere_radii = demo_utils.build_foot_tip_descriptors(
+    builder_body_name_to_idx, builder_foot_spheres, FOOT_SHANK_NAMES
 )
-for d in body_part_visual_descriptors:
-    mesh_info = ""
-    if d["mesh"] is not None:
-        nv = len(d["mesh"].vertices)
-        nt = len(d["mesh"].indices) // 3
-        mesh_info = f", mesh: {nv} verts / {nt} tris"
-    print(
-        f"            body_idx={d['body_idx']} [{d['body_name']}]  "
-        f"geo={d['geo_type'].name}  "
-        f"scale=[{d['scale'][0]:.3f},{d['scale'][1]:.3f},{d['scale'][2]:.3f}]"
-        + mesh_info
-    )
-print()
+
+demo_utils.print_foot_tip_descriptors(foot_tip_descriptors)
+
+demo_utils.print_visual_body_part_descriptors(body_part_visual_descriptors)
 
 # ─── Visualization backend selection ─────────────────────────────────────────
 # Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD scene file
@@ -492,199 +339,6 @@ _xlb_robot_bc_id = None  # HalfwayBounceBackBC ID assigned to the robot obstacle
 _xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (q, 3) int32
 
 
-# ── GPU-resident Warp kernels for robot obstacle mask updates ──────────────────
-# These kernels replace the CPU numpy-based _xlb_update_robot_box() function,
-# eliminating the ~21 MB/frame host↔device traffic by writing directly into the
-# device-resident bc_mask and missing_mask Warp arrays.
-#
-# bc_mask layout  : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; 0 = fluid
-# missing_mask layout: (Q, NX, NY, NZ), dtype bool — True when lattice direction l
-#   at cell (x,y,z) pulls from outside the solid box (halfway bounce-back flag)
-
-
-@wp.kernel
-def _kernel_clear_bc_mask_box(
-    bc_mask: wp.array4d(dtype=wp.uint8),
-    x0: int,
-    y0: int,
-    z0: int,
-):
-    """Set one rectangular box region (channel 0) of bc_mask to 0 (fluid)."""
-    xi, yi, zi = wp.tid()
-    bc_mask[0, x0 + xi, y0 + yi, z0 + zi] = wp.uint8(0)
-
-
-@wp.kernel
-def _kernel_stamp_bc_mask_box(
-    bc_mask: wp.array4d(dtype=wp.uint8),
-    x0: int,
-    y0: int,
-    z0: int,
-    robot_bc_id: int,
-):
-    """Stamp one rectangular box region (channel 0) of bc_mask with robot_bc_id."""
-    xi, yi, zi = wp.tid()
-    bc_mask[0, x0 + xi, y0 + yi, z0 + zi] = wp.uint8(robot_bc_id)
-
-
-@wp.kernel
-def _kernel_clear_missing_mask_channel(
-    missing_mask: wp.array4d(dtype=wp.bool),
-    l: int,
-    x0: int,
-    y0: int,
-    z0: int,
-):
-    """Set one (l, box) region of missing_mask to False."""
-    xi, yi, zi = wp.tid()
-    missing_mask[l, x0 + xi, y0 + yi, z0 + zi] = False
-
-
-@wp.kernel
-def _kernel_compute_missing_mask_channel(
-    missing_mask: wp.array4d(dtype=wp.bool),
-    vel_c: wp.array2d(dtype=wp.int32),
-    l: int,
-    x0: int,
-    y0: int,
-    z0: int,
-    x1: int,
-    y1: int,
-    z1: int,
-):
-    """Compute missing_mask for one lattice direction l and a solid box.
-
-    missing_mask[l, x, y, z] = True iff the pull-from source
-    (x - vel_c[l,0], y - vel_c[l,1], z - vel_c[l,2]) lies outside the
-    solid box.  Only surface solid cells end up with True entries; interior
-    cells where every pull source is still inside the box remain False.
-    """
-    xi, yi, zi = wp.tid()
-    x = x0 + xi
-    y = y0 + yi
-    z = z0 + zi
-    src_x = x - vel_c[l, 0]
-    src_y = y - vel_c[l, 1]
-    src_z = z - vel_c[l, 2]
-    outside = src_x < x0 or src_x > x1 or src_y < y0 or src_y > y1 or src_z < z0 or src_z > z1
-    missing_mask[l, x, y, z] = outside
-
-
-def _xlb_update_robot_box_gpu(new_gc_min, new_gc_max):
-    """GPU-resident robot obstacle update.  Modifies bc_mask and missing_mask in-place.
-
-    Replaces the former CPU-numpy _xlb_update_robot_box():
-      • no CPU numpy copies
-      • no GPU reallocation (wp.array(numpy, ...))
-      • the existing wp.array objects are modified via kernel writes
-
-    The robot box region is always in the LBM interior (indices [1, N−2] on every
-    axis, guaranteed by _world_to_grid_idx clamping), so the fluid base value for
-    those cells is always 0 / False.  Clearing therefore does not require a base
-    mask copy — kernels simply write the fluid defaults directly.
-
-    Pass new_gc_min = None to clear the robot obstacle entirely.
-    """
-    global _xlb_robot_gc_min, _xlb_robot_gc_max
-
-    bc_mask = coupler.get_bc_mask_array()
-    missing_mask = coupler.get_missing_mask_array()
-    q = _xlb_vel_set.q  # 19 for D3Q19
-    device = bc_mask.device
-
-    # ── Clear previous robot cells on GPU ─────────────────────────────────────
-    if _xlb_robot_gc_min is not None:
-        ox0 = int(_xlb_robot_gc_min[0])
-        oy0 = int(_xlb_robot_gc_min[1])
-        oz0 = int(_xlb_robot_gc_min[2])
-        ox1 = int(_xlb_robot_gc_max[0])
-        oy1 = int(_xlb_robot_gc_max[1])
-        oz1 = int(_xlb_robot_gc_max[2])
-        onx, ony, onz = ox1 - ox0 + 1, oy1 - oy0 + 1, oz1 - oz0 + 1
-        wp.launch(_kernel_clear_bc_mask_box, dim=(onx, ony, onz), device=device, inputs=[bc_mask, ox0, oy0, oz0])
-        for l in range(q):
-            wp.launch(
-                _kernel_clear_missing_mask_channel,
-                dim=(onx, ony, onz),
-                device=device,
-                inputs=[missing_mask, l, ox0, oy0, oz0],
-            )
-
-    # ── Stamp new robot cells on GPU ──────────────────────────────────────────
-    if new_gc_min is not None:
-        x0 = int(new_gc_min[0])
-        y0 = int(new_gc_min[1])
-        z0 = int(new_gc_min[2])
-        x1 = int(new_gc_max[0])
-        y1 = int(new_gc_max[1])
-        z1 = int(new_gc_max[2])
-        nx, ny, nz = x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1
-        wp.launch(
-            _kernel_stamp_bc_mask_box,
-            dim=(nx, ny, nz),
-            device=device,
-            inputs=[bc_mask, x0, y0, z0, int(_xlb_robot_bc_id)],
-        )
-        for l in range(q):
-            wp.launch(
-                _kernel_compute_missing_mask_channel,
-                dim=(nx, ny, nz),
-                device=device,
-                inputs=[missing_mask, _xlb_vel_c_wp, l, x0, y0, z0, x1, y1, z1],
-            )
-
-    _xlb_robot_gc_min = new_gc_min
-    _xlb_robot_gc_max = new_gc_max
-
-
-def _world_to_grid_idx(world_pos):
-    """Map a world-space 3-D point to the nearest interior LBM grid cell index.
-
-    Returns a 3-element int numpy array clamped to [1, N−2] so the obstacle
-    never overlaps the wall / inlet / outlet cells at grid indices 0 and N−1.
-    """
-    t = (np.asarray(world_pos, dtype=np.float64) - _XLB_DOMAIN_MIN) / (_XLB_DOMAIN_MAX - _XLB_DOMAIN_MIN)
-    t = np.clip(t, 0.0, 1.0)
-    idx = (t * np.array([_XLB_NX, _XLB_NY, _XLB_NZ], dtype=np.float64)).astype(int)
-    return np.clip(idx, [1, 1, 1], [_XLB_NX - 2, _XLB_NY - 2, _XLB_NZ - 2])
-
-
-def _prescribed_robot_box_grid(base_pos):
-    """Return (gc_min, gc_max) integer grid arrays for the prescribed robot AABB.
-
-    The box is centred on *base_pos* (world-space [x, y, z] of the Newton base
-    body) with fixed half-extents that enclose the full ANYmal C geometry.
-    Returns (None, None) when the box is entirely outside the LBM domain.
-    """
-    if base_pos is None:
-        return None, None
-    world_min = np.array(
-        [
-            base_pos[0] - _XLB_ROBOT_HALF_EXT_X,
-            base_pos[1] - _XLB_ROBOT_HALF_EXT_Y,
-            # z_min is clamped to 0 because the ground plane is at z=0 and the
-            # LBM domain starts there; the box must not extend below the ground.
-            # No upper-z clamp is needed here — _world_to_grid_idx clips to the
-            # domain interior before the box is used.
-            max(0.0, base_pos[2] - _XLB_ROBOT_BELOW_BASE),
-        ]
-    )
-    world_max = np.array(
-        [
-            base_pos[0] + _XLB_ROBOT_HALF_EXT_X,
-            base_pos[1] + _XLB_ROBOT_HALF_EXT_Y,
-            base_pos[2] + _XLB_ROBOT_ABOVE_BASE,
-        ]
-    )
-    if np.any(world_max <= _XLB_DOMAIN_MIN) or np.any(world_min >= _XLB_DOMAIN_MAX):
-        return None, None
-    gc_min = _world_to_grid_idx(np.maximum(world_min, _XLB_DOMAIN_MIN))
-    gc_max = _world_to_grid_idx(np.minimum(world_max, _XLB_DOMAIN_MAX))
-    if np.any(gc_max < gc_min):
-        return None, None
-    return gc_min, gc_max
-
-
 if _xlb_available:
     print("[XLB] Setting up real LBM simulation ...")
     try:
@@ -731,7 +385,13 @@ if _xlb_available:
         # Build the robot obstacle BC at the initial base-body position (0, 0, 0.62).
         # The BC is added to the stepper once and never removed; bc_mask and
         # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
-        _robot_init_gc_min, _robot_init_gc_max = _prescribed_robot_box_grid(np.array([0.0, 0.0, 0.62]))
+        _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
+            np.array([0.0, 0.0, 0.62]),
+            _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX,
+            (_XLB_NX, _XLB_NY, _XLB_NZ),
+            _XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y,
+            _XLB_ROBOT_BELOW_BASE, _XLB_ROBOT_ABOVE_BASE,
+        )
         if _robot_init_gc_min is None:
             # Fallback: initial position outside domain — use a single interior cell
             # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
@@ -1033,7 +693,7 @@ for frame in range(NUM_FRAMES):
     # which triggered a synchronous GPU→CPU copy via Warp's __getitem__.
     joint_q_t = wp.to_torch(coupler.newton_state_0.joint_q)
     joint_qd_t = wp.to_torch(coupler.newton_state_0.joint_qd)
-    obs = compute_obs(
+    obs = demo_utils.compute_obs(
         act,
         joint_q_t,
         joint_qd_t,
@@ -1054,66 +714,18 @@ for frame in range(NUM_FRAMES):
     # ── Extract foot-tip contact proxy poses ─────────────────────────────────
     # Retrieve body transforms via get_body_q_array() — this returns the device-
     # resident Warp array directly, and .numpy() then copies only the body_q
-    # data to CPU (~1 KB for ANYmal C with ~35 bodies) rather than constructing
-    # a Python list of transforms as get_robot_body_transforms() did.
-    #
-    # robot_base_pos is the 3-float base position, used as the AABB centre for
-    # the XLB mask update below.  Foot-tip positions are needed by DEME for
-    # contact geometry; they are passed to shank_trackers each frame.
-    #
-    # foot_tip_positions : list[4 × [px, py, pz]]
-    #   World-space sphere centre for each foot, in [LF, RF, LH, RH] order [m].
-    #   Computed as:  body_pos + rotate(body_quat, local_offset)
-    #   where local_offset is the sphere-centre offset in the shank body frame.
-    #
-    # foot_tip_rotations : list[4 × [qx, qy, qz, qw]]
-    #   World-space orientation of each shank body (Warp xyzw quaternion).
-    #   Needed for asymmetric contact proxies; provided here for completeness.
-    #
-    # foot_tip_sphere_radii : list[4 × float]  (constant, defined above)
-    #   Sphere radius of each foot's contact proxy [m].
-    #
-    # TODO: pass (foot_tip_positions, foot_tip_rotations, foot_tip_sphere_radii)
-    #       into DEM-Engine and XLB once coupling logic is implemented.
+    # data to CPU (~1 KB for ANYmal C with ~35 bodies).
+    # foot_tip_positions / foot_tip_rotations are needed by DEME for contact
+    # geometry and will drive XLB immersed-boundary coupling in future work.
     body_q_arr = coupler.get_body_q_array()
     body_q_np = body_q_arr.numpy() if body_q_arr is not None else None
-    foot_tip_positions = []
-    foot_tip_rotations = []
-    if body_q_np is not None and len(body_q_np) > 0:
-        for d in foot_tip_descriptors:
-            t = body_q_np[d["body_idx"]]  # [px, py, pz, qx, qy, qz, qw]
-            px, py, pz = float(t[0]), float(t[1]), float(t[2])
-            qx, qy, qz, qw = float(t[3]), float(t[4]), float(t[5]), float(t[6])
-            ox, oy, oz = d["local_offset"]
-            # Compute world-space sphere centre:
-            #   centre_world = body_pos + rotate(body_quat, local_offset)
-            #
-            # Using the Rodrigues rotation formula for rotate(q, o):
-            #   rotate(q, o) = o + 2*qw*(qv × o) + 2*(qv × (qv × o))
-            # where qv = (qx, qy, qz) and qw = scalar part.
-            # The +o term (unrotated local offset) is part of the formula itself.
-            # Combined with body_pos (p), the full world-space centre is:
-            #   centre_world = p + o + 2*qw*(qv×o) + 2*(qv×(qv×o))
-            cx = qy * oz - qz * oy  # first cross: qv × o
-            cy = qz * ox - qx * oz
-            cz = qx * oy - qy * ox
-            ccx = qy * cz - qz * cy  # second cross: qv × (qv × o)
-            ccy = qz * cx - qx * cz
-            ccz = qx * cy - qy * cx
-            foot_tip_positions.append(
-                [
-                    px + ox + 2.0 * (qw * cx + ccx),
-                    py + oy + 2.0 * (qw * cy + ccy),
-                    pz + oz + 2.0 * (qw * cz + ccz),
-                ]
-            )
-            foot_tip_rotations.append([qx, qy, qz, qw])
+    foot_tip_positions, foot_tip_rotations = demo_utils.compute_foot_tip_poses(body_q_np, foot_tip_descriptors)
 
-        # Feed the info to DEME
-        if _deme_available:
-            for i in range(len(foot_tip_positions)):
-                shank_trackers[i].SetPos(foot_tip_positions[i])
-                shank_trackers[i].SetOriQ(foot_tip_rotations[i])
+    # Feed the info to DEME
+    if _deme_available and foot_tip_positions:
+        for i in range(len(foot_tip_positions)):
+            shank_trackers[i].SetPos(foot_tip_positions[i])
+            shank_trackers[i].SetOriQ(foot_tip_rotations[i])
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
@@ -1131,7 +743,13 @@ for frame in range(NUM_FRAMES):
     # missing_mask arrays, with no CPU numpy copies and no GPU reallocation.
     if _xlb_stepper is not None:
         _robot_base_pos = body_q_np[0, :3] if body_q_np is not None else None
-        _xlb_new_gc_min, _xlb_new_gc_max = _prescribed_robot_box_grid(_robot_base_pos)
+        _xlb_new_gc_min, _xlb_new_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
+            _robot_base_pos,
+            _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX,
+            (_XLB_NX, _XLB_NY, _XLB_NZ),
+            _XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y,
+            _XLB_ROBOT_BELOW_BASE, _XLB_ROBOT_ABOVE_BASE,
+        )
         _bbox_same = (
             _xlb_new_gc_min is not None
             and _xlb_robot_gc_min is not None
@@ -1141,7 +759,13 @@ for frame in range(NUM_FRAMES):
             )
         )
         if not _bbox_same:
-            _xlb_update_robot_box_gpu(_xlb_new_gc_min, _xlb_new_gc_max)
+            _xlb_robot_gc_min, _xlb_robot_gc_max = demo_utils.xlb_update_robot_box_gpu(
+                _xlb_bc_mask, _xlb_missing_mask,
+                _xlb_robot_gc_min, _xlb_robot_gc_max,
+                _xlb_new_gc_min, _xlb_new_gc_max,
+                _xlb_robot_bc_id, _xlb_vel_c_wp,
+                _xlb_vel_set.q,
+            )
 
         for _ in range(_XLB_STEPS_PER_FRAME):
             # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
