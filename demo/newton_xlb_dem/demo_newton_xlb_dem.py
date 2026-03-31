@@ -510,14 +510,14 @@ else:
 # Seed streamlines on a regular (12 × 8) y-plane grid just inside the inlet face
 # (y ≈ domain_max[1], flow in −y direction).
 _xlb_seed_pts = mophi.xlb_make_y_plane_seeds(_XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX)
-_xlb_streamline_pts, _xlb_streamline_spd = mophi.xlb_build_streamlines(
+_xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
     _xlb_sl_u, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
 )
 print(f"[XLB] Generated {len(_xlb_streamline_pts)} streamline sample point(s) for flow visualisation.\n")
 
 if _vis_available:
     _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = mophi.xlb_make_streamline_warp_arrays(
-        _xlb_streamline_pts, _xlb_streamline_spd
+        _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
@@ -778,11 +778,13 @@ for frame in range(NUM_FRAMES):
         if _vis_available and frame % _XLB_VIS_INTERVAL == 0:
             _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
             _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
-            _xlb_streamline_pts, _xlb_streamline_spd = mophi.xlb_build_streamlines(
+            _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
                 _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
             )
             _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-                mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd)
+                mophi.xlb_make_streamline_warp_arrays(
+                    _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs
+                )
             )
 
     # ── Print foot-tip positions every frame ──────────────────────────────────
@@ -828,10 +830,12 @@ for frame in range(NUM_FRAMES):
             radii=_dem_sphere_radii_wp,
             colors=_dem_sphere_colors_wp,
         )
-        # Render XLB flow field as dot-chain streamlines.
-        # Points are traced from the live LBM macro state (updated every
-        # _XLB_VIS_INTERVAL frames); the cool-blue colour palette contrasts with
-        # the orange DEM particles and does not block the robot geometry or ground plane.
+        # Render XLB flow field as arrow glyphs — each arrow has a large head sphere
+        # at the current streamline position and tapering shaft spheres trailing behind
+        # along the −velocity direction, making the flow direction immediately legible.
+        # Glyphs are sampled from the live LBM macro state (updated every
+        # _XLB_VIS_INTERVAL frames); the cool-blue palette contrasts with the orange
+        # DEM particles and does not obstruct the robot geometry or ground plane.
         vis.log_points(
             "xlb_streamlines",
             _xlb_streamline_pos_wp,
