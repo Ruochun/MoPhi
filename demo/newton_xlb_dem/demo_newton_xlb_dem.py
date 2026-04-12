@@ -680,6 +680,18 @@ print(
 # Pre-allocate the 6-element zeros buffer used to prepend free-joint DOFs each frame.
 free_joint_zeros = torch.zeros(6, device=torch_device, dtype=torch.float32)
 
+# Set the initial camera position once before the simulation loop.
+# Newton's ViewerGL handles mouse and keyboard camera controls (orbit, pan, zoom)
+# natively; calling set_camera() only once here lets the user freely adjust the
+# view angle during the simulation without the camera being reset every frame.
+if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+    _init_base_pos = wp.to_torch(coupler.newton_state_0.joint_q)[:3].cpu().numpy()
+    vis.set_camera(
+        pos=wp.vec3(_init_base_pos[0], _init_base_pos[1] - 6.0, _init_base_pos[2] + 2.0),
+        pitch=-10.0,
+        yaw=90.0,
+    )
+
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
     # For OmniverseVisualizer, vis.is_running() always returns True.
@@ -802,23 +814,6 @@ for frame in range(NUM_FRAMES):
         # Advance sphere positions along -y (towards robot) each frame.
         _dem_sphere_positions_np = np.array(particles_positions)
         _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
-
-        # Follow-camera: position the camera behind the robot (−y direction) so
-        # the robot and the DEM particles ahead of it (+y) are both in view.
-        # The camera tracks the robot's XY position while staying at a fixed
-        # height offset and looking forward (+y, yaw=90) with a slight downward
-        # pitch to keep the ground plane visible.
-        # After the physics substeps, newton_state_0 has been swapped to the new
-        # state.  We read joint_q[:3] as a zero-copy torch view and copy 3 floats
-        # to CPU — negligible cost compared to the per-frame physics.
-        # For OmniverseVisualizer, set_camera() is a no-op but is called here so
-        # the loop body is identical for both backends.
-        base_pos = wp.to_torch(coupler.newton_state_0.joint_q)[:3].cpu().numpy()
-        vis.set_camera(
-            pos=wp.vec3(base_pos[0], base_pos[1] - 6.0, base_pos[2] + 2.0),
-            pitch=-10.0,
-            yaw=90.0,
-        )
 
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
