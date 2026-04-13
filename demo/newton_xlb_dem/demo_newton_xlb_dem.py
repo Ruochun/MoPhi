@@ -681,8 +681,10 @@ if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
     _init_base_pos = wp.to_torch(coupler.newton_state_0.joint_q)[:3].cpu().numpy()
     vis.set_camera(
         pos=wp.vec3(_init_base_pos[0], _init_base_pos[1] - 6.0, _init_base_pos[2] + 2.0),
+        # pos=wp.vec3(_init_base_pos[0] + 6., _init_base_pos[1], _init_base_pos[2] + 2.0),
         pitch=-10.0,
         yaw=90.0,
+        # yaw=180.0,
     )
 
 for frame in range(NUM_FRAMES):
