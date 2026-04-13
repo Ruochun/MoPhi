@@ -522,31 +522,24 @@ if _vis_available:
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
 # ─── Build the DEME placeholder solver (if DEME is available) ─────────────
-# Spheres are initially scattered ahead of the robot (+y)
-# near the ground — resembling a thin layer of dust or dirt on the surface.
-# All spheres share a constant velocity in the -y direction (opposite to the
-# robot's forward direction), so they appear to drift towards the robot's face.
-# Collision and DEM physics will be handled by DEME in a future update.
-_NUM_DEM_SPHERES = 750
 # Four representative radius types [m] — coarse dust grain size distribution.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
+# Use DEME's Poisson-disk sampler 
+# Minimum separation = 2 × largest radius: the Poisson-disk sampler guarantees
+# this distance between sphere centres, so no two initial spheres overlap.
+_poisson_disk_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
+# Box x ∈ [-1.5, 1.5], y ∈ [1.0, 4.5], z ∈ a thin layer:
+_sampled_positions = _poisson_disk_sampler.SampleBox([0.0, 2.75, 0.25], [1.5, 1.75, 0.15])
+_NUM_DEM_SPHERES = len(_sampled_positions)
+_dem_sphere_positions_np = np.array(_sampled_positions, dtype=np.float32)
 _rng = np.random.default_rng(seed=42)
 _radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
 _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
 
-# Initial positions: scattered in a band ahead of the robot along +xy,
-# spread laterally across y, and resting on the ground (z = radius).
-_x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_y_init = _rng.uniform(1.0, 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.25).astype(np.float32)
-
-# _dem_sphere_positions_np shape (N, 3) — updated every frame.
-_dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
-
 # Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
 # so the spheres move towards the robot's face.
-_DEM_SPHERE_INIT_VELOCITY_Y = [0.0, -1.0, 0.0]  # m/s
+_DEM_SPHERE_INIT_VELOCITY_Y = [0.0, -1.2, 0.0]  # m/s
 _DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
 # sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
 # matching the inner time step from Newton's anymal example).
@@ -571,7 +564,7 @@ _FIXED_FAM = 10
 if _deme_available:
     print("[DEME] Creating placeholder deme.DEMSolver ...")
     deme_solver = DEME.DEMSolver()
-    wall_mat = deme_solver.LoadMaterial({"E": 1e6, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+    wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
     deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
     deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
     deme_solver.SetErrorOutAvgContacts(500)
