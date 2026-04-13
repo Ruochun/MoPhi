@@ -535,14 +535,15 @@ _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 # random sampling otherwise.  _NUM_DEM_SPHERES is the maximum number of particles
 # drawn from the Poisson sample (the first N positions are kept).
 if _deme_available:
-    # Minimum separation = 2 × largest radius so initial spheres never overlap.
-    _pd_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
+    # Minimum separation = 2 × largest radius: the Poisson-disk sampler guarantees
+    # this distance between sphere centres, so no two initial spheres overlap.
+    _poisson_disk_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
     # Box x ∈ [-1.5, 1.5], y ∈ [1.0, 4.5], z ∈ [0.1, 1.0]:
     # centre = [0, 2.75, 0.55], half-dims = [1.5, 1.75, 0.45].
-    _sampled_pos = _pd_sampler.SampleBox([0.0, 2.75, 0.55], [1.5, 1.75, 0.45])
-    _sampled_pos = _sampled_pos[:_NUM_DEM_SPHERES]
-    _NUM_DEM_SPHERES = len(_sampled_pos)
-    _dem_sphere_positions_np = np.array(_sampled_pos, dtype=np.float32)
+    _sampled_positions = _poisson_disk_sampler.SampleBox([0.0, 2.75, 0.55], [1.5, 1.75, 0.45])
+    _sampled_positions = _sampled_positions[:_NUM_DEM_SPHERES]
+    _NUM_DEM_SPHERES = len(_sampled_positions)
+    _dem_sphere_positions_np = np.array(_sampled_positions, dtype=np.float32)
     _rng = np.random.default_rng(seed=42)
     _radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
     _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
