@@ -531,18 +531,31 @@ _NUM_DEM_SPHERES = 750
 # Four representative radius types [m] — coarse dust grain size distribution.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
-_rng = np.random.default_rng(seed=42)
-_radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
-_dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
-
-# Initial positions: scattered in a band ahead of the robot along +xy,
-# spread laterally across y, and resting on the ground (z = radius).
-_x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_y_init = _rng.uniform(1.0, 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
-_z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.25).astype(np.float32)
-
-# _dem_sphere_positions_np shape (N, 3) — updated every frame.
-_dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
+# Use DEME's Poisson-disk sampler when DEME is available; fall back to uniform
+# random sampling otherwise.  _NUM_DEM_SPHERES is the maximum number of particles
+# drawn from the Poisson sample (the first N positions are kept).
+if _deme_available:
+    # Minimum separation = 2 × largest radius so initial spheres never overlap.
+    _pd_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
+    # Box x ∈ [-1.5, 1.5], y ∈ [1.0, 4.5], z ∈ [0.1, 1.0]:
+    # centre = [0, 2.75, 0.55], half-dims = [1.5, 1.75, 0.45].
+    _sampled_pos = _pd_sampler.SampleBox([0.0, 2.75, 0.55], [1.5, 1.75, 0.45])
+    _sampled_pos = _sampled_pos[:_NUM_DEM_SPHERES]
+    _NUM_DEM_SPHERES = len(_sampled_pos)
+    _dem_sphere_positions_np = np.array(_sampled_pos, dtype=np.float32)
+    _rng = np.random.default_rng(seed=42)
+    _radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
+    _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
+else:
+    _rng = np.random.default_rng(seed=42)
+    _radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
+    _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
+    # Initial positions: scattered in a band ahead of the robot along +xy,
+    # spread laterally across y, and resting on the ground (z = radius).
+    _x_init = _rng.uniform(-1.5, 1.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+    _y_init = _rng.uniform(1.0, 4.5, size=_NUM_DEM_SPHERES).astype(np.float32)
+    _z_init = _rng.uniform(_dem_sphere_radii_np, _dem_sphere_radii_np + 0.25).astype(np.float32)
+    _dem_sphere_positions_np = np.column_stack([_x_init, _y_init, _z_init])
 
 # Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
 # so the spheres move towards the robot's face.
