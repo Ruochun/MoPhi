@@ -11,7 +11,7 @@ def xlb_make_y_plane_seeds(
     domain_min,
     domain_max,
     n_x_seeds=12,
-    n_z_seeds=6,
+    n_z_seeds=8,
     seed_y=None,
     x_inset=0.4,
     z_inset=0.15,
@@ -140,7 +140,7 @@ def xlb_make_streamline_warp_arrays(
     pts,
     spd,
     dirs,
-    arrow_interval=2,
+    arrow_interval=5,
     n_shaft=3,
     shaft_step=0.040,
 ):
@@ -162,7 +162,7 @@ def xlb_make_streamline_warp_arrays(
         spd:            (N,)   float32 — velocity magnitude at each sample point.
         dirs:           (N, 3) float32 — unit velocity direction at each sample point,
                         as returned by :func:`xlb_build_streamlines`.
-        arrow_interval: stride between sampled arrow positions.
+        arrow_interval: stride between sampled arrow positions (default 5 steps ≈ 0.6 m).
         n_shaft:        number of shaft spheres trailing behind the arrowhead (default 3).
         shaft_step:     spacing [m] between consecutive shaft spheres (default 0.04 m).
 
