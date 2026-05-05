@@ -1,25 +1,32 @@
 """demo/newton_xlb_dem/demo_claw_newton.py
 
-Newton UR10 robot arm co-simulation demo — groundwork phase for claw plowing.
+Newton UR10 robot arm + DEME granular terrain co-simulation demo.
 
-This is the first step toward a full claw-plowing-granular-material co-simulation.
+This demo adds a granular terrain pile to the UR10 excavator arm simulation.
 It reproduces Newton's ``example_robot_ur10`` example inside MoPhi's
 ``NewtonXLBDEMCoupler`` framework, demonstrating a single UR10 6-DOF industrial
-robot arm executing sinusoidal joint trajectories.
+robot arm executing sinusoidal joint trajectories above a pile of DEME-managed
+ellipsoidal particles.
 
 The robot is mounted on a cylindrical pedestal above the ground plane.  All six
 revolute joints sweep continuously through their full range using pre-computed
-sinusoidal target trajectories, exercising the arm's full reach envelope — the
-motion that will later be used to plow granular material.
+sinusoidal target trajectories, exercising the arm's full reach envelope.
 
 An excavator plow mesh (``data/mesh/excavator.obj``) is rigidly attached to the
 UR10's end-effector link (``ee_link``).  The OBJ file uses centimetre units; the
 mesh is scaled by 0.01 when loaded so it is correctly sized in metres.  The plow
-sweeps through space as the arm moves, providing a visual preview of the plowing
-trajectory that DEME particles will later interact with.
+sweeps through space as the arm moves.
+
+DEME granular terrain (Phase 2):
+  A pile of ellipsoidal particles is created using DEME, following the approach
+  of DEM-Engine's ``DEMdemo_Plow.cpp`` demo.  Particles are ellipsoids with
+  semi-axes 2:1:1 scaled to 0.06 m × 0.03 m × 0.03 m, sampled layer-by-layer
+  with a Poisson-disk sampler to form a compact pile at ground level.  In this
+  phase the terrain is DEME-only — no interaction with the Newton excavator yet.
+  Particle–excavator coupling will be added in a future phase.
 
 Future phases will add:
-  • DEME (discrete-element) granular particles displaced by the arm's end-effector.
+  • DEME–Newton coupling: forces from excavator plow on granular particles.
   • XLB (lattice-Boltzmann) fluid flow around the moving arm.
 
 The demo closely mirrors Newton's ``example_robot_ur10`` setup (single arm,
@@ -31,6 +38,7 @@ Prerequisites
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
   • pip install newton warp-lang   (Newton rigid-body physics + Warp GPU runtime)
+  • pip install deme               (optional — DEME discrete-element solver)
 
 Running
 -------
@@ -80,6 +88,18 @@ except ImportError:
         "       Install with:  pip install newton warp-lang"
     )
     sys.exit(1)
+
+# ─── Import DEME (optional) ─────────────────────────────────────────────────
+try:
+    import DEME
+
+    _deme_available = True
+except ImportError:
+    _deme_available = False
+    print(
+        "INFO: DEME is not installed — granular terrain will be skipped.\n"
+        "      Install DEME to enable DEM particle simulation."
+    )
 
 # ─── Warp kernel: per-substep sinusoidal joint-target update ──────────────
 # Mirrors the trajectory kernel from Newton's example_robot_ur10.py.
@@ -162,6 +182,31 @@ FRAME_DT = 1.0 / SIM_FPS
 SIM_DT = FRAME_DT / SIM_SUBSTEPS  # 1/500 s per substep
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
 CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-second]
+
+# ─── DEME granular terrain constants ──────────────────────────────────────
+# Physics parameters follow DEMdemo_Plow.cpp (projectchrono/DEM-Engine).
+# Ellipsoid template with semi-axes 2:1:1 (template units); Scale(0.03) gives
+# actual particle size 0.06 m × 0.03 m × 0.03 m (sand-grain scale).
+_DEM_PI = 3.1415927
+_DEM_TERRAIN_SCALING = 0.03  # metres per template unit
+
+# Unscaled ellipsoid template mass and MOI (density 2600 kg/m³, semi-axes a=2,
+# b=1, c=1 in template units).  DEME's Scale() cubes the mass automatically.
+_DEM_TEMPLATE_MASS = 2600.0 * (4.0 / 3.0 * _DEM_PI * 2.0 * 1.0 * 1.0)
+_DEM_TEMPLATE_MOI = [
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_x (b²+c²)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_y (a²+c²)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 1.0 ** 2),  # I_z (a²+b²)
+]
+
+# Terrain pile geometry (world-space, z-up, ground at z = 0).
+# A compact pile beneath the arm's workspace — much smaller than DEMdemo_Plow.cpp.
+_DEM_WORLD_HS = 1.0  # domain half-size in x and y [m]
+_DEM_BOWL_BOT = -0.05  # domain bottom, just below Newton's ground plane [m]
+_DEM_FILL_HW = 0.5  # pile fill half-width in x and y [m]
+_DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
+_DEM_FILL_H = 0.3  # total pile height [m]
+_DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
 
 # ─── Trajectory constants ─────────────────────────────────────────────────
 # Joints whose reported limit magnitude exceeds this threshold (6 rad ≈ 343°,
@@ -314,8 +359,91 @@ else:
             "         The simulation will run without visualization."
         )
 
+# ─── Build the DEME granular terrain ──────────────────────────────────────
+# Creates a pile of ellipsoidal particles following the approach of
+# DEM-Engine's DEMdemo_Plow.cpp demo.  Particles are sampled layer-by-layer
+# with a Poisson-disk sampler and deposited at ground level (z ≈ 0).
+# No interaction with the Newton excavator in this phase — DEME runs
+# independently.  Particle–excavator coupling will be added in a future phase.
+deme_solver = None
+_dem_terrain_tracker = None
+_dem_num_terrain_particles = 0
+
+if _deme_available:
+    print("[DEME] Building granular terrain (ellipsoidal particles) ...")
+    try:
+        deme_solver = DEME.DEMSolver()
+        deme_solver.UseFrictionalHertzianModel()
+        deme_solver.SetVerbosity("ERROR")
+
+        mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_particles = deme_solver.LoadMaterial({"E": 1e9, "nu": 0.3, "CoR": 0.7, "mu": 0.5})
+        # Mixed contact properties between wall and particle materials.
+        deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
+        deme_solver.SetMaterialPropertyPair("mu",  mat_walls, mat_particles, 0.5)
+
+        # Ellipsoid template (semi-axes 2:1:1) scaled to physical particle size.
+        # The CSV file encodes the clump geometry relative to unit sphere radii;
+        # Scale() resizes the template so each particle is ~0.06 × 0.03 × 0.03 m.
+        particle_template = deme_solver.LoadClumpType(
+            _DEM_TEMPLATE_MASS,
+            _DEM_TEMPLATE_MOI,
+            DEME.GetDEMEDataFile("clumps/ellipsoid_2_1_1.csv"),
+            mat_particles,
+        )
+        particle_template.Scale(_DEM_TERRAIN_SCALING)
+
+        # Box domain: closed on bottom and four sides, open at the top so
+        # particles can be launched upward by the excavator without being trapped.
+        deme_solver.InstructBoxDomainDimension(
+            [-_DEM_WORLD_HS, _DEM_WORLD_HS],
+            [-_DEM_WORLD_HS, _DEM_WORLD_HS],
+            [_DEM_BOWL_BOT, _DEM_WORLD_HS * 2.0],
+        )
+        deme_solver.InstructBoxDomainBoundingBC("top_open", mat_walls)
+
+        # Sample particle positions layer by layer (mirrors DEMdemo_Plow.cpp).
+        # PDSampler guarantees centre-to-centre separation ≥ 2 × scaling, so
+        # no two initial particles overlap.
+        sampler = DEME.PDSampler(2.0 * _DEM_TERRAIN_SCALING)
+        pile_positions = []
+        layer_z = 0.0
+        while layer_z < _DEM_FILL_H:
+            center = [0.0, 0.0, _DEM_FILL_BOT + layer_z]
+            half_ext = [_DEM_FILL_HW, _DEM_FILL_HW, 0.0]
+            layer_pts = sampler.SampleBox(center, half_ext)
+            pile_positions.extend(layer_pts)
+            layer_z += _DEM_LAYER_STEP
+
+        _dem_num_terrain_particles = len(pile_positions)
+        num_layers = int(_DEM_FILL_H / _DEM_LAYER_STEP) + 1
+        print(
+            f"[DEME] Sampled {_dem_num_terrain_particles} terrain particle(s) "
+            f"in {num_layers} layer(s)."
+        )
+
+        the_pile = deme_solver.AddClumps(particle_template, pile_positions)
+        the_pile.SetFamily(0)
+        _dem_terrain_tracker = deme_solver.Track(the_pile)
+
+        deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
+        deme_solver.SetInitTimeStep(SIM_DT)
+        deme_solver.SetErrorOutAvgContacts(500)
+        deme_solver.Initialize()
+
+        print(
+            f"[DEME] Granular terrain initialized "
+            f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n"
+        )
+    except Exception as exc:
+        print(f"[DEME] Could not build granular terrain ({exc}) — disabling DEME.\n")
+        deme_solver = None
+        _dem_terrain_tracker = None
+        _dem_num_terrain_particles = 0
+
 # ─── Initialize the coupler ────────────────────────────────────────────────
-# XLB and DEME are passed as None — they will be connected in future phases.
+# XLB is passed as None; DEME terrain solver is connected when available
+# (no Newton–DEME force coupling yet — particles run independently).
 coupler = mophi.NewtonXLBDEMCoupler()
 coupler.set_verbosity(mophi.VERBOSITY_INFO)
 
@@ -324,7 +452,7 @@ coupler.initialize(
     newton_model=newton_model,
     newton_solver=newton_solver,
     xlb_simulation=None,
-    deme_solver=None,
+    deme_solver=deme_solver,
     sim_dt=SIM_DT,
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
@@ -409,10 +537,28 @@ if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
         )
         SAVE_MOVIE = False
 
+# ─── DEME terrain visualisation arrays ────────────────────────────────────
+# Allocate constant radii and colour arrays once; the position array is
+# rebuilt each frame from the live tracker data.
+_dem_terrain_radii_wp = None
+_dem_terrain_colors_wp = None
+if _deme_available and _dem_terrain_tracker is not None and _vis_available and _dem_num_terrain_particles > 0:
+    # Display radius ≈ largest ellipsoid semi-axis after scaling.
+    _dem_vis_radius = _DEM_TERRAIN_SCALING * 2.0
+    _dem_terrain_radii_wp = wp.array(
+        np.full(_dem_num_terrain_particles, _dem_vis_radius, dtype=np.float32),
+        dtype=wp.float32,
+    )
+    _dem_terrain_colors_wp = wp.array(
+        np.tile([0.76, 0.60, 0.42], (_dem_num_terrain_particles, 1)).astype(np.float32),
+        dtype=wp.vec3,
+    )
+    print(f"[Viewer] {_dem_num_terrain_particles} DEME terrain particle(s) registered for visualisation.\n")
+
 # ─── Co-simulation loop ────────────────────────────────────────────────────
 # Each frame:
-#   1. For each substep: update joint targets, then advance Newton via coupler.step().
-#   2. Visualize the resulting state.
+#   1. For each substep: update joint targets, advance Newton, advance DEME.
+#   2. Visualize Newton arm state and DEME terrain particles.
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
     f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} substeps × {SIM_DT * 1000:.1f} ms) ...\n"
@@ -435,7 +581,7 @@ for frame in range(NUM_FRAMES):
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
-    # ── Substep loop: update joint targets + advance Newton ───────────────
+    # ── Substep loop: update joint targets + advance Newton + advance DEME ─
     for _ in range(SIM_SUBSTEPS):
         # Compute sinusoidal joint targets for this substep and write them into
         # coupler.newton_control so the solver uses them in the upcoming step.
@@ -451,12 +597,28 @@ for frame in range(NUM_FRAMES):
         # Advance Newton (clear forces → collide → step → swap states).
         coupler.step()
 
+        # Advance DEME granular terrain one step (no coupling to Newton yet).
+        if deme_solver is not None:
+            deme_solver.DoStepDynamics()
+
     sim_time += FRAME_DT
 
     # ── Visualization ──────────────────────────────────────────────────────
     if _vis_available:
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
+
+        # Render live DEME terrain particle positions as a sandy point cloud.
+        if _dem_terrain_tracker is not None and _dem_terrain_radii_wp is not None:
+            _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+            _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+            vis.log_points(
+                "dem_terrain",
+                _dem_terrain_pos_wp,
+                radii=_dem_terrain_radii_wp,
+                colors=_dem_terrain_colors_wp,
+            )
+
         vis.end_frame()
 
         if _movie_writer is not None:
@@ -483,3 +645,7 @@ print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 print("Demo completed successfully.")
 print(f"  Newton version : {newton.__version__}")
 print(f"  Warp  version  : {wp.__version__}")
+if _deme_available:
+    print(f"  DEME           : installed ({_dem_num_terrain_particles} terrain particles)")
+else:
+    print("  DEME           : not installed (granular terrain skipped)")
