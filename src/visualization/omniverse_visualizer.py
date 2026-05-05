@@ -319,6 +319,40 @@ class OmniverseVisualizer:
             except Exception:
                 pass
 
+    def log_arrows(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
+        """No-op for the USD backend — accepted for API compatibility.
+
+        Arrow overlays (e.g. coordinate-axis indicators) are not exported to
+        the USD scene.  The argument signature matches
+        :meth:`~mophi.OpenGLVisualizer.log_arrows` so that demos can switch
+        backends without changing the simulation loop.
+
+        Args:
+            name:   Unique string identifier (ignored).
+            starts: Arrow tail positions (ignored).
+            ends:   Arrow tip positions (ignored).
+            colors: Arrow colours (ignored).
+            width:  Reserved (ignored).
+            hidden: Visibility flag (ignored).
+        """
+
+    def log_lines(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
+        """No-op for the USD backend — accepted for API compatibility.
+
+        Line overlays (e.g. scale bars) are not exported to the USD scene.
+        The argument signature matches
+        :meth:`~mophi.OpenGLVisualizer.log_lines` so that demos can switch
+        backends without changing the simulation loop.
+
+        Args:
+            name:   Unique string identifier (ignored).
+            starts: Line start positions (ignored).
+            ends:   Line end positions (ignored).
+            colors: Line colours (ignored).
+            width:  Reserved (ignored).
+            hidden: Visibility flag (ignored).
+        """
+
     def end_frame(self) -> None:
         """No-op for the USD backend — accepted for API compatibility.
 

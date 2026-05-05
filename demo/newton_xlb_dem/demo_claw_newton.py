@@ -519,7 +519,7 @@ print(
 # ─── Movie recording settings ─────────────────────────────────────────────
 # Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
 # Requires: pip install imageio imageio-ffmpeg
-SAVE_MOVIE = False
+SAVE_MOVIE = True
 MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
 MOVIE_FPS = SIM_FPS
 
@@ -564,12 +564,51 @@ print(
     f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} substeps × {SIM_DT * 1000:.1f} ms) ...\n"
 )
 
-# Point the camera toward the arm base so the full reach envelope is visible.
+# Point the camera toward the arm base and terrain pile.
+# The UR10 pedestal is at (0, 0, 1.2), terrain pile at (0, 0, 0–0.3).
+# Camera at (3, -3, 2.5) with Z-up convention:
+#   yaw=135° → front direction (-cos45, +sin45, .) = (-0.707, +0.707, .)
+#           → points from (+x,-y) quadrant toward origin         ✓
+#   pitch=-25° → slight downward tilt to see ground-level terrain ✓
 if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
     vis.set_camera(
         pos=wp.vec3(3.0, -3.0, 2.5),
-        pitch=-15.0,
-        yaw=45.0,
+        pitch=-25.0,
+        yaw=135.0,
+    )
+
+# ─── Static scene overlays: coordinate axes and scale bar ─────────────────
+# Log arrows and lines ONCE before the simulation loop.  Newton's ViewerGL
+# stores them in a persistent dict and re-renders them every frame; there
+# is no need to re-submit static geometry.
+if _vis_available:
+    # XYZ coordinate-axis arrows at the world origin.
+    # Each arrow is 0.3 m long: X = red, Y = green, Z = blue.
+    _AXIS_LEN = 0.3
+    _axis_origin = np.zeros((3, 3), dtype=np.float32)
+    _axis_tips = np.array(
+        [[_AXIS_LEN, 0.0, 0.0], [0.0, _AXIS_LEN, 0.0], [0.0, 0.0, _AXIS_LEN]],
+        dtype=np.float32,
+    )
+    _axis_colors = np.array(
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    vis.log_arrows(
+        "coord_axes",
+        wp.array(_axis_origin, dtype=wp.vec3),
+        wp.array(_axis_tips, dtype=wp.vec3),
+        wp.array(_axis_colors, dtype=wp.vec3),
+    )
+
+    # 1 m scale bar on the ground plane, placed just in front of the terrain
+    # pile (y = -0.8) so it is clearly visible without overlapping the pile.
+    _SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.8, 0.01  # 1 m along x
+    vis.log_lines(
+        "scale_bar",
+        wp.array([[_SB_X0, _SB_Y, _SB_Z]], dtype=wp.vec3),
+        wp.array([[_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
+        (1.0, 1.0, 0.0),  # yellow
     )
 
 sim_time = 0.0

@@ -87,7 +87,9 @@ Every visualizer backend must implement the following methods:
 | `set_camera` | `(pos, pitch, yaw)` | No-op is acceptable if the backend has no interactive camera |
 | `begin_frame` | `(sim_time: float)` | Called once per simulation step before any `log_*` calls |
 | `log_state` | `(state)` | Render/record the rigid-body state from a physics solver |
-| `log_points` | `(name, positions, *, radii, colors)` | Render/record a named point cloud |
+| `log_points` | `(name, positions, *, radii, colors)` | Render/record a named point cloud (spheres) |
+| `log_arrows` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named arrows (coordinate axes, vector fields); no-op for USD backend |
+| `log_lines` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named line segments (scale bars, grids); no-op for USD backend |
 | `end_frame` | `()` | Finalize the current frame |
 | `get_frame` | `() → array | None` | Return the rendered frame (or `None` if unsupported) |
 | `close` | `()` | Release all resources / save the output file |

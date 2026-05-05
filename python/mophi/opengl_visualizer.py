@@ -113,6 +113,41 @@ class OpenGLVisualizer:
         """
         self._viewer.log_points(name, positions, radii=radii, colors=colors)
 
+    def log_arrows(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
+        """Log a named batch of arrows for rendering.
+
+        Typical uses include coordinate-axis indicators and vector-field
+        overlays.  Arrow geometry persists between frames; call again only
+        when the data changes.
+
+        Args:
+            name:   Unique string identifier for this arrow batch.
+            starts: ``warp.array`` of ``warp.vec3`` tail positions.
+            ends:   ``warp.array`` of ``warp.vec3`` head (tip) positions.
+            colors: ``warp.array`` of ``warp.vec3`` RGB colours, or a single
+                    ``(r, g, b)`` tuple/list applied to all arrows.
+            width:  Reserved for future world-space width support.
+            hidden: When ``True`` the batch is not rendered.
+        """
+        self._viewer.log_arrows(name, starts, ends, colors, width=width, hidden=hidden)
+
+    def log_lines(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
+        """Log a named batch of line segments for rendering.
+
+        Typical uses include scale bars and grid overlays.  Line geometry
+        persists between frames; call again only when the data changes.
+
+        Args:
+            name:   Unique string identifier for this line batch.
+            starts: ``warp.array`` of ``warp.vec3`` start positions.
+            ends:   ``warp.array`` of ``warp.vec3`` end positions.
+            colors: ``warp.array`` of ``warp.vec3`` RGB colours, or a single
+                    ``(r, g, b)`` tuple/list applied to all lines.
+            width:  Reserved for future world-space width support.
+            hidden: When ``True`` the batch is not rendered.
+        """
+        self._viewer.log_lines(name, starts, ends, colors, width=width, hidden=hidden)
+
     def end_frame(self) -> None:
         """Finalise the current frame and push it to the display."""
         self._viewer.end_frame()
