@@ -12,6 +12,12 @@ revolute joints sweep continuously through their full range using pre-computed
 sinusoidal target trajectories, exercising the arm's full reach envelope — the
 motion that will later be used to plow granular material.
 
+An excavator plow mesh (``data/mesh/excavator.obj``) is rigidly attached to the
+UR10's end-effector link (``ee_link``).  The OBJ file uses centimetre units; the
+mesh is scaled by 0.01 when loaded so it is correctly sized in metres.  The plow
+sweeps through space as the arm moves, providing a visual preview of the plowing
+trajectory that DEME particles will later interact with.
+
 Future phases will add:
   • DEME (discrete-element) granular particles displaced by the arm's end-effector.
   • XLB (lattice-Boltzmann) fluid flow around the moving arm.
@@ -37,6 +43,7 @@ Or from the repository root after installing the mophi package:
     python -m demo.newton_xlb_dem.demo_claw_newton
 """
 
+import os
 import sys
 
 import numpy as np
@@ -79,6 +86,44 @@ except ImportError:
 # Each substep the simulation-time parameter `t` advances by `dt`, and the
 # corresponding joint target is linearly interpolated from the pre-computed
 # trajectory table.  `dim` is set to `world_count` (1 for a single arm).
+
+
+# ─── OBJ mesh loader ──────────────────────────────────────────────────────
+# Pure-Python parser for Wavefront OBJ files.  Handles the v//vn and v/vt/vn
+# face formats used by the excavator plow mesh (all faces are triangles).
+def _load_obj_mesh(path: str, scale: float = 1.0):
+    """Parse a Wavefront OBJ file and return (vertices, indices) as numpy arrays.
+
+    Args:
+        path:  Path to the .obj file.
+        scale: Uniform scale factor applied to all vertex coordinates.  Use
+               0.01 to convert centimetre OBJ coordinates to metres.
+
+    Returns:
+        vertices:  float32 ndarray of shape (N, 3) — vertex positions [m].
+        indices:   int32 ndarray of shape (F*3,) — flat triangle index list.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+    """
+    vertices = []
+    indices = []
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("v "):
+                parts = line.split()
+                vertices.append([float(parts[1]) * scale, float(parts[2]) * scale, float(parts[3]) * scale])
+            elif line.startswith("f "):
+                # Each token is v, v/vt, v//vn, or v/vt/vn — take the vertex index only.
+                parts = line.split()[1:]
+                face_verts = [int(p.split("/")[0]) - 1 for p in parts]  # OBJ uses 1-based indices
+                if len(face_verts) == 3:
+                    indices.extend(face_verts)
+                elif len(face_verts) == 4:
+                    # Fan-triangulate quads.
+                    indices.extend([face_verts[0], face_verts[1], face_verts[2]])
+                    indices.extend([face_verts[0], face_verts[2], face_verts[3]])
+    return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
 
 @wp.kernel
@@ -134,6 +179,13 @@ print("=== MoPhi UR10 Claw Arm co-simulation demo ===\n")
 wp.init()
 device = wp.get_device()
 
+# ─── Paths ────────────────────────────────────────────────────────────────
+# Resolve the excavator OBJ mesh relative to the repository root so the demo
+# can be run from any working directory.
+_DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(os.path.dirname(_DEMO_DIR))
+EXCAVATOR_OBJ_PATH = os.path.join(_REPO_ROOT, "data", "mesh", "excavator.obj")
+
 # ─── Load the UR10 robot model ─────────────────────────────────────────────
 # newton.utils.download_asset("universal_robots_ur10") downloads the UR10 USD
 # from the Newton Assets repository.  The arm is mounted on a cylindrical
@@ -166,6 +218,43 @@ ur10_sub.add_shape_cylinder(
     half_height=pedestal_height / 2.0,
     radius=0.08,
 )
+
+# ─── Attach the excavator plow mesh to the UR10 end-effector ─────────────
+# The plow OBJ is authored in centimetres (bounding box ≈ 60 × 86 × 57 cm).
+# Scaling by OBJ_CM_TO_M converts it to metres.
+# The OBJ coordinate origin is near the mounting bracket of the plow (Z ≈ 0),
+# with the blade/scoop extending in the −Z direction (Z ≈ −0.54 m after scale).
+# Attaching to the ee_link (body index 7) with identity local transform places
+# the plow mount at the end-effector flange and lets the blade sweep freely as
+# the arm moves through its sinusoidal trajectory.
+OBJ_CM_TO_M = 0.01
+
+ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
+assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", (
+    f"Unexpected ee_link body index: {ee_link_body_idx}"
+)
+
+if os.path.isfile(EXCAVATOR_OBJ_PATH):
+    print(f"[Plow] Loading excavator mesh from {EXCAVATOR_OBJ_PATH} ...")
+    _plow_verts, _plow_indices = _load_obj_mesh(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
+    plow_mesh = newton.Mesh(
+        _plow_verts,
+        _plow_indices,
+        compute_inertia=False,  # plow mass is negligible for this demo phase
+        is_solid=False,         # treat as a surface shell (open plow geometry)
+        color=(0.55, 0.45, 0.35),  # earthy brown — excavator steel colour
+    )
+    ur10_sub.add_shape_mesh(
+        ee_link_body_idx,
+        mesh=plow_mesh,
+    )
+    print(
+        f"[Plow] Excavator plow attached to body {ee_link_body_idx} "
+        f"({ur10_sub.body_label[ee_link_body_idx]})  "
+        f"[{len(_plow_verts)} vertices, {len(_plow_indices) // 3} triangles]\n"
+    )
+else:
+    print(f"[Plow] WARNING: excavator OBJ not found at {EXCAVATOR_OBJ_PATH} — plow will be omitted.\n")
 
 # Position control with stiff gains matching Newton's UR10 example.
 for i in range(len(ur10_sub.joint_target_ke)):
