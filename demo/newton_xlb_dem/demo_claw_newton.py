@@ -190,13 +190,17 @@ CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-secon
 _DEM_PI = 3.1415927
 _DEM_TERRAIN_SCALING = 0.03  # metres per template unit
 
-# Unscaled ellipsoid template mass and MOI (density 2600 kg/m³, semi-axes a=2,
-# b=1, c=1 in template units).  DEME's Scale() cubes the mass automatically.
+# Unscaled ellipsoid template mass and MOI (density 2600 kg/m³).
+# ellipsoid_2_1_1.csv encodes an ellipsoid elongated along its Z-template-axis
+# with semi-axes z=2, x=1, y=1 (template units).  The MOI formula for a solid
+# ellipsoid rotating about axis i is  I_i = (m/5) * (sj² + sk²)  where sj, sk
+# are the semi-axes of the two orthogonal directions.
+# These values replicate DEMdemo_Plow.cpp exactly.
 _DEM_TEMPLATE_MASS = 2600.0 * (4.0 / 3.0 * _DEM_PI * 2.0 * 1.0 * 1.0)
 _DEM_TEMPLATE_MOI = [
-    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_x (b²+c²)
-    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_y (a²+c²)
-    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 1.0 ** 2),  # I_z (a²+b²)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_x = (m/5)(sy²+sz²) = (m/5)(1+4)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_y = (m/5)(sx²+sz²) = (m/5)(1+4)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 1.0 ** 2),  # I_z = (m/5)(sx²+sy²) = (m/5)(1+1)
 ]
 
 # Terrain pile geometry (world-space, z-up, ground at z = 0).
