@@ -120,6 +120,11 @@ class OpenGLVisualizer:
         overlays.  Arrow geometry persists between frames; call again only
         when the data changes.
 
+        Forwards to ``ViewerGL.log_arrows`` when available (Newton ≥ 0.4).
+        Older Newton builds that lack ``log_arrows`` fall back to
+        ``ViewerGL.log_lines`` so the overlays remain visible, just without
+        arrowheads.
+
         Args:
             name:   Unique string identifier for this arrow batch.
             starts: ``warp.array`` of ``warp.vec3`` tail positions.
@@ -129,7 +134,11 @@ class OpenGLVisualizer:
             width:  Reserved for future world-space width support.
             hidden: When ``True`` the batch is not rendered.
         """
-        self._viewer.log_arrows(name, starts, ends, colors, width=width, hidden=hidden)
+        if hasattr(self._viewer, "log_arrows"):
+            self._viewer.log_arrows(name, starts, ends, colors, width=width, hidden=hidden)
+        else:
+            # Graceful degradation for older Newton builds without log_arrows.
+            self._viewer.log_lines(name, starts, ends, colors, width=width, hidden=hidden)
 
     def log_lines(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
         """Log a named batch of line segments for rendering.
