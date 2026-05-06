@@ -83,10 +83,7 @@ try:
     _newton_available = True
 except ImportError:
     _newton_available = False
-    print(
-        "ERROR: Newton (or warp) is not installed.\n"
-        "       Install with:  pip install newton warp-lang"
-    )
+    print("ERROR: Newton (or warp) is not installed.\n" "       Install with:  pip install newton warp-lang")
     sys.exit(1)
 
 # ─── Import DEME (optional) ─────────────────────────────────────────────────
@@ -198,9 +195,9 @@ _DEM_TERRAIN_SCALING = 0.03  # metres per template unit
 # These values replicate DEMdemo_Plow.cpp exactly.
 _DEM_TEMPLATE_MASS = 2600.0 * (4.0 / 3.0 * _DEM_PI * 2.0 * 1.0 * 1.0)
 _DEM_TEMPLATE_MOI = [
-    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_x = (m/5)(sy²+sz²) = (m/5)(1+4)
-    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 2.0 ** 2),  # I_y = (m/5)(sx²+sz²) = (m/5)(1+4)
-    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0 ** 2 + 1.0 ** 2),  # I_z = (m/5)(sx²+sy²) = (m/5)(1+1)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0**2 + 2.0**2),  # I_x = (m/5)(sy²+sz²) = (m/5)(1+4)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0**2 + 2.0**2),  # I_y = (m/5)(sx²+sz²) = (m/5)(1+4)
+    1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0**2 + 1.0**2),  # I_z = (m/5)(sx²+sy²) = (m/5)(1+1)
 ]
 
 # Terrain pile geometry (world-space, z-up, ground at z = 0).
@@ -279,9 +276,7 @@ ur10_sub.add_shape_cylinder(
 OBJ_CM_TO_M = 0.01
 
 ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
-assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", (
-    f"Unexpected ee_link body index: {ee_link_body_idx}"
-)
+assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", f"Unexpected ee_link body index: {ee_link_body_idx}"
 
 if os.path.isfile(EXCAVATOR_OBJ_PATH):
     print(f"[Plow] Loading excavator mesh from {EXCAVATOR_OBJ_PATH} ...")
@@ -290,7 +285,7 @@ if os.path.isfile(EXCAVATOR_OBJ_PATH):
         _plow_verts,
         _plow_indices,
         compute_inertia=False,  # plow mass is negligible for this demo phase
-        is_solid=False,         # treat as a surface shell (open plow geometry)
+        is_solid=False,  # treat as a surface shell (open plow geometry)
         color=(0.55, 0.45, 0.35),  # earthy brown — excavator steel colour
     )
     ur10_sub.add_shape_mesh(
@@ -380,11 +375,11 @@ if _deme_available:
         deme_solver.UseFrictionalHertzianModel()
         deme_solver.SetVerbosity("ERROR")
 
-        mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-        mat_particles = deme_solver.LoadMaterial({"E": 1e9, "nu": 0.3, "CoR": 0.7, "mu": 0.5})
+        mat_walls = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_particles = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
         # Mixed contact properties between wall and particle materials.
         deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
-        deme_solver.SetMaterialPropertyPair("mu",  mat_walls, mat_particles, 0.5)
+        deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
 
         # Ellipsoid template (semi-axes 2:1:1) scaled to physical particle size.
         # The CSV file encodes the clump geometry relative to unit sphere radii;
@@ -409,7 +404,7 @@ if _deme_available:
         # Sample particle positions layer by layer (mirrors DEMdemo_Plow.cpp).
         # PDSampler guarantees centre-to-centre separation ≥ 2 × scaling, so
         # no two initial particles overlap.
-        sampler = DEME.PDSampler(2.0 * _DEM_TERRAIN_SCALING)
+        sampler = DEME.PDSampler(4.0 * _DEM_TERRAIN_SCALING)
         pile_positions = []
         layer_z = 0.0
         while layer_z < _DEM_FILL_H:
@@ -421,10 +416,7 @@ if _deme_available:
 
         _dem_num_terrain_particles = len(pile_positions)
         num_layers = int(_DEM_FILL_H / _DEM_LAYER_STEP) + 1
-        print(
-            f"[DEME] Sampled {_dem_num_terrain_particles} terrain particle(s) "
-            f"in {num_layers} layer(s)."
-        )
+        print(f"[DEME] Sampled {_dem_num_terrain_particles} terrain particle(s) " f"in {num_layers} layer(s).")
 
         the_pile = deme_solver.AddClumps(particle_template, pile_positions)
         the_pile.SetFamily(0)
@@ -435,10 +427,7 @@ if _deme_available:
         deme_solver.SetErrorOutAvgContacts(500)
         deme_solver.Initialize()
 
-        print(
-            f"[DEME] Granular terrain initialized "
-            f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n"
-        )
+        print(f"[DEME] Granular terrain initialized " f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n")
     except Exception as exc:
         print(f"[DEME] Could not build granular terrain ({exc}) — disabling DEME.\n")
         deme_solver = None
@@ -470,9 +459,9 @@ articulation_view = ArticulationView(
     "*ur10*",
     exclude_joint_types=[newton.JointType.FREE, newton.JointType.DISTANCE],
 )
-assert articulation_view.count == WORLD_COUNT, (
-    f"Expected {WORLD_COUNT} UR10 articulation(s), found {articulation_view.count}"
-)
+assert (
+    articulation_view.count == WORLD_COUNT
+), f"Expected {WORLD_COUNT} UR10 articulation(s), found {articulation_view.count}"
 
 dof_count = articulation_view.joint_dof_count
 

@@ -387,10 +387,13 @@ if _xlb_available:
         # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
         _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
             np.array([0.0, 0.0, 0.62]),
-            _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX,
+            _XLB_DOMAIN_MIN,
+            _XLB_DOMAIN_MAX,
             (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE, _XLB_ROBOT_ABOVE_BASE,
+            _XLB_ROBOT_HALF_EXT_X,
+            _XLB_ROBOT_HALF_EXT_Y,
+            _XLB_ROBOT_BELOW_BASE,
+            _XLB_ROBOT_ABOVE_BASE,
         )
         if _robot_init_gc_min is None:
             # Fallback: initial position outside domain — use a single interior cell
@@ -525,7 +528,7 @@ if _vis_available:
 # Four representative radius types [m] — coarse dust grain size distribution.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
-# Use DEME's Poisson-disk sampler 
+# Use DEME's Poisson-disk sampler
 # Minimum separation = 2 × largest radius: the Poisson-disk sampler guarantees
 # this distance between sphere centres, so no two initial spheres overlap.
 _poisson_disk_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
@@ -752,10 +755,13 @@ for frame in range(NUM_FRAMES):
         _robot_base_pos = body_q_np[0, :3] if body_q_np is not None else None
         _xlb_new_gc_min, _xlb_new_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
             _robot_base_pos,
-            _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX,
+            _XLB_DOMAIN_MIN,
+            _XLB_DOMAIN_MAX,
             (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE, _XLB_ROBOT_ABOVE_BASE,
+            _XLB_ROBOT_HALF_EXT_X,
+            _XLB_ROBOT_HALF_EXT_Y,
+            _XLB_ROBOT_BELOW_BASE,
+            _XLB_ROBOT_ABOVE_BASE,
         )
         _bbox_same = (
             _xlb_new_gc_min is not None
@@ -767,10 +773,14 @@ for frame in range(NUM_FRAMES):
         )
         if not _bbox_same:
             _xlb_robot_gc_min, _xlb_robot_gc_max = demo_utils.xlb_update_robot_box_gpu(
-                _xlb_bc_mask, _xlb_missing_mask,
-                _xlb_robot_gc_min, _xlb_robot_gc_max,
-                _xlb_new_gc_min, _xlb_new_gc_max,
-                _xlb_robot_bc_id, _xlb_vel_c_wp,
+                _xlb_bc_mask,
+                _xlb_missing_mask,
+                _xlb_robot_gc_min,
+                _xlb_robot_gc_max,
+                _xlb_new_gc_min,
+                _xlb_new_gc_max,
+                _xlb_robot_bc_id,
+                _xlb_vel_c_wp,
                 _xlb_vel_set.q,
             )
 
@@ -789,9 +799,7 @@ for frame in range(NUM_FRAMES):
                 _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
             )
             _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-                mophi.xlb_make_streamline_warp_arrays(
-                    _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs
-                )
+                mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs)
             )
 
     # ── Print foot-tip positions every frame ──────────────────────────────────

@@ -250,8 +250,7 @@ def print_visual_body_part_descriptors(descriptors):
         print(
             f"            body_idx={d['body_idx']} [{d['body_name']}]  "
             f"geo={d['geo_type'].name}  "
-            f"scale=[{d['scale'][0]:.3f},{d['scale'][1]:.3f},{d['scale'][2]:.3f}]"
-            + mesh_info
+            f"scale=[{d['scale'][0]:.3f},{d['scale'][1]:.3f},{d['scale'][2]:.3f}]" + mesh_info
         )
     print()
 
@@ -412,8 +411,9 @@ def xlb_world_to_grid_idx(world_pos, domain_min, domain_max, grid_dims):
     return np.clip(idx, [1, 1, 1], [nx - 2, ny - 2, nz - 2])
 
 
-def xlb_prescribed_robot_box_grid(base_pos, domain_min, domain_max, grid_dims, half_ext_x, half_ext_y,
-                                   below_base, above_base):
+def xlb_prescribed_robot_box_grid(
+    base_pos, domain_min, domain_max, grid_dims, half_ext_x, half_ext_y, below_base, above_base
+):
     """Return (gc_min, gc_max) integer grid arrays for the prescribed robot AABB.
 
     The box is centred on base_pos (world-space [x, y, z]) with fixed half-extents
@@ -457,8 +457,9 @@ def xlb_prescribed_robot_box_grid(base_pos, domain_min, domain_max, grid_dims, h
     return gc_min, gc_max
 
 
-def xlb_update_robot_box_gpu(bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max,
-                              robot_bc_id, vel_c_wp, q):
+def xlb_update_robot_box_gpu(
+    bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max, robot_bc_id, vel_c_wp, q
+):
     """Update bc_mask and missing_mask in-place on the GPU for the moving robot AABB.
 
     Clears the old robot box region and stamps the new one using Warp GPU kernels,
