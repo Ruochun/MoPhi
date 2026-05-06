@@ -257,57 +257,6 @@ class OpenGLVisualizer:
             colors=colors_wp,
         )
 
-    def log_ellipsoids(self, name: str, centers, orientations, semi_axes, *, colors=None) -> None:
-        """Log a batch of ellipsoids for rendering.
-
-        For the OpenGL backend the ellipsoids are approximated as spheres whose
-        radius equals the largest of the three semi-axes (``max(a, b, c)``).
-        This is a conservative bounding approximation; the USD backend
-        (:class:`~mophi.OmniverseVisualizer`) renders geometrically accurate
-        ellipsoids via per-instance non-uniform scaling.
-
-        Args:
-            name:         Unique string identifier for this ellipsoid batch.
-            centers:      ``(N, 3)`` array of ellipsoid centre positions [m].
-            orientations: ``(N, 4)`` array of per-ellipsoid xyzw quaternions
-                          (ignored for the sphere approximation, provided for
-                          API consistency with the USD backend).
-            semi_axes:    ``(N, 3)`` or ``(3,)`` array of semi-axes
-                          ``(a, b, c)`` [m].  A 1-D array of length 3 is
-                          broadcast to all N ellipsoids.
-            colors:       ``(N, 3)`` per-ellipsoid RGB colours in ``[0, 1]``.
-                          When ``None`` the viewer uses its default colour.
-        """
-        import warp as wp
-
-        c_np = centers.numpy() if hasattr(centers, "numpy") else np.asarray(centers, dtype=np.float32)
-        sa_np = semi_axes.numpy() if hasattr(semi_axes, "numpy") else np.asarray(semi_axes, dtype=np.float32)
-
-        if c_np.ndim == 1:
-            c_np = c_np.reshape(-1, 3)
-        n = len(c_np)
-        if n == 0:
-            return
-
-        if sa_np.ndim == 1:
-            # Broadcast: single (3,) → (N, 3).
-            sa_np = np.tile(sa_np, (n, 1))
-
-        # Bounding-sphere radius = largest semi-axis per ellipsoid.
-        radii_np = np.max(sa_np, axis=1).astype(np.float32)
-
-        colors_wp = None
-        if colors is not None:
-            col_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
-            colors_wp = wp.array(np.asarray(col_np, dtype=np.float32), dtype=wp.vec3)
-
-        self.log_points(
-            name,
-            wp.array(c_np.astype(np.float32), dtype=wp.vec3),
-            radii=wp.array(radii_np, dtype=wp.float32),
-            colors=colors_wp,
-        )
-
     # ── Note ───────────────────────────────────────────────────────────────────
-    # _rotate_batch (used by log_clumps) is a module-level function imported
+    # rotate_batch (used by log_clumps) is a module-level function imported
     # from mophi.utilities.vis_utils — it is not a class method.
