@@ -130,7 +130,7 @@ for _ in range(SIM_SUBSTEPS):
 coupler.step_xlb()
 ```
 
-### 4. Non-copyable, movable coupler classes
+### 5. Non-copyable, movable coupler classes
 
 Because couplers own resources (GPU contexts, open files, etc.) they must **never** be copied.
 Every coupler class must:
@@ -142,7 +142,7 @@ MyNewCoupler(MyNewCoupler&&)                 = default;
 MyNewCoupler& operator=(MyNewCoupler&&)      = default;
 ```
 
-### 5. Couplers live in the `mophi` namespace
+### 6. Couplers live in the `mophi` namespace
 
 All C++ classes, functions, and types defined in this repository belong to the `mophi` namespace.
 There are no nested namespaces at this time.

@@ -52,9 +52,9 @@ void register_newton_xlb_dem(py::module_& m) {
                                       "                       deme_solver=dem)\n"
                                       "    for step in range(steps):\n"
                                       "        # optionally update coupler.newton_control before each step\n"
-                                      "        coupler.step_newton()  // advance Newton one substep\n"
-                                      "        coupler.step_deme()    // advance DEME one substep\n"
-                                      "        // coupler.step_xlb()  // advance XLB (placeholder)\n"
+                                      "        coupler.step_newton()  # advance Newton one substep\n"
+                                      "        coupler.step_deme()    # advance DEME one substep\n"
+                                      "        # coupler.step_xlb()  # advance XLB (placeholder)\n"
                                       "        transforms = coupler.get_robot_body_transforms()\n"
                                       "    coupler.finalize()")
         .def(py::init<>())
