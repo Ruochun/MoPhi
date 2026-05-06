@@ -136,6 +136,7 @@ cmake --build build
 
 # Run the Python demo (walking robot + XLB placeholder + DEME placeholder)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
+PYTHONPATH=python python3 demo/newton_xlb_dem/demo_claw_newton.py
 ```
 
 `NewtonXLBDEMCoupler` is a three-way co-simulation coupler:

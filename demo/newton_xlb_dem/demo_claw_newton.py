@@ -184,7 +184,7 @@ SIM_DT = FRAME_DT / SIM_SUBSTEPS  # 1/500 s per Newton substep
 # When excavator–particle coupling is active the arm pose is fed to DEME at
 # DEME resolution, so a higher value here gives a smoother (more stable) force
 # boundary condition for the granular terrain.
-DEME_SUBSTEPS = 5  # DEME micro-steps per Newton substep; increase for finer granular physics
+DEME_SUBSTEPS = 50  # DEME micro-steps per Newton substep; increase for finer granular physics
 # Each Newton substep is subdivided into DEME_SUBSTEPS micro-steps.  The
 # trajectory clock advances once per DEME micro-step (at DEME_DT resolution),
 # so Newton always sees the final trajectory value of each Newton substep while
@@ -216,9 +216,9 @@ _DEM_TEMPLATE_MOI = [
 
 # Terrain pile geometry (world-space, z-up, ground at z = 0).
 # A compact pile beneath the arm's workspace — much smaller than DEMdemo_Plow.cpp.
-_DEM_WORLD_HS = 1.0  # domain half-size in x and y [m]
+_DEM_WORLD_HS = 2.0  # domain half-size in x and y [m]
 _DEM_BOWL_BOT = -0.05  # domain bottom, just below Newton's ground plane [m]
-_DEM_FILL_HW = 0.5  # pile fill half-width in x and y [m]
+_DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
 _DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
 _DEM_FILL_H = 0.3  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
@@ -394,8 +394,8 @@ if _deme_available:
         deme_solver.UseFrictionalHertzianModel()
         deme_solver.SetVerbosity("ERROR")
 
-        mat_walls = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-        mat_particles = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_walls = deme_solver.LoadMaterial({"E": 1e7, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_particles = deme_solver.LoadMaterial({"E": 1e7, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
         # Mixed contact properties between wall and particle materials.
         deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
         deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
@@ -413,9 +413,10 @@ if _deme_available:
 
         # Box domain: closed on bottom and four sides, open at the top so
         # particles can be launched upward by the excavator without being trapped.
+        _DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y = 0.0, 1.2
         deme_solver.InstructBoxDomainDimension(
-            [-_DEM_WORLD_HS, _DEM_WORLD_HS],
-            [-_DEM_WORLD_HS, _DEM_WORLD_HS],
+            [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_X, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_X],
+            [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y],
             [_DEM_BOWL_BOT, _DEM_WORLD_HS * 2.0],
         )
         deme_solver.InstructBoxDomainBoundingBC("top_open", mat_walls)
@@ -427,7 +428,7 @@ if _deme_available:
         pile_positions = []
         layer_z = 0.0
         while layer_z < _DEM_FILL_H:
-            center = [0.0, 0.0, _DEM_FILL_BOT + layer_z]
+            center = [_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, _DEM_FILL_BOT + layer_z]
             half_ext = [_DEM_FILL_HW, _DEM_FILL_HW, 0.0]
             layer_pts = sampler.SampleBox(center, half_ext)
             pile_positions.extend(layer_pts)
@@ -443,6 +444,7 @@ if _deme_available:
 
         deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
         deme_solver.SetInitTimeStep(DEME_DT)
+        print(f"[DEME] Running at step size {DEME_DT}.\n")
         deme_solver.SetErrorOutAvgContacts(500)
         deme_solver.Initialize()
 
