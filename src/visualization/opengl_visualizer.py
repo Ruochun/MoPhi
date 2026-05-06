@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._vis_utils import _rotate_batch
+
 
 class OpenGLVisualizer:
     """MoPhi visualizer backed by Newton's real-time OpenGL renderer.
@@ -233,7 +235,7 @@ class OpenGLVisualizer:
             return
 
         # World positions of every component sphere: (N, K, 3) → (N*K, 3).
-        rotated = self._rotate_batch(q_np, off_np)  # (N, K, 3)
+        rotated = _rotate_batch(q_np, off_np)  # (N, K, 3)
         world_pos = c_np[:, np.newaxis, :] + rotated  # (N, K, 3)
         pos_flat = world_pos.reshape(n_clumps * n_spheres, 3).astype(np.float32)
 
@@ -306,26 +308,6 @@ class OpenGLVisualizer:
             colors=colors_wp,
         )
 
-    # ── Private helpers ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _rotate_batch(q_xyzw: np.ndarray, v: np.ndarray) -> np.ndarray:
-        """Rotate a set of vectors by a batch of quaternions (vectorised Rodrigues).
-
-        Args:
-            q_xyzw: ``(N, 4)`` float array of xyzw quaternions.
-            v:      ``(K, 3)`` float array of vectors to rotate.
-
-        Returns:
-            ``(N, K, 3)`` array of rotated vectors.
-        """
-        q_vec = q_xyzw[:, :3].astype(np.float64)  # (N, 3)
-        w = q_xyzw[:, 3].astype(np.float64)  # (N,)
-
-        q_b = q_vec[:, np.newaxis, :]  # (N, 1, 3)
-        w_b = w[:, np.newaxis, np.newaxis]  # (N, 1, 1)
-        v_b = v[np.newaxis, :, :].astype(np.float64)  # (1, K, 3)
-
-        qxv = np.cross(q_b, v_b)  # (N, K, 3)
-        qxqxv = np.cross(q_b, qxv)  # (N, K, 3)
-        return (v_b + 2.0 * w_b * qxv + 2.0 * qxqxv).astype(np.float32)
+    # ── Note ───────────────────────────────────────────────────────────────────
+    # _rotate_batch (used by log_clumps) is a module-level function imported
+    # from mophi._vis_utils — it is not a class method.
