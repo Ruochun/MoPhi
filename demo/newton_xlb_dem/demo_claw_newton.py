@@ -184,8 +184,12 @@ SIM_DT = FRAME_DT / SIM_SUBSTEPS  # 1/500 s per Newton substep
 # When excavator–particle coupling is active the arm pose is fed to DEME at
 # DEME resolution, so a higher value here gives a smoother (more stable) force
 # boundary condition for the granular terrain.
-DEME_SUBSTEPS = 5  # DEME micro-steps per Newton substep
-DEME_DT = SIM_DT / DEME_SUBSTEPS  # 1/2500 s per DEME micro-step (with default DEME_SUBSTEPS=5)
+DEME_SUBSTEPS = 5  # DEME micro-steps per Newton substep; increase for finer granular physics
+# Each Newton substep is subdivided into DEME_SUBSTEPS micro-steps.  The
+# trajectory clock advances once per DEME micro-step (at DEME_DT resolution),
+# so Newton always sees the final trajectory value of each Newton substep while
+# DEME (and future coupling code) can query the arm pose at every micro-step.
+DEME_DT = SIM_DT / DEME_SUBSTEPS  # DEME micro-step size = SIM_DT / DEME_SUBSTEPS
 
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
 CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-second]
@@ -229,10 +233,10 @@ UNBOUNDED_JOINT_LIMIT_THRESHOLD = 6.0  # radians
 # table is sampled at DEME resolution (DEME_DT × CONTROL_SPEED steps per
 # micro-step) so that when excavator–particle coupling is added the arm pose
 # fed to DEME changes smoothly at DEME's finer time scale.
-# With CONTROL_SPEED=50 and DEME_DT = SIM_DT/DEME_SUBSTEPS = 0.0004 s:
-#   steps per DEME tick = DEME_DT × CONTROL_SPEED = 0.02
-# A table built at 50 samples/rad advances ~0.0004 rad per DEME tick —
-# more than fine enough for smooth, stable excavator geometry updates.
+# With CONTROL_SPEED=50 and DEME_DT = SIM_DT / DEME_SUBSTEPS:
+#   steps per DEME tick = DEME_DT × CONTROL_SPEED = (SIM_DT / DEME_SUBSTEPS) × CONTROL_SPEED
+# A table built at 50 samples/rad is more than fine enough for smooth,
+# stable excavator geometry updates at any reasonable DEME_SUBSTEPS value.
 TRAJECTORY_SAMPLES_PER_RADIAN = 50
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
