@@ -176,7 +176,17 @@ WORLD_COUNT = 1  # single UR10 arm
 SIM_FPS = 50
 SIM_SUBSTEPS = 10
 FRAME_DT = 1.0 / SIM_FPS
-SIM_DT = FRAME_DT / SIM_SUBSTEPS  # 1/500 s per substep
+SIM_DT = FRAME_DT / SIM_SUBSTEPS  # 1/500 s per Newton substep
+
+# DEME runs at a finer time step than Newton for granular physics stability.
+# Each Newton substep is divided into DEME_SUBSTEPS micro-steps.  Set this to
+# 1 to run DEME at Newton's rate; increase it to run DEME at a finer pace.
+# When excavator–particle coupling is active the arm pose is fed to DEME at
+# DEME resolution, so a higher value here gives a smoother (more stable) force
+# boundary condition for the granular terrain.
+DEME_SUBSTEPS = 5  # DEME micro-steps per Newton substep
+DEME_DT = SIM_DT / DEME_SUBSTEPS  # 1/2500 s per DEME micro-step (with default DEME_SUBSTEPS=5)
+
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
 CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-second]
 
@@ -215,9 +225,14 @@ _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill la
 # assigned a ±π working range instead.
 UNBOUNDED_JOINT_LIMIT_THRESHOLD = 6.0  # radians
 
-# Number of trajectory samples per radian of joint range.  With CONTROL_SPEED=50,
-# advancing at SIM_DT × CONTROL_SPEED = 0.1 steps/substep, a table built at
-# 50 samples/rad covers ~0.02 rad per substep — fine enough for smooth motion.
+# Number of trajectory samples per radian of joint range.  The trajectory
+# table is sampled at DEME resolution (DEME_DT × CONTROL_SPEED steps per
+# micro-step) so that when excavator–particle coupling is added the arm pose
+# fed to DEME changes smoothly at DEME's finer time scale.
+# With CONTROL_SPEED=50 and DEME_DT = SIM_DT/DEME_SUBSTEPS = 0.0004 s:
+#   steps per DEME tick = DEME_DT × CONTROL_SPEED = 0.02
+# A table built at 50 samples/rad advances ~0.0004 rad per DEME tick —
+# more than fine enough for smooth, stable excavator geometry updates.
 TRAJECTORY_SAMPLES_PER_RADIAN = 50
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
@@ -423,7 +438,7 @@ if _deme_available:
         _dem_terrain_tracker = deme_solver.Track(the_pile)
 
         deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
-        deme_solver.SetInitTimeStep(SIM_DT)
+        deme_solver.SetInitTimeStep(DEME_DT)
         deme_solver.SetErrorOutAvgContacts(500)
         deme_solver.Initialize()
 
@@ -554,7 +569,9 @@ if _deme_available and _dem_terrain_tracker is not None and _vis_available and _
 #   2. Visualize Newton arm state and DEME terrain particles.
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
-    f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} substeps × {SIM_DT * 1000:.1f} ms) ...\n"
+    f"(frame_dt={FRAME_DT * 1000:.1f} ms, "
+    f"{SIM_SUBSTEPS} Newton substeps × {SIM_DT * 1000:.1f} ms, "
+    f"{DEME_SUBSTEPS} DEME micro-steps per Newton substep × {DEME_DT * 1000:.3f} ms) ...\n"
 )
 
 # Point the camera toward the arm base and terrain pile.
@@ -613,25 +630,31 @@ for frame in range(NUM_FRAMES):
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
-    # ── Substep loop: update joint targets + advance Newton + advance DEME ─
+    # ── Substep loop: Newton substeps, each divided into DEME micro-steps ──
     for _ in range(SIM_SUBSTEPS):
-        # Compute sinusoidal joint targets for this substep and write them into
-        # coupler.newton_control so the solver uses them in the upcoming step.
-        wp.launch(
-            update_joint_target_trajectory_kernel,
-            dim=WORLD_COUNT,
-            inputs=[joint_target_trajectory_wp, time_step_wp, SIM_DT * CONTROL_SPEED],
-            outputs=[ctrl],
-            device=device,
-        )
-        articulation_view.set_attribute("joint_target_pos", coupler.newton_control, ctrl)
+        # ── DEME micro-step loop (runs at DEME_DT = SIM_DT / DEME_SUBSTEPS) ──
+        # The trajectory clock is advanced at DEME resolution so that future
+        # excavator–particle coupling can feed a smooth, stable arm pose to
+        # DEME at every micro-step (not just once per Newton substep).
+        for _ in range(DEME_SUBSTEPS):
+            # Compute sinusoidal joint targets for this DEME micro-step and
+            # write them into coupler.newton_control.  Newton will consume the
+            # value set by the last micro-step of this Newton substep.
+            wp.launch(
+                update_joint_target_trajectory_kernel,
+                dim=WORLD_COUNT,
+                inputs=[joint_target_trajectory_wp, time_step_wp, DEME_DT * CONTROL_SPEED],
+                outputs=[ctrl],
+                device=device,
+            )
+            articulation_view.set_attribute("joint_target_pos", coupler.newton_control, ctrl)
 
-        # Advance Newton (clear forces → collide → step → swap states).
+            # Advance DEME granular terrain one micro-step (no coupling to Newton yet).
+            if deme_solver is not None:
+                coupler.step_deme()
+
+        # Advance Newton one substep (uses joint targets from the last DEME micro-step).
         coupler.step_newton()
-
-        # Advance DEME granular terrain one step (no coupling to Newton yet).
-        if deme_solver is not None:
-            coupler.step_deme()
 
     sim_time += FRAME_DT
 
