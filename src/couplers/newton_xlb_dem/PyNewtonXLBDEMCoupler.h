@@ -29,13 +29,13 @@
 // with the robot's surface mesh).  DEME is used via pip install deme so that
 // no C++ build of DEM-Engine is required for this coupler.
 //
-// step() coupling sequence:
-//   1. Advance Newton by one time step (clears forces, collides, steps, swaps states).
-//   2. Extract robot body transforms (the spatial representation).
-//   3. TODO: feed robot geometry into DEME particle field.
-//   4. TODO: feed robot geometry into XLB fluid boundary.
-//   5. DEME placeholder step (no-op for now).
-//   6. XLB placeholder step (no-op for now).
+// Per-solver stepping methods (no whole-sale stepper):
+//   StepNewton() — advance Newton by one substep (clear forces → collide → step → swap states).
+//   StepDEME()   — advance DEME by one substep (calls DoStepDynamics() on the Python object).
+//   StepXLB()    — advance XLB by one substep (placeholder; future work will call stepper.step()).
+//
+// The demo controls the pace of each system independently.  For example, Newton and DEME
+// may be advanced every substep while XLB is advanced only once per policy frame.
 //
 // On-device data communication infrastructure
 // ──────────────────────────────────────────
@@ -72,8 +72,8 @@ struct PyNewtonXLBDEMCoupler {
     // All are initialized to None and populated in Initialize().
     pybind11::object newton_model;
     pybind11::object newton_solver;
-    pybind11::object newton_state_0;  ///< "current"  Newton state (input to Step())
-    pybind11::object newton_state_1;  ///< "scratch"   Newton state (output of Step())
+    pybind11::object newton_state_0;  ///< "current"  Newton state (written by StepNewton())
+    pybind11::object newton_state_1;  ///< "scratch"   Newton state (work buffer in StepNewton())
     pybind11::object newton_control;
     pybind11::object newton_contacts;
 
@@ -87,11 +87,11 @@ struct PyNewtonXLBDEMCoupler {
     pybind11::object xlb_missing_mask;  ///< wp.array (Q, NX, NY, NZ) bool,   or None
 
     double sim_dt{1.0 / 1000.0};  ///< Co-simulation time step [s]
-    int step_count{0};            ///< Number of Step() calls completed
+    int step_count{0};            ///< Number of StepNewton() calls completed
     bool deme_available{false};
     bool newton_available{false};
     bool xlb_available{false};
-    bool initialized{false};  ///< True after Initialize() completes; checked in Step() and destructor
+    bool initialized{false};  ///< True after Initialize() completes; checked in step methods and destructor
 
     PyNewtonXLBDEMCoupler();
     ~PyNewtonXLBDEMCoupler();
@@ -114,11 +114,25 @@ struct PyNewtonXLBDEMCoupler {
                     pybind11::object deme_solver_in,
                     double dt);
 
-    /// @brief Advance one co-simulation step.
+    /// @brief Advance Newton by one substep.
     ///
-    /// Advances Newton (clear forces → collide → step → swap states), then
-    /// performs no-op placeholder steps for DEME and XLB.
-    void Step();
+    /// Sequence: clear forces → collide → step → swap states.
+    /// Call this every substep.  Joint targets must be written to
+    /// \c newton_control before this call.
+    void StepNewton();
+
+    /// @brief Advance DEME by one substep.
+    ///
+    /// Calls \c DoStepDynamics() on the bound deme.DEMSolver Python object.
+    /// When no DEME solver was provided this method is a no-op.
+    void StepDEME();
+
+    /// @brief Advance XLB by one substep.
+    ///
+    /// Placeholder — calls \c xlb_simulation.step() once future fluid–robot
+    /// coupling is implemented.  When no XLB simulation was provided this
+    /// method is a no-op.
+    void StepXLB();
 
     /// @brief Finalize all solvers and release all resources.
     void Finalize();

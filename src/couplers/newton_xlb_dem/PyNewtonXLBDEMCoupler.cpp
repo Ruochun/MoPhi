@@ -87,45 +87,51 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
     initialized = true;
 }
 
-//// TODO: No whole-sale stepper. Each physics step their own way.
-void PyNewtonXLBDEMCoupler::Step() {
+void PyNewtonXLBDEMCoupler::StepNewton() {
     if (!initialized) {
-        MOPHI_ERROR("PyNewtonXLBDEMCoupler::Step() called before Initialize().");
+        MOPHI_ERROR("PyNewtonXLBDEMCoupler::StepNewton() called before Initialize().");
+        return;
     }
 
-    // ── 1. Advance Newton ─────────────────────────────────────────────────────
-    if (newton_available) {
-        newton_state_0.attr("clear_forces")();
-        newton_model.attr("collide")(newton_state_0, newton_contacts);
-        newton_solver.attr("step")(newton_state_0, newton_state_1, newton_control, newton_contacts,
-                                   pybind11::float_(sim_dt));
-        // state_1 now holds the new Newton state; swap buffers for next iteration.
-        std::swap(newton_state_0, newton_state_1);
+    if (!newton_available) {
+        return;
     }
 
-    // ── 2. Extract robot spatial representation (coupling output) ─────────────
-    // GetRobotBodyTransforms() returns the body transforms from the just-updated
-    // Newton state.  Future coupling logic should consume these transforms to:
-    //   • Update DEME's particle-field geometry (robot surface mesh).
-    //   • Update XLB's fluid boundary (robot surface as moving obstacle).
-    // auto transforms = GetRobotBodyTransforms();
-    // TODO: feed transforms into DEME and XLB.
+    newton_state_0.attr("clear_forces")();
+    newton_model.attr("collide")(newton_state_0, newton_contacts);
+    newton_solver.attr("step")(newton_state_0, newton_state_1, newton_control, newton_contacts,
+                               pybind11::float_(sim_dt));
+    // state_1 now holds the new Newton state; swap buffers for next iteration.
+    std::swap(newton_state_0, newton_state_1);
 
-    // ── 3. DEME placeholder step ──────────────────────────────────────────────
-    // No physics is advanced yet.  Once particle–robot coupling is implemented,
-    // this will call the appropriate deme_solver step method.
-    if (deme_available) {
-        // MOPHI_INFO("PyNewtonXLBDEMCoupler: DEME step (placeholder, no-op)");
+    ++step_count;
+}
+
+void PyNewtonXLBDEMCoupler::StepDEME() {
+    if (!initialized) {
+        MOPHI_ERROR("PyNewtonXLBDEMCoupler::StepDEME() called before Initialize().");
+        return;
     }
 
-    // ── 4. XLB placeholder step ───────────────────────────────────────────────
-    // No fluid physics is advanced yet.  Once fluid–robot coupling is implemented,
-    // this will call xlb_simulation.step() with the robot geometry boundary.
+    if (!deme_available) {
+        return;
+    }
+
+    deme_solver.attr("DoStepDynamics")();
+}
+
+void PyNewtonXLBDEMCoupler::StepXLB() {
+    if (!initialized) {
+        MOPHI_ERROR("PyNewtonXLBDEMCoupler::StepXLB() called before Initialize().");
+        return;
+    }
+
+    // Placeholder: XLB is stepped directly by the demo for now.
+    // Future coupling logic will call xlb_simulation.step() here once
+    // robot-geometry boundary conditions are fed in.
     if (xlb_available) {
         // MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB step (placeholder, no-op)");
     }
-
-    ++step_count;
 }
 
 void PyNewtonXLBDEMCoupler::Finalize() {

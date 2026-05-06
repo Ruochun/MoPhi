@@ -627,11 +627,11 @@ for frame in range(NUM_FRAMES):
         articulation_view.set_attribute("joint_target_pos", coupler.newton_control, ctrl)
 
         # Advance Newton (clear forces → collide → step → swap states).
-        coupler.step()
+        coupler.step_newton()
 
         # Advance DEME granular terrain one step (no coupling to Newton yet).
         if deme_solver is not None:
-            deme_solver.DoStepDynamics()
+            coupler.step_deme()
 
     sim_time += FRAME_DT
 

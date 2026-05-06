@@ -739,9 +739,8 @@ for frame in range(NUM_FRAMES):
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
-        # TODO: No whole-sale stepper. Update this later.
-        coupler.step()
-        deme_solver.DoStepDynamics()
+        coupler.step_newton()
+        coupler.step_deme()
 
     sim_time += FRAME_DT
 
