@@ -54,7 +54,15 @@ MoPhi/
 │   ├── bindings/
 │   │   └── mophi_bindings.cpp   # pybind11 entry point — register every coupler class here
 │   └── mophi/
-│       └── __init__.py          # Python package — re-exports classes with try/except
+│       ├── __init__.py          # Python package — re-exports classes with try/except
+│       ├── visualizers/         # Visualizer backends (mirrored from src/visualization/)
+│       │   ├── __init__.py
+│       │   ├── opengl_visualizer.py
+│       │   └── omniverse_visualizer.py
+│       └── utilities/           # Shared helper modules (solver-agnostic utilities)
+│           ├── __init__.py
+│           ├── vis_utils.py     # Internal math helpers for visualizer backends
+│           └── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
 └── demo/
     ├── CMakeLists.txt           # Guards each sub-demo with if(MOPHI_BUILD_<SOLVER>)
     └── <solver_name>/           # One sub-directory per demo
@@ -205,8 +213,21 @@ Key rules for agents:
   solver-agnostic.
 - **Both backends share the same public interface** — demos switch backends
   with a single constructor change; the simulation loop body is identical.
-- The files in `src/visualization/` are **mirrored** to `python/mophi/`
+- The files in `src/visualization/` are **mirrored** to `python/mophi/visualizers/`
   (they must be kept in sync).
+
+---
+
+## Python file naming conventions
+
+- **Never use a leading underscore for file or module names** (e.g. `vis_utils.py`,
+  not `_vis_utils.py`).  Leading-underscore names imply implementation-private
+  modules that callers should not import; MoPhi modules may be imported by demos
+  and agents and must have discoverable names.
+- New utility modules shared across multiple backends belong in
+  `python/mophi/utilities/`.
+- New visualizer backends belong in `python/mophi/visualizers/` and must also
+  have a mirrored copy in `src/visualization/`.
 
 ---
 

@@ -552,16 +552,18 @@ if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
         SAVE_MOVIE = False
 
 # ─── DEME terrain visualisation arrays ────────────────────────────────────
-# Allocate constant radii and colour arrays once; the position array is
-# rebuilt each frame from the live tracker data.
-_dem_terrain_radii_wp = None
+# Allocate constant semi-axes and colour arrays once; the position and
+# orientation arrays are rebuilt each frame from the live tracker data.
+_dem_terrain_semi_axes_wp = None
 _dem_terrain_colors_wp = None
 if _deme_available and _dem_terrain_tracker is not None and _vis_available and _dem_num_terrain_particles > 0:
-    # Display radius ≈ largest ellipsoid semi-axis after scaling.
-    _dem_vis_radius = _DEM_TERRAIN_SCALING * 2.0
-    _dem_terrain_radii_wp = wp.array(
-        np.full(_dem_num_terrain_particles, _dem_vis_radius, dtype=np.float32),
-        dtype=wp.float32,
+    # Semi-axes of the scaled ellipsoid_2_1_1 template: 2:1:1 × _DEM_TERRAIN_SCALING.
+    # Elongated along the clump's Z-template-axis: (a=0.06, b=0.03, c=0.03) m.
+    _DEM_SEMI_A = _DEM_TERRAIN_SCALING * 2.0  # major semi-axis [m]
+    _DEM_SEMI_BC = _DEM_TERRAIN_SCALING * 1.0  # minor semi-axes [m]
+    _dem_terrain_semi_axes_wp = wp.array(
+        np.tile([_DEM_SEMI_A, _DEM_SEMI_BC, _DEM_SEMI_BC], (_dem_num_terrain_particles, 1)).astype(np.float32),
+        dtype=wp.vec3,
     )
     _dem_terrain_colors_wp = wp.array(
         np.tile([0.76, 0.60, 0.42], (_dem_num_terrain_particles, 1)).astype(np.float32),
@@ -691,14 +693,17 @@ for frame in range(NUM_FRAMES):
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
 
-        # Render live DEME terrain particle positions as a sandy point cloud.
-        if _dem_terrain_tracker is not None and _dem_terrain_radii_wp is not None:
+        # Render live DEME terrain particle positions and orientations as ellipsoids.
+        if _dem_terrain_tracker is not None and _dem_terrain_semi_axes_wp is not None:
             _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+            _terrain_quat_np = np.array(_dem_terrain_tracker.Orientations(), dtype=np.float32)
             _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-            vis.log_points(
+            _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+            vis.log_ellipsoids(
                 "dem_terrain",
                 _dem_terrain_pos_wp,
-                radii=_dem_terrain_radii_wp,
+                _dem_terrain_orient_wp,
+                _dem_terrain_semi_axes_wp,
                 colors=_dem_terrain_colors_wp,
             )
 

@@ -54,7 +54,7 @@ except ImportError:
 # xlb_make_streamline_warp_arrays additionally requires warp (Newton dependency)
 # and performs a lazy import internally, so it is safe to re-export here.
 try:
-    from .xlb_helpers import (  # noqa: F401
+    from .utilities.xlb_helpers import (  # noqa: F401
         xlb_build_streamlines,
         xlb_make_streamline_warp_arrays,
         xlb_make_y_plane_seeds,
@@ -67,7 +67,7 @@ except ImportError:
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.
 try:
-    from .opengl_visualizer import OpenGLVisualizer  # noqa: F401
+    from .visualizers.opengl_visualizer import OpenGLVisualizer  # noqa: F401
 
     __all__.append("OpenGLVisualizer")
 except ImportError:
@@ -77,7 +77,7 @@ except ImportError:
 # Same public interface as OpenGLVisualizer; switch backends with a single flag.
 # Available whenever pxr (OpenUSD) is installed: pip install usd-core
 try:
-    from .omniverse_visualizer import OmniverseVisualizer  # noqa: F401
+    from .visualizers.omniverse_visualizer import OmniverseVisualizer  # noqa: F401
 
     __all__.append("OmniverseVisualizer")
 except ImportError:

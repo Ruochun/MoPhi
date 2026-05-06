@@ -165,7 +165,7 @@ The resulting `.usdc` file can be opened with:
 ## Adding a new visualizer backend
 
 1. Create `src/visualization/<name>_visualizer.py` (and mirror it under
-   `python/mophi/<name>_visualizer.py`).
+   `python/mophi/visualizers/<name>_visualizer.py`).
 2. Implement all methods listed in the **Public API contract** table above.
 3. Add a `try/except ImportError` import in `python/mophi/__init__.py`.
 4. Update this README to document the new backend.

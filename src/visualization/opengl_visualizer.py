@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._vis_utils import _rotate_batch
+from ..utilities.vis_utils import rotate_batch
 
 
 class OpenGLVisualizer:
@@ -235,7 +235,7 @@ class OpenGLVisualizer:
             return
 
         # World positions of every component sphere: (N, K, 3) → (N*K, 3).
-        rotated = _rotate_batch(q_np, off_np)  # (N, K, 3)
+        rotated = rotate_batch(q_np, off_np)  # (N, K, 3)
         world_pos = c_np[:, np.newaxis, :] + rotated  # (N, K, 3)
         pos_flat = world_pos.reshape(n_clumps * n_spheres, 3).astype(np.float32)
 
@@ -310,4 +310,4 @@ class OpenGLVisualizer:
 
     # ── Note ───────────────────────────────────────────────────────────────────
     # _rotate_batch (used by log_clumps) is a module-level function imported
-    # from mophi._vis_utils — it is not a class method.
+    # from mophi.utilities.vis_utils — it is not a class method.

@@ -1,7 +1,8 @@
 """Internal visualization utilities shared by all MoPhi visualizer backends.
 
 This module is not part of the public API.  It is imported by
-:mod:`mophi.opengl_visualizer` and :mod:`mophi.omniverse_visualizer`.
+:mod:`mophi.visualizers.opengl_visualizer` and
+:mod:`mophi.visualizers.omniverse_visualizer`.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def _rotate_batch(q_xyzw: np.ndarray, v: np.ndarray) -> np.ndarray:
+def rotate_batch(q_xyzw: np.ndarray, v: np.ndarray) -> np.ndarray:
     """Rotate a set of vectors by a batch of quaternions (vectorised Rodrigues).
 
     Uses the double-cross-product form of Rodrigues' rotation formula::
