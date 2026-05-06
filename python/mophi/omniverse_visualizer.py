@@ -336,6 +336,170 @@ class OmniverseVisualizer:
             hidden: Visibility flag (ignored).
         """
 
+    def log_clumps(
+        self,
+        name: str,
+        centers,
+        orientations,
+        sphere_radii,
+        sphere_offsets,
+        *,
+        colors=None,
+    ) -> None:
+        """Record a batch of DEME clumps as USD point instances (overlapping spheres).
+
+        Each clump is expanded into its component spheres (sphere positions
+        rotated by the clump orientation and translated to the clump centre).
+        The result is forwarded to :meth:`log_points` as a single flat cloud,
+        giving each clump ``K`` sphere instances in the USD scene.
+
+        Args:
+            name:           Unique string identifier for this clump batch.
+            centers:        ``(N, 3)`` array of clump centre positions [m].
+            orientations:   ``(N, 4)`` array of per-clump xyzw quaternions.
+            sphere_radii:   ``(K,)`` array of component sphere radii [m].
+            sphere_offsets: ``(K, 3)`` array of component sphere centre offsets
+                            from the clump centre in the clump's local frame [m].
+            colors:         ``(N, 3)`` per-clump RGB colours in ``[0, 1]``.
+                            When ``None`` the prototype's default colour is used.
+        """
+        if not self._pxr_available or self._stage is None:
+            return
+
+        c_np = centers.numpy() if hasattr(centers, "numpy") else np.asarray(centers, dtype=np.float32)
+        q_np = orientations.numpy() if hasattr(orientations, "numpy") else np.asarray(orientations, dtype=np.float32)
+        r_np = sphere_radii.numpy() if hasattr(sphere_radii, "numpy") else np.asarray(sphere_radii, dtype=np.float32)
+        off_np = (
+            sphere_offsets.numpy() if hasattr(sphere_offsets, "numpy") else np.asarray(sphere_offsets, dtype=np.float32)
+        )
+
+        if c_np.ndim == 1:
+            c_np = c_np.reshape(-1, 3)
+        if off_np.ndim == 1:
+            off_np = off_np.reshape(-1, 3)
+
+        n_clumps = len(c_np)
+        n_spheres = len(r_np)
+        if n_clumps == 0 or n_spheres == 0:
+            return
+
+        # World positions of every component sphere: (N, K, 3) → (N*K, 3).
+        rotated = self._rotate_batch(q_np, off_np)  # (N, K, 3)
+        world_pos = c_np[:, np.newaxis, :] + rotated  # (N, K, 3)
+        pos_flat = world_pos.reshape(n_clumps * n_spheres, 3).astype(np.float32)
+
+        # Radii: tile K sphere radii across N clumps → (N*K,).
+        radii_flat = np.tile(r_np, n_clumps).astype(np.float32)
+
+        # Colours: repeat each clump colour K times → (N*K, 3).
+        colors_flat = None
+        if colors is not None:
+            col_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
+            if col_np.ndim == 2 and len(col_np) == n_clumps:
+                colors_flat = np.repeat(col_np, n_spheres, axis=0).astype(np.float32)
+
+        self.log_points(name, pos_flat, radii=radii_flat, colors=colors_flat)
+
+    def log_ellipsoids(self, name: str, centers, orientations, semi_axes, *, colors=None) -> None:
+        """Record a batch of ellipsoids as USD point instances.
+
+        Each ellipsoid is written as a ``UsdGeom.PointInstancer`` instance
+        backed by a unit-sphere prototype.  Per-instance non-uniform scale
+        ``(a, b, c)`` and orientation quaternions give geometrically accurate
+        ellipsoidal shapes when viewed in Omniverse or *usdview*.
+
+        Args:
+            name:         Unique string identifier for this ellipsoid batch.
+            centers:      ``(N, 3)`` array of ellipsoid centre positions [m].
+            orientations: ``(N, 4)`` array of per-ellipsoid xyzw quaternions.
+            semi_axes:    ``(N, 3)`` or ``(3,)`` array of semi-axes
+                          ``(a, b, c)`` [m].  A 1-D array of length 3 is
+                          broadcast to all N ellipsoids.
+            colors:       ``(N, 3)`` or ``(3,)`` per-ellipsoid RGB colours in
+                          ``[0, 1]``.  When ``None`` the prototype's default
+                          colour is used.
+        """
+        if not self._pxr_available or self._stage is None:
+            return
+
+        c_np = centers.numpy() if hasattr(centers, "numpy") else np.asarray(centers, dtype=np.float32)
+        q_np = orientations.numpy() if hasattr(orientations, "numpy") else np.asarray(orientations, dtype=np.float32)
+        sa_np = semi_axes.numpy() if hasattr(semi_axes, "numpy") else np.asarray(semi_axes, dtype=np.float32)
+
+        if c_np.ndim == 1:
+            c_np = c_np.reshape(-1, 3)
+        n = len(c_np)
+        if n == 0:
+            return
+
+        if sa_np.ndim == 1:
+            sa_np = np.tile(sa_np, (n, 1))
+
+        Gf = self._Gf
+        Vt = self._Vt
+        UsdGeom = self._UsdGeom
+        time_code = self._Usd.TimeCode(self._current_time * self._fps)
+
+        # ── Create PointInstancer lazily on first call ─────────────────────────
+        if name not in self._point_instancers:
+            safe_name = name.replace(" ", "_").replace("-", "_")
+            prim_path = f"/World/Points/{safe_name}"
+            UsdGeom.Xform.Define(self._stage, "/World/Points")
+            instancer = UsdGeom.PointInstancer.Define(self._stage, prim_path)
+            proto_scope = prim_path + "/Prototypes"
+            self._stage.DefinePrim(proto_scope, "Scope")
+            proto = UsdGeom.Sphere.Define(self._stage, proto_scope + "/UnitSphere")
+            proto.GetRadiusAttr().Set(1.0)
+            proto.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.80, 0.55, 0.20)]))
+            instancer.CreatePrototypesRel().AddTarget(proto.GetPath())
+            self._point_instancers[name] = instancer
+            self._instancer_sizes[name] = 0
+
+        instancer = self._point_instancers[name]
+        prev_n = self._instancer_sizes[name]
+
+        # ── Update structural attributes when the ellipsoid count changes ───────
+        if n != prev_n:
+            instancer.GetProtoIndicesAttr().Set(Vt.IntArray([0] * n), time_code)
+            self._instancer_sizes[name] = n
+
+        # ── Per-instance orientations (xyzw → wxyz for USD) ───────────────────
+        instancer.GetOrientationsAttr().Set(
+            Vt.QuathArray([Gf.Quath(float(q[3]), float(q[0]), float(q[1]), float(q[2])) for q in q_np]),
+            time_code,
+        )
+
+        # ── Per-instance non-uniform scales = semi-axes ────────────────────────
+        instancer.GetScalesAttr().Set(
+            Vt.Vec3fArray([Gf.Vec3f(float(s[0]), float(s[1]), float(s[2])) for s in sa_np]),
+            time_code,
+        )
+
+        # ── Positions (time-varying) ───────────────────────────────────────────
+        instancer.GetPositionsAttr().Set(
+            Vt.Vec3fArray([Gf.Vec3f(float(p[0]), float(p[1]), float(p[2])) for p in c_np]),
+            time_code,
+        )
+
+        # ── Per-instance colours via primvars:displayColor ─────────────────────
+        if colors is not None:
+            try:
+                from pxr import Sdf, UsdGeom as _UG
+
+                col_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
+                if col_np.ndim == 1 and len(col_np) == 3:
+                    col_np = np.tile(col_np, (n, 1))
+                if col_np.ndim == 2 and len(col_np) == n:
+                    pv_api = _UG.PrimvarsAPI(instancer.GetPrim())
+                    pv = pv_api.CreatePrimvar("displayColor", Sdf.ValueTypeNames.Color3fArray)
+                    pv.SetInterpolation("uniform")
+                    pv.Set(
+                        Vt.Vec3fArray([Gf.Vec3f(float(c[0]), float(c[1]), float(c[2])) for c in col_np]),
+                        time_code,
+                    )
+            except Exception:
+                pass
+
     def log_lines(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
         """No-op for the USD backend — accepted for API compatibility.
 
@@ -437,3 +601,25 @@ class OmniverseVisualizer:
             xf = UsdGeom.Xform.Define(self._stage, f"/World/Robot/Body_{i:03d}")
             self._robot_translate_ops.append(xf.AddTranslateOp())
             self._robot_orient_ops.append(xf.AddOrientOp())
+
+    @staticmethod
+    def _rotate_batch(q_xyzw: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Rotate a set of vectors by a batch of quaternions (vectorised Rodrigues).
+
+        Args:
+            q_xyzw: ``(N, 4)`` float array of xyzw quaternions.
+            v:      ``(K, 3)`` float array of vectors to rotate.
+
+        Returns:
+            ``(N, K, 3)`` array of rotated vectors.
+        """
+        q_vec = q_xyzw[:, :3].astype(np.float64)  # (N, 3)
+        w = q_xyzw[:, 3].astype(np.float64)  # (N,)
+
+        q_b = q_vec[:, np.newaxis, :]  # (N, 1, 3)
+        w_b = w[:, np.newaxis, np.newaxis]  # (N, 1, 1)
+        v_b = v[np.newaxis, :, :].astype(np.float64)  # (1, K, 3)
+
+        qxv = np.cross(q_b, v_b)  # (N, K, 3)
+        qxqxv = np.cross(q_b, qxv)  # (N, K, 3)
+        return (v_b + 2.0 * w_b * qxv + 2.0 * qxqxv).astype(np.float32)

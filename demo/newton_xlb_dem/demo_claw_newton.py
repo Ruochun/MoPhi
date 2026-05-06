@@ -597,13 +597,26 @@ if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 # Log arrows and lines ONCE before the simulation loop.  Newton's ViewerGL
 # stores them in a persistent dict and re-renders them every frame; there
 # is no need to re-submit static geometry.
+#
+# Placement rationale (camera at (3, -3, 2.5), yaw=135°, looking toward arm):
+#   • Coord axes are placed at (0.8, -0.9, 0.02) — in the camera's right-hand
+#     foreground, clear of the arm base and terrain pile.  Length 0.5 m so
+#     they are large enough to be seen from the default viewpoint.
+#   • Scale bar sits at (y=-0.9, z=0.06) — same foreground strip, raised well
+#     above the ground plane to avoid z-fighting.  Endpoint marker spheres
+#     (radius 0.04 m) make the bar ends clearly visible as coloured dots.
 if _vis_available:
-    # XYZ coordinate-axis arrows at the world origin.
-    # Each arrow is 0.3 m long: X = red, Y = green, Z = blue.
-    _AXIS_LEN = 0.3
-    _axis_origin = np.zeros((3, 3), dtype=np.float32)
+    # XYZ coordinate-axis arrows at a foreground reference point.
+    # X = red, Y = green, Z = blue; each 0.5 m long.
+    _AXIS_LEN = 0.5
+    _AXIS_OX, _AXIS_OY, _AXIS_OZ = 0.8, -0.9, 0.02  # origin in world space
+    _axis_origin = np.full((3, 3), [_AXIS_OX, _AXIS_OY, _AXIS_OZ], dtype=np.float32)
     _axis_tips = np.array(
-        [[_AXIS_LEN, 0.0, 0.0], [0.0, _AXIS_LEN, 0.0], [0.0, 0.0, _AXIS_LEN]],
+        [
+            [_AXIS_OX + _AXIS_LEN, _AXIS_OY, _AXIS_OZ],
+            [_AXIS_OX, _AXIS_OY + _AXIS_LEN, _AXIS_OZ],
+            [_AXIS_OX, _AXIS_OY, _AXIS_OZ + _AXIS_LEN],
+        ],
         dtype=np.float32,
     )
     _axis_colors = np.array(
@@ -617,14 +630,23 @@ if _vis_available:
         wp.array(_axis_colors, dtype=wp.vec3),
     )
 
-    # 1 m scale bar on the ground plane, placed just in front of the terrain
-    # pile (y = -0.8) so it is clearly visible without overlapping the pile.
-    _SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.8, 0.01  # 1 m along x
+    # 1 m scale bar in the foreground, raised above the ground to avoid
+    # z-fighting.  Endpoint spheres (radius 0.04 m) anchor the bar ends
+    # and make its extent unambiguous.
+    _SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.9, 0.06  # 1 m along x
     vis.log_lines(
         "scale_bar",
         wp.array([[_SB_X0, _SB_Y, _SB_Z]], dtype=wp.vec3),
         wp.array([[_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
         (1.0, 1.0, 0.0),  # yellow
+    )
+    # Endpoint marker spheres so the scale bar endpoints are clearly visible.
+    _sb_marker_radius = 0.04  # m
+    vis.log_points(
+        "scale_bar_markers",
+        wp.array([[_SB_X0, _SB_Y, _SB_Z], [_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
+        radii=wp.array([_sb_marker_radius, _sb_marker_radius], dtype=wp.float32),
+        colors=wp.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=wp.vec3),
     )
 
 sim_time = 0.0

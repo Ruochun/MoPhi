@@ -13,6 +13,8 @@ backends by changing a single constructor call.
 
 from __future__ import annotations
 
+import numpy as np
+
 
 class OpenGLVisualizer:
     """MoPhi visualizer backed by Newton's real-time OpenGL renderer.
@@ -182,3 +184,148 @@ class OpenGLVisualizer:
     def close(self) -> None:
         """Close the viewer window and release all associated resources."""
         self._viewer.close()
+
+    # ── Primitive shapes ───────────────────────────────────────────────────────
+
+    def log_clumps(
+        self,
+        name: str,
+        centers,
+        orientations,
+        sphere_radii,
+        sphere_offsets,
+        *,
+        colors=None,
+    ) -> None:
+        """Log a batch of DEME clumps for rendering as overlapping-sphere assemblies.
+
+        Each clump is defined by a shared template (``sphere_radii``,
+        ``sphere_offsets``) plus a per-clump centre and orientation.  The method
+        expands the template into world-space sphere positions and forwards all
+        of them to :meth:`log_points` in a single call, preserving optional
+        per-clump colours.
+
+        Args:
+            name:           Unique string identifier for this clump batch.
+            centers:        ``(N, 3)`` array of clump centre positions [m].
+            orientations:   ``(N, 4)`` array of per-clump xyzw quaternions.
+            sphere_radii:   ``(K,)`` array of component sphere radii [m].
+            sphere_offsets: ``(K, 3)`` array of component sphere centre offsets
+                            from the clump centre in the clump's local frame [m].
+            colors:         ``(N, 3)`` per-clump RGB colours in ``[0, 1]``.
+                            When ``None`` the viewer uses its default colour.
+        """
+        import warp as wp
+
+        c_np = centers.numpy() if hasattr(centers, "numpy") else np.asarray(centers, dtype=np.float32)
+        q_np = orientations.numpy() if hasattr(orientations, "numpy") else np.asarray(orientations, dtype=np.float32)
+        r_np = sphere_radii.numpy() if hasattr(sphere_radii, "numpy") else np.asarray(sphere_radii, dtype=np.float32)
+        off_np = sphere_offsets.numpy() if hasattr(sphere_offsets, "numpy") else np.asarray(sphere_offsets, dtype=np.float32)
+
+        if c_np.ndim == 1:
+            c_np = c_np.reshape(-1, 3)
+        if off_np.ndim == 1:
+            off_np = off_np.reshape(-1, 3)
+
+        n_clumps = len(c_np)
+        n_spheres = len(r_np)
+        if n_clumps == 0 or n_spheres == 0:
+            return
+
+        # World positions of every component sphere: (N, K, 3) → (N*K, 3).
+        rotated = self._rotate_batch(q_np, off_np)  # (N, K, 3)
+        world_pos = c_np[:, np.newaxis, :] + rotated  # (N, K, 3)
+        pos_flat = world_pos.reshape(n_clumps * n_spheres, 3).astype(np.float32)
+
+        # Radii: tile K sphere radii across N clumps → (N*K,).
+        radii_flat = np.tile(r_np, n_clumps).astype(np.float32)
+
+        # Colours: repeat each clump colour K times → (N*K, 3).
+        colors_wp = None
+        if colors is not None:
+            col_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
+            if col_np.ndim == 2 and len(col_np) == n_clumps:
+                colors_flat = np.repeat(col_np, n_spheres, axis=0).astype(np.float32)
+                colors_wp = wp.array(colors_flat, dtype=wp.vec3)
+
+        self.log_points(
+            name,
+            wp.array(pos_flat, dtype=wp.vec3),
+            radii=wp.array(radii_flat, dtype=wp.float32),
+            colors=colors_wp,
+        )
+
+    def log_ellipsoids(self, name: str, centers, orientations, semi_axes, *, colors=None) -> None:
+        """Log a batch of ellipsoids for rendering.
+
+        For the OpenGL backend the ellipsoids are approximated as spheres whose
+        radius equals the largest of the three semi-axes (``max(a, b, c)``).
+        This is a conservative bounding approximation; the USD backend
+        (:class:`~mophi.OmniverseVisualizer`) renders geometrically accurate
+        ellipsoids via per-instance non-uniform scaling.
+
+        Args:
+            name:         Unique string identifier for this ellipsoid batch.
+            centers:      ``(N, 3)`` array of ellipsoid centre positions [m].
+            orientations: ``(N, 4)`` array of per-ellipsoid xyzw quaternions
+                          (ignored for the sphere approximation, provided for
+                          API consistency with the USD backend).
+            semi_axes:    ``(N, 3)`` or ``(3,)`` array of semi-axes
+                          ``(a, b, c)`` [m].  A 1-D array of length 3 is
+                          broadcast to all N ellipsoids.
+            colors:       ``(N, 3)`` per-ellipsoid RGB colours in ``[0, 1]``.
+                          When ``None`` the viewer uses its default colour.
+        """
+        import warp as wp
+
+        c_np = centers.numpy() if hasattr(centers, "numpy") else np.asarray(centers, dtype=np.float32)
+        sa_np = semi_axes.numpy() if hasattr(semi_axes, "numpy") else np.asarray(semi_axes, dtype=np.float32)
+
+        if c_np.ndim == 1:
+            c_np = c_np.reshape(-1, 3)
+        n = len(c_np)
+        if n == 0:
+            return
+
+        if sa_np.ndim == 1:
+            # Broadcast: single (3,) → (N, 3).
+            sa_np = np.tile(sa_np, (n, 1))
+
+        # Bounding-sphere radius = largest semi-axis per ellipsoid.
+        radii_np = np.max(sa_np, axis=1).astype(np.float32)
+
+        colors_wp = None
+        if colors is not None:
+            col_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
+            colors_wp = wp.array(np.asarray(col_np, dtype=np.float32), dtype=wp.vec3)
+
+        self.log_points(
+            name,
+            wp.array(c_np.astype(np.float32), dtype=wp.vec3),
+            radii=wp.array(radii_np, dtype=wp.float32),
+            colors=colors_wp,
+        )
+
+    # ── Private helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _rotate_batch(q_xyzw: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Rotate a set of vectors by a batch of quaternions (vectorised Rodrigues).
+
+        Args:
+            q_xyzw: ``(N, 4)`` float array of xyzw quaternions.
+            v:      ``(K, 3)`` float array of vectors to rotate.
+
+        Returns:
+            ``(N, K, 3)`` array of rotated vectors.
+        """
+        q_vec = q_xyzw[:, :3].astype(np.float64)  # (N, 3)
+        w = q_xyzw[:, 3].astype(np.float64)  # (N,)
+
+        q_b = q_vec[:, np.newaxis, :]  # (N, 1, 3)
+        w_b = w[:, np.newaxis, np.newaxis]  # (N, 1, 1)
+        v_b = v[np.newaxis, :, :].astype(np.float64)  # (1, K, 3)
+
+        qxv = np.cross(q_b, v_b)  # (N, K, 3)
+        qxqxv = np.cross(q_b, qxv)  # (N, K, 3)
+        return (v_b + 2.0 * w_b * qxv + 2.0 * qxqxv).astype(np.float32)

@@ -88,6 +88,8 @@ Every visualizer backend must implement the following methods:
 | `begin_frame` | `(sim_time: float)` | Called once per simulation step before any `log_*` calls |
 | `log_state` | `(state)` | Render/record the rigid-body state from a physics solver |
 | `log_points` | `(name, positions, *, radii, colors)` | Render/record a named point cloud (spheres) |
+| `log_clumps` | `(name, centers, orientations, sphere_radii, sphere_offsets, *, colors)` | Render/record DEME clumps as overlapping-sphere assemblies; expands template to world-space spheres and delegates to `log_points` |
+| `log_ellipsoids` | `(name, centers, orientations, semi_axes, *, colors)` | Render/record ellipsoids; OpenGL approximates as bounding spheres, USD uses per-instance non-uniform scale for geometrically accurate shapes |
 | `log_arrows` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named arrows (coordinate axes, vector fields); no-op for USD backend |
 | `log_lines` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named line segments (scale bars, grids); no-op for USD backend |
 | `end_frame` | `()` | Finalize the current frame |
@@ -132,12 +134,25 @@ lazily on the first call, sized to match the actual body count.
 **`log_points`**: Creates a `UsdGeom.PointInstancer` prim per named cloud
 (lazily on first call) and writes position + scale time samples each frame.
 
+**`log_clumps`**: Expands each clump into its component spheres (offset rotated
+by the clump orientation, translated to the clump centre) and forwards the flat
+sphere list to `log_points`.  The resulting USD scene contains one
+`UsdGeom.PointInstancer` prim with `N × K` sphere instances (N clumps, K
+component spheres each).
+
+**`log_ellipsoids`**: Creates one `UsdGeom.PointInstancer` backed by a
+unit-sphere prototype.  Per-instance `orientations` (xyzw → wxyz for USD) and
+non-uniform `scales` equal to the semi-axes `(a, b, c)` give geometrically
+accurate ellipsoidal shapes when viewed in Omniverse or `usdview`.
+
 **Solver data → USD mapping**
 
 | Solver | Internal data | USD representation |
 |--------|---------------|--------------------|
 | Newton | `state.body_q[i]` = `[px,py,pz, qx,qy,qz,qw]` (xyzw quat) | `UsdGeom.Xform` per body; `TranslateOp` + `OrientOp` |
-| Any solver | Named point cloud: positions + radii | `UsdGeom.PointInstancer` per cloud name; unit-sphere prototype scaled by per-particle radii |
+| Any solver | Named point cloud: positions + radii | `UsdGeom.PointInstancer` per cloud name; unit-sphere prototype scaled uniformly by per-particle radius |
+| DEME | Clump centers + orientations + sphere template | `UsdGeom.PointInstancer`; one sphere instance per component sphere of each clump |
+| Any solver | Ellipsoid centers + orientations + semi-axes | `UsdGeom.PointInstancer`; unit-sphere prototype with per-instance non-uniform scale `(a, b, c)` |
 
 The resulting `.usdc` file can be opened with:
 
