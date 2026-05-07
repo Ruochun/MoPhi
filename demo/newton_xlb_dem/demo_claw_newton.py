@@ -658,7 +658,7 @@ if PAUSE_AFTER_FIRST_FRAME and _vis_available and not USE_OMNIVERSE_VISUALIZATIO
             )
 
         vis.end_frame()
-        time.sleep(0.01)
+        time.sleep(0.1)
 
 # ─── Finalize ─────────────────────────────────────────────────────────────
 if _movie_writer is not None:
