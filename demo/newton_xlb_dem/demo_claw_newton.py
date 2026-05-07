@@ -21,10 +21,10 @@ plowing.
 DEME granular terrain (Phase 2):
   A pile of ellipsoidal particles is created using DEME, following the approach
   of DEM-Engine's ``DEMdemo_Plow.cpp`` demo.  Particles are ellipsoids with
-  semi-axes 2:1:1 scaled to 0.06 m × 0.03 m × 0.03 m, sampled layer-by-layer
-  with a Poisson-disk sampler to form a compact pile at ground level.  In this
-  phase the terrain is DEME-only — no interaction with the Newton excavator yet.
-  Particle–excavator coupling will be added in a future phase.
+  semi-axes 2:1:1, sampled layer-by-layer with a Poisson-disk sampler to form
+  a compact pile at ground level.  In this phase the terrain is DEME-only — no
+  interaction with the Newton excavator yet. Particle–excavator coupling will be
+  added in a future phase.
 
 Future phases will add:
   • DEME–Newton coupling: forces from excavator plow on granular particles.
@@ -99,6 +99,7 @@ except ImportError:
         "      Install DEME to enable DEM particle simulation."
     )
 
+
 # ─── OBJ mesh loader ──────────────────────────────────────────────────────
 # Pure-Python parser for Wavefront OBJ files.  Handles the v//vn and v/vt/vn
 # face formats used by the excavator plow mesh (all faces are triangles).
@@ -136,6 +137,7 @@ def _load_obj_mesh(path: str, scale: float = 1.0):
                     indices.extend([face_verts[0], face_verts[2], face_verts[3]])
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
+
 # ─── Simulation timing ────────────────────────────────────────────────────
 # Physics step sizes are explicit user-facing constants.  Rendering cadence is
 # configured independently; collaboration loop counts are derived from these.
@@ -159,8 +161,7 @@ if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
 DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
 if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError(
-        "NEWTON_DT must be an integer multiple of DEME_DT. "
-        f"Got NEWTON_DT={NEWTON_DT:.12g}, DEME_DT={DEME_DT:.12g}."
+        "NEWTON_DT must be an integer multiple of DEME_DT. " f"Got NEWTON_DT={NEWTON_DT:.12g}, DEME_DT={DEME_DT:.12g}."
     )
 
 SIM_FPS = RENDER_FPS
@@ -192,7 +193,7 @@ _DEM_WORLD_HS = 1.1  # domain half-size in x and y [m]
 _DEM_BOWL_BOT = 0.0  # domain bottom
 _DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
 _DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
-_DEM_FILL_H = 5.  # total pile height [m]
+_DEM_FILL_H = 5.0  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
@@ -485,17 +486,14 @@ if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 # CSV columns are x, y, z, r (offset from clump centre in local frame, then radius).
 # These arrays mirror the template's component-sphere layout so visualized clumps
 # match DEME particle geometry.
-_DEM_CLUMP_SPHERE_RADII = np.array(
-    [1.00, 0.88, 0.64, 0.88, 0.64], dtype=np.float32
-) * _DEM_TERRAIN_SCALING
-_DEM_CLUMP_SPHERE_OFFSETS = np.array(
-    [[0.0, 0.0, 0.00],
-     [0.0, 0.0, 0.86],
-     [0.0, 0.0, 1.44],
-     [0.0, 0.0, -0.86],
-     [0.0, 0.0, -1.44]],
-    dtype=np.float32,
-) * _DEM_TERRAIN_SCALING
+_DEM_CLUMP_SPHERE_RADII = np.array([1.00, 0.88, 0.64, 0.88, 0.64], dtype=np.float32) * _DEM_TERRAIN_SCALING
+_DEM_CLUMP_SPHERE_OFFSETS = (
+    np.array(
+        [[0.0, 0.0, 0.00], [0.0, 0.0, 0.86], [0.0, 0.0, 1.44], [0.0, 0.0, -0.86], [0.0, 0.0, -1.44]],
+        dtype=np.float32,
+    )
+    * _DEM_TERRAIN_SCALING
+)
 
 _dem_terrain_colors_wp = None
 if _deme_available and _dem_terrain_tracker is not None and _vis_available and _dem_num_terrain_particles > 0:

@@ -503,7 +503,7 @@ if _xlb_available:
 if _xlb_u_np is not None:
     _xlb_sl_u = _xlb_u_np
 else:
-# Analytic fallback: smooth channel-like profile, flow in −y direction.
+    # Analytic fallback: smooth channel-like profile, flow in −y direction.
     _xlb_sl_u = np.zeros((_XLB_NX, _XLB_NY, _XLB_NZ, 3), dtype=np.float32)
     _xlb_sl_z = np.linspace(0.0, 2.0, _XLB_NZ)
     _xlb_sl_profile = 4.0 * (_xlb_sl_z / 2.0) * (1.0 - _xlb_sl_z / 2.0)
