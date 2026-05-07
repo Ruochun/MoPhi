@@ -454,7 +454,6 @@ joint_q_target_np[:, 0, :num_ready_dofs] = ready_to_plow_q[:num_ready_dofs]
 
 joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
 articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
-articulation_view.set_attribute("joint_q", coupler.newton_state_1, joint_q_target_wp)
 articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
 
 print(f"[Control] Applied fixed ready-to-plow joint target for {num_ready_dofs} DOFs.\n")
