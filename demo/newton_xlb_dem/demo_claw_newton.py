@@ -207,24 +207,31 @@ NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run is ≈ 5 s at 
 DEME_SETTLE_TIME = 1.0  # [s] — user-changeable
 
 # Target joint configuration that drives the arm downward into the pile.
-# Shoulder-lift (index 1) and elbow (index 2) are changed from ready_to_plow_q
-# to move the end-effector downward.  Wrist_1 (index 3) keeps the same value
-# as in ready_to_plow_q; all other joints also hold their ready-to-plow values.
+# Shoulder-lift (index 1), elbow (index 2), and wrist_1 (index 3) are changed
+# from ready_to_plow_q to create a stronger downward cutting trajectory.
 # Tune these angles to achieve the desired plowing depth and trajectory.
 PLOW_TARGET_Q = np.array(
     # shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
-    [0.5 * np.pi, -1.5, 1.8, -0.30, -1.0 * np.pi, 0.0],
+    [0.5 * np.pi, -1.9, 2.35, -0.55, -1.0 * np.pi, 0.0],
     dtype=np.float32,
 )
 
 # Wall-clock (simulation) time over which to linearly interpolate from the
 # ready-to-plow pose to PLOW_TARGET_Q.  Longer values give a slower, gentler
 # plowing motion.
-PLOW_DURATION = 3.0  # [s]
+PLOW_DURATION = 2.0  # [s]
 
 # Number of warm-up render-frames to run Newton alone (without DEME) so the
 # arm settles to its ready-to-plow joint targets before DEME settling begins.
 NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
+
+# Show DEME settling-phase rendering by default.  Set to False to run settling
+# as a single non-rendered blocking call (faster startup / no settling frames).
+RENDER_SETTLING_PHASE = True
+
+# Small tolerance for settling-loop time integration bounds to avoid an extra
+# loop iteration from floating-point roundoff.
+_SETTLING_TIME_EPSILON = 1.0e-12
 
 # ─── DEME granular terrain constants ──────────────────────────────────────
 # Physics parameters follow DEMdemo_Plow.cpp (projectchrono/DEM-Engine).
@@ -263,7 +270,8 @@ _DEME_TERRAIN_FAMILY = 0       # default family for terrain particles
 _DEME_PLOW_SLEEP_FAMILY = 10   # fixed, contact with terrain disabled during settling
 _DEME_PLOW_ACTIVE_FAMILY = 11  # fixed, contact with terrain enabled during plowing
 
-# Plow local rotation as numpy [x, y, z, w] — mirrors PLOW_LOCAL_ROT (180° about X).
+# Plow local rotation as numpy [x, y, z, w] — mirrors PLOW_LOCAL_ROT
+# (defined below via wp.quat_from_axis_angle about +X by 180°).
 # Used to compose the ee_link world quaternion with the plow's local frame when
 # updating the DEME mesh orientation from Newton's arm state each step.
 _PLOW_LOCAL_ROT_NP = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -564,7 +572,7 @@ dof_count = articulation_view.joint_dof_count
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
 ready_to_plow_q = np.array(
     # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
-    [0.5 * np.pi, -1.25, 1.55, -0.30, -1.0 * np.pi, 0.0],
+    [0.5 * np.pi, -0.95, 1.20, -0.20, -1.0 * np.pi, 0.0],
     dtype=np.float32,
 )
 num_ready_dofs = min(dof_count, len(ready_to_plow_q))
@@ -585,57 +593,6 @@ print(f"[Newton] Running warm-up ({NEWTON_WARMUP_FRAMES} frames × {SIM_SUBSTEPS
 for _ in range(NEWTON_WARMUP_FRAMES * SIM_SUBSTEPS):
     coupler.step_newton()
 print("[Newton] Warm-up complete.\n")
-
-# ─── DEME terrain settling (Phase 1) ──────────────────────────────────────
-# Let the granular pile settle under gravity for DEME_SETTLE_TIME seconds
-# before introducing plow contact.  The plow mesh is present in DEME but
-# contact with terrain particles is disabled (sleep family).
-# DoDynamicsThenSync() is a blocking call that advances DEME internally and
-# returns with a synchronized state — safe to call tracker.SetPos() after it.
-if deme_solver is not None:
-    print(f"[DEME] Settling terrain for {DEME_SETTLE_TIME:.1f} s ...")
-    deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
-    print("[DEME] Settling complete.\n")
-
-    # After settling, teleport the DEME plow to match the Newton arm's current
-    # end-effector pose, then activate contact.
-    #
-    # Newton body_q layout (per Warp transform): [px, py, pz, qx, qy, qz, qw].
-    # The plow is attached to the ee_link body with local rotation _PLOW_LOCAL_ROT_NP,
-    # so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
-    if _plow_deme_tracker is not None:
-        _body_q_np = coupler.newton_state_0.body_q.numpy()
-        _ee_pos = _body_q_np[ee_link_body_idx, 0:3].tolist()
-        _ee_quat_np = _body_q_np[ee_link_body_idx, 3:7]
-        _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
-        _plow_deme_tracker.SetPos(_ee_pos)
-        _plow_deme_tracker.SetOriQ(_plow_world_quat)
-        # Switch from sleep family to active family; contact with terrain is
-        # enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
-        # _DEME_TERRAIN_FAMILY).
-        deme_solver.ChangeFamily(_DEME_PLOW_SLEEP_FAMILY, _DEME_PLOW_ACTIVE_FAMILY)
-        print(f"[DEME] Plow contact activated.  Plow placed at {[f'{v:.3f}' for v in _ee_pos]}.\n")
-
-# ─── Movie recording settings ─────────────────────────────────────────────
-# Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
-# Requires: pip install imageio imageio-ffmpeg
-SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
-MOVIE_FPS = SIM_FPS
-
-_movie_writer = None
-if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
-    try:
-        import imageio
-
-        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
-        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
-    except ImportError:
-        print(
-            "WARNING: imageio is not installed — movie recording disabled.\n"
-            "         Install with:  pip install imageio imageio-ffmpeg"
-        )
-        SAVE_MOVIE = False
 
 # ─── DEME terrain visualisation arrays ────────────────────────────────────
 # Clump template geometry mirrors the ellipsoid_2_1_1.csv data fed to the DEME
@@ -659,6 +616,94 @@ if _deme_available and _dem_terrain_tracker is not None and _vis_available and _
         dtype=wp.vec3,
     )
     print(f"[Viewer] {_dem_num_terrain_particles} DEME terrain particle(s) registered for visualisation.\n")
+
+# ─── DEME terrain settling (Phase 1) ──────────────────────────────────────
+# Let the granular pile settle under gravity for DEME_SETTLE_TIME seconds
+# before introducing plow contact.  The plow mesh is present in DEME but
+# contact with terrain particles is disabled (sleep family).
+# DoDynamicsThenSync() is a blocking call that advances DEME internally and
+# returns with a synchronized state — safe to call tracker.SetPos() after it.
+if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+    vis.set_camera(
+        pos=wp.vec3(3.0, -3.0, 2.5),
+        pitch=-25.0,
+        yaw=135.0,
+    )
+
+if deme_solver is not None:
+    print(f"[DEME] Settling terrain for {DEME_SETTLE_TIME:.1f} s ...")
+    if RENDER_SETTLING_PHASE and _vis_available:
+        _settling_time = 0.0
+        _settling_frame_count = 0
+        while _settling_time < DEME_SETTLE_TIME - _SETTLING_TIME_EPSILON:
+            if _vis_available and not vis.is_running():
+                print(f"\n[Viewer] Window closed by user during settling after {_settling_frame_count} frame(s).")
+                break
+            _settling_dt = min(FRAME_DT, DEME_SETTLE_TIME - _settling_time)
+            deme_solver.DoDynamicsThenSync(_settling_dt)
+            _settling_time += _settling_dt
+            _settling_frame_count += 1
+
+            vis.begin_frame(_settling_time)
+            vis.log_state(coupler.newton_state_0)
+            if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
+                _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+                _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
+                _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+                _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+                vis.log_clumps(
+                    "dem_terrain",
+                    _dem_terrain_pos_wp,
+                    _dem_terrain_orient_wp,
+                    _DEM_CLUMP_SPHERE_RADII,
+                    _DEM_CLUMP_SPHERE_OFFSETS,
+                    colors=_dem_terrain_colors_wp,
+                )
+            vis.end_frame()
+    else:
+        deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
+    print("[DEME] Settling complete.\n")
+
+    # After settling, teleport the DEME plow to match the Newton arm's current
+    # end-effector pose, then activate contact.
+    #
+    # Newton body_q layout (per Warp transform): [px, py, pz, qx, qy, qz, qw].
+    # The plow is attached to the ee_link body with local rotation _PLOW_LOCAL_ROT_NP,
+    # so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
+    if _plow_deme_tracker is not None:
+        _body_q_np = coupler.newton_state_0.body_q.numpy()
+        _ee_pos = _body_q_np[ee_link_body_idx, 0:3].tolist()
+        _ee_quat_np = _body_q_np[ee_link_body_idx, 3:7]
+        _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
+        _plow_deme_tracker.SetPos(_ee_pos)
+        _plow_deme_tracker.SetOriQ(_plow_world_quat)
+        # Switch from sleep family to active family; contact with terrain is
+        # enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
+        # _DEME_TERRAIN_FAMILY).
+        deme_solver.ChangeFamily(_DEME_PLOW_SLEEP_FAMILY, _DEME_PLOW_ACTIVE_FAMILY)
+        _ee_pos_str = ", ".join(f"{v:.3f}" for v in _ee_pos)
+        print(f"[DEME] Plow contact activated.  Plow placed at ({_ee_pos_str}).\n")
+
+# ─── Movie recording settings ─────────────────────────────────────────────
+# Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
+# Requires: pip install imageio imageio-ffmpeg
+SAVE_MOVIE = True
+MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
+MOVIE_FPS = SIM_FPS
+
+_movie_writer = None
+if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+    try:
+        import imageio
+
+        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
+    except ImportError:
+        print(
+            "WARNING: imageio is not installed — movie recording disabled.\n"
+            "         Install with:  pip install imageio imageio-ffmpeg"
+        )
+        SAVE_MOVIE = False
 
 # ─── Co-simulation loop (Phase 2: active plowing) ─────────────────────────
 # Each frame:
