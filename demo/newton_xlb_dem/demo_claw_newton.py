@@ -247,7 +247,7 @@ ur10_sub.add_shape_cylinder(
 # blade/scoop extends in the local negative-Z direction.
 # Apply a 180° local rotation so the bowl opens downward for plowing.
 OBJ_CM_TO_M = 0.01
-PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), np.pi)
+PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), float(np.pi))
 
 ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
 assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", f"Unexpected ee_link body index: {ee_link_body_idx}"
@@ -445,6 +445,7 @@ dof_count = articulation_view.joint_dof_count
 # above the terrain.  Keep any extra DOFs at their current initialized values.
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
 ready_to_plow_q = np.array(
+    # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
     [0.5 * np.pi, -1.25, 1.55, -0.30, -0.5 * np.pi, 0.0],
     dtype=np.float32,
 )
