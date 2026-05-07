@@ -5,17 +5,18 @@ Newton UR10 robot arm + DEME granular terrain co-simulation demo.
 This demo adds a granular terrain pile to the UR10 excavator arm simulation.
 It reproduces Newton's ``example_robot_ur10`` example inside MoPhi's
 ``NewtonXLBDEMCoupler`` framework, demonstrating a single UR10 6-DOF industrial
-robot arm executing sinusoidal joint trajectories above a pile of DEME-managed
+robot arm holding a fixed ready-to-plow pose above a pile of DEME-managed
 ellipsoidal particles.
 
 The robot is mounted on a cylindrical pedestal above the ground plane.  All six
-revolute joints sweep continuously through their full range using pre-computed
-sinusoidal target trajectories, exercising the arm's full reach envelope.
+revolute joints are initialized to a fixed target configuration that points the
+tooling toward +Y and keeps the arm above the terrain.
 
 An excavator plow mesh (``data/mesh/excavator.obj``) is rigidly attached to the
 UR10's end-effector link (``ee_link``).  The OBJ file uses centimetre units; the
 mesh is scaled by 0.01 when loaded so it is correctly sized in metres.  The plow
-sweeps through space as the arm moves.
+is mounted with a flipped local orientation so the bowl faces downward for
+plowing.
 
 DEME granular terrain (Phase 2):
   A pile of ellipsoidal particles is created using DEME, following the approach
@@ -30,7 +31,7 @@ Future phases will add:
   • XLB (lattice-Boltzmann) fluid flow around the moving arm.
 
 The demo closely mirrors Newton's ``example_robot_ur10`` setup (single arm,
-SolverMuJoCo, per-substep sinusoidal joint-target updates) while wrapping all
+SolverMuJoCo, position control) while wrapping all
 physics inside the MoPhi ``NewtonXLBDEMCoupler``.
 
 Prerequisites
@@ -98,13 +99,6 @@ except ImportError:
         "      Install DEME to enable DEM particle simulation."
     )
 
-# ─── Warp kernel: per-substep sinusoidal joint-target update ──────────────
-# Mirrors the trajectory kernel from Newton's example_robot_ur10.py.
-# Each substep the simulation-time parameter `t` advances by `dt`, and the
-# corresponding joint target is linearly interpolated from the pre-computed
-# trajectory table.  `dim` is set to `world_count` so one trajectory stream runs per arm.
-
-
 # ─── OBJ mesh loader ──────────────────────────────────────────────────────
 # Pure-Python parser for Wavefront OBJ files.  Handles the v//vn and v/vt/vn
 # face formats used by the excavator plow mesh (all faces are triangles).
@@ -142,33 +136,6 @@ def _load_obj_mesh(path: str, scale: float = 1.0):
                     indices.extend([face_verts[0], face_verts[2], face_verts[3]])
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
-
-@wp.kernel
-def update_joint_target_trajectory_kernel(
-    joint_target_trajectory: wp.array3d[wp.float32],
-    time: wp.array[wp.float32],
-    dt: wp.float32,
-    # output
-    joint_target: wp.array3d[wp.float32],
-):
-    world_idx = wp.tid()
-    t = time[world_idx]
-    t = wp.mod(t + dt, float(joint_target_trajectory.shape[0] - 1))
-    step = int(t)
-    time[world_idx] = t
-
-    num_dofs = joint_target.shape[2]
-    for dof in range(num_dofs):
-        # Offset dof index by world_idx so each arm (if replicated) sweeps a
-        # different phase; for a single arm this reduces to the same trajectory.
-        di = (dof + world_idx) % num_dofs
-        joint_target[world_idx, 0, dof] = wp.lerp(
-            joint_target_trajectory[step, world_idx, di],
-            joint_target_trajectory[step + 1, world_idx, di],
-            wp.frac(t),
-        )
-
-
 # ─── Simulation timing ────────────────────────────────────────────────────
 # Physics step sizes are explicit user-facing constants.  Rendering cadence is
 # configured independently; collaboration loop counts are derived from these.
@@ -200,7 +167,6 @@ SIM_FPS = RENDER_FPS
 SIM_DT = NEWTON_DT
 
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
-CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-second]
 
 # ─── DEME granular terrain constants ──────────────────────────────────────
 # Physics parameters follow DEMdemo_Plow.cpp (projectchrono/DEM-Engine).
@@ -228,18 +194,6 @@ _DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
 _DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
 _DEM_FILL_H = 5.  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
-
-# ─── Trajectory constants ─────────────────────────────────────────────────
-# Joints whose reported limits are very large are treated as effectively
-# unbounded and assigned a practical working range instead.
-UNBOUNDED_JOINT_LIMIT_THRESHOLD = 6.0  # radians
-
-# Number of trajectory samples per radian of joint range.  The trajectory
-# table is sampled at DEME resolution (DEME_DT × CONTROL_SPEED steps per
-# micro-step) so that when excavator–particle coupling is added the arm pose
-# fed to DEME changes smoothly at DEME's finer time scale.
-# Use a sufficiently dense table to keep geometry updates smooth and stable.
-TRAJECTORY_SAMPLES_PER_RADIAN = 50
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
 print("=== MoPhi UR10 Claw Arm co-simulation demo ===\n")
@@ -291,10 +245,9 @@ ur10_sub.add_shape_cylinder(
 # Scaling by OBJ_CM_TO_M converts it to metres.
 # The OBJ coordinate origin is near the mounting bracket of the plow, and the
 # blade/scoop extends in the local negative-Z direction.
-# Attaching to the ee_link with identity local transform places
-# the plow mount at the end-effector flange and lets the blade sweep freely as
-# the arm moves through its sinusoidal trajectory.
+# Apply a 180° local rotation so the bowl opens downward for plowing.
 OBJ_CM_TO_M = 0.01
+PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), np.pi)
 
 ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
 assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", f"Unexpected ee_link body index: {ee_link_body_idx}"
@@ -312,6 +265,7 @@ if os.path.isfile(EXCAVATOR_OBJ_PATH):
     ur10_sub.add_shape_mesh(
         ee_link_body_idx,
         mesh=plow_mesh,
+        xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), PLOW_LOCAL_ROT),
     )
     print(
         f"[Plow] Excavator plow attached to body {ee_link_body_idx} "
@@ -473,7 +427,7 @@ coupler.initialize(
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
-# ─── Joint trajectory setup (after coupler.initialize()) ─────────────────
+# ─── Fixed joint target setup (after coupler.initialize()) ───────────────
 # ArticulationView provides structured access to the UR10 articulation's DOFs.
 # The "*ur10*" glob matches all UR10 instances in the model.
 articulation_view = ArticulationView(
@@ -487,49 +441,22 @@ assert (
 
 dof_count = articulation_view.joint_dof_count
 
-# Read joint limits and initial joint positions from the post-FK state that
-# coupler.initialize() created (eval_fk has already been called on newton_state_0).
-dof_lower = articulation_view.get_attribute("joint_limit_lower", newton_model)[0, 0].numpy()
-dof_upper = articulation_view.get_attribute("joint_limit_upper", newton_model)[0, 0].numpy()
-joint_q_init = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy().squeeze(axis=1)
-
-# Build a sinusoidal trajectory table for every DOF, phase-shifted so that each
-# joint starts at its current position.  This mirrors Newton's UR10 example.
-joint_target_trajectory = np.zeros((0, WORLD_COUNT, dof_count), dtype=np.float32)
-
-for i in range(dof_count):
-    lower = dof_lower[i]
-    upper = dof_upper[i]
-    if not np.isfinite(lower) or abs(lower) > UNBOUNDED_JOINT_LIMIT_THRESHOLD:
-        # Unbounded joint: assume a symmetric practical working range.
-        lower = -float(np.pi)
-        upper = float(np.pi)
-    limit_range = upper - lower
-    normalized = (joint_q_init[:, i] - lower) / limit_range * 2.0 - 1.0
-    phase_shift = np.zeros(WORLD_COUNT)
-    mask = np.abs(normalized) < 1.0
-    phase_shift[mask] = np.arcsin(normalized[mask])
-
-    traj = np.sin(np.linspace(phase_shift, 2.0 * np.pi + phase_shift, int(limit_range * TRAJECTORY_SAMPLES_PER_RADIAN)))
-    traj = traj * (upper - lower) * 0.5 + 0.5 * (upper + lower)
-
-    target_trajectory = np.tile(joint_q_init, (len(traj), 1, 1))
-    target_trajectory[:, :, i] = traj
-    joint_target_trajectory = np.concatenate((joint_target_trajectory, target_trajectory), axis=0)
-
-# Upload trajectory table to device as a Warp array (shape: [num_steps, worlds, dofs]).
-joint_target_trajectory_wp = wp.array(joint_target_trajectory, dtype=wp.float32, device=device)
-# Per-world trajectory clock — advances by DEME_DT × CONTROL_SPEED each DEME micro-step.
-time_step_wp = wp.zeros(WORLD_COUNT, dtype=wp.float32, device=device)
-
-# ctrl is a (world_count, 1, dof_count) Warp array that the kernel writes into;
-# set_attribute copies it back to coupler.newton_control each substep.
-ctrl = articulation_view.get_attribute("joint_target_pos", coupler.newton_control)
-
-print(
-    f"[Trajectory] Pre-computed sinusoidal trajectories for {dof_count} DOFs "
-    f"({joint_target_trajectory_wp.shape[0]} trajectory steps).\n"
+# Initialize to a ready-to-plow direction: arm reaches toward +Y and remains
+# above the terrain.  Keep any extra DOFs at their current initialized values.
+joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
+ready_to_plow_q = np.array(
+    [0.5 * np.pi, -1.25, 1.55, -0.30, -0.5 * np.pi, 0.0],
+    dtype=np.float32,
 )
+num_ready_dofs = min(dof_count, len(ready_to_plow_q))
+joint_q_target_np[:, 0, :num_ready_dofs] = ready_to_plow_q[:num_ready_dofs]
+
+joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
+articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
+articulation_view.set_attribute("joint_q", coupler.newton_state_1, joint_q_target_wp)
+articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
+
+print(f"[Control] Applied fixed ready-to-plow joint target for {num_ready_dofs} DOFs.\n")
 
 # ─── Movie recording settings ─────────────────────────────────────────────
 # Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
@@ -580,7 +507,7 @@ if _deme_available and _dem_terrain_tracker is not None and _vis_available and _
 
 # ─── Co-simulation loop ────────────────────────────────────────────────────
 # Each frame:
-#   1. For each substep: update joint targets, advance Newton, advance DEME.
+#   1. For each substep: advance Newton and DEME.
 #   2. Visualize Newton arm state and DEME terrain particles.
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
@@ -663,22 +590,8 @@ for frame in range(NUM_FRAMES):
     # ── Collaboration loop: counts are derived from explicit dt constants ──
     for _ in range(SIM_SUBSTEPS):
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
-        # The trajectory clock is advanced at DEME resolution so that future
-        # excavator–particle coupling can feed a smooth, stable arm pose to
-        # DEME at every micro-step (not just once per Newton substep).
+        # Arm control is fixed in this demo phase; DEME advances independently.
         for _ in range(DEME_SUBSTEPS):
-            # Compute sinusoidal joint targets for this DEME micro-step and
-            # write them into coupler.newton_control.  Newton will consume the
-            # value set by the last micro-step of this Newton substep.
-            wp.launch(
-                update_joint_target_trajectory_kernel,
-                dim=WORLD_COUNT,
-                inputs=[joint_target_trajectory_wp, time_step_wp, DEME_DT * CONTROL_SPEED],
-                outputs=[ctrl],
-                device=device,
-            )
-            articulation_view.set_attribute("joint_target_pos", coupler.newton_control, ctrl)
-
             # Advance DEME granular terrain one micro-step (no coupling to Newton yet).
             if deme_solver is not None:
                 coupler.step_deme()
