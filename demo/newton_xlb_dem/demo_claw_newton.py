@@ -220,7 +220,7 @@ _DEM_WORLD_HS = 2.0  # domain half-size in x and y [m]
 _DEM_BOWL_BOT = -0.05  # domain bottom, just below Newton's ground plane [m]
 _DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
 _DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
-_DEM_FILL_H = 0.3  # total pile height [m]
+_DEM_FILL_H = 3.  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
 
 # ─── Trajectory constants ─────────────────────────────────────────────────
@@ -417,7 +417,7 @@ if _deme_available:
         deme_solver.InstructBoxDomainDimension(
             [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_X, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_X],
             [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y],
-            [_DEM_BOWL_BOT, _DEM_WORLD_HS * 2.0],
+            [_DEM_BOWL_BOT, _DEM_WORLD_HS * 10.0],
         )
         deme_solver.InstructBoxDomainBoundingBC("top_open", mat_walls)
 
@@ -445,7 +445,7 @@ if _deme_available:
         deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
         deme_solver.SetInitTimeStep(DEME_DT)
         print(f"[DEME] Running at step size {DEME_DT}.\n")
-        deme_solver.SetErrorOutAvgContacts(500)
+        deme_solver.SetErrorOutAvgContacts(100)
         deme_solver.Initialize()
 
         print(f"[DEME] Granular terrain initialized " f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n")
@@ -707,7 +707,7 @@ for frame in range(NUM_FRAMES):
         # fed to the DEME solver; live positions and orientations come from the tracker.
         if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
             _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-            _terrain_quat_np = np.array(_dem_terrain_tracker.Orientations(), dtype=np.float32)
+            _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
             _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
             _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
             vis.log_clumps(
