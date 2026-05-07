@@ -170,7 +170,7 @@ SIM_DT = NEWTON_DT
 
 # Debug mode: render one frame, then keep the OpenGL window alive for visual
 # inspection until the user closes it.
-PAUSE_AFTER_FIRST_FRAME = True
+PAUSE_AFTER_FIRST_FRAME = False
 NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run is ≈ 5 s at 50 Hz
 
 # ─── DEME granular terrain constants ──────────────────────────────────────
@@ -451,7 +451,7 @@ dof_count = articulation_view.joint_dof_count
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
 ready_to_plow_q = np.array(
     # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
-    [0.5 * np.pi, -1.25, 1.55, -0.30, -0.5 * np.pi, 0.0],
+    [0.5 * np.pi, -1.25, 1.55, -0.30, -1.0 * np.pi, 0.0],
     dtype=np.float32,
 )
 num_ready_dofs = min(dof_count, len(ready_to_plow_q))
