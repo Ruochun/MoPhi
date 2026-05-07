@@ -206,20 +206,21 @@ NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run is ≈ 5 s at 
 # particle velocities (via DEME output) to determine a suitable settling time.
 DEME_SETTLE_TIME = 1.0  # [s] — user-changeable
 
-# Target joint configuration that drives the arm downward into the pile.
-# Shoulder-lift (index 1), elbow (index 2), and wrist_1 (index 3) are changed
-# from ready_to_plow_q to create a stronger downward cutting trajectory.
-# Tune these angles to achieve the desired plowing depth and trajectory.
+# Target joint configuration for active plowing.
+# In this UR10 setup, a downward cut is achieved by:
+#   • increasing shoulder_lift from the ready pose (less negative angle), and
+#   • decreasing elbow from the ready pose.
+# Keep wrist_2 fixed to preserve the plow tool orientation relative to ground.
 PLOW_TARGET_Q = np.array(
     # shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
-    [0.5 * np.pi, -1.9, 2.35, -0.55, -1.0 * np.pi, 0.0],
+    [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, 0.0],
     dtype=np.float32,
 )
 
 # Wall-clock (simulation) time over which to linearly interpolate from the
 # ready-to-plow pose to PLOW_TARGET_Q.  Longer values give a slower, gentler
 # plowing motion.
-PLOW_DURATION = 2.0  # [s]
+PLOW_DURATION = 1.6  # [s]
 
 # Number of warm-up render-frames to run Newton alone (without DEME) so the
 # arm settles to its ready-to-plow joint targets before DEME settling begins.
@@ -361,6 +362,8 @@ for i in range(len(ur10_sub.joint_target_ke)):
     ur10_sub.joint_target_ke[i] = 500
     ur10_sub.joint_target_kd[i] = 50
     ur10_sub.joint_target_mode[i] = int(JointTargetMode.POSITION)
+# Arm motion is therefore commanded through joint_target_pos values, not by
+# directly applying torques in this demo.
 
 # Replicate into a single-world builder and add the ground plane.
 builder = newton.ModelBuilder()
@@ -556,6 +559,12 @@ print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 # ─── Fixed joint target setup (after coupler.initialize()) ───────────────
 # ArticulationView provides structured access to the UR10 articulation's DOFs.
 # The "*ur10*" glob matches all UR10 instances in the model.
+# Control path summary:
+#   1) Write desired joint positions into coupler.newton_control via
+#      articulation_view.set_attribute("joint_target_pos", ...).
+#   2) coupler.step_newton() advances one Newton step using those targets.
+#   3) We update the target every frame by interpolating ready_to_plow_q →
+#      PLOW_TARGET_Q, so shoulder and elbow are actively commanded throughout.
 articulation_view = ArticulationView(
     newton_model,
     "*ur10*",
@@ -793,9 +802,10 @@ for frame in range(NUM_FRAMES):
 
     # ── Ramp joint targets toward plowing configuration ────────────────────
     # Linear interpolation from ready_to_plow_q to PLOW_TARGET_Q over
-    # PLOW_DURATION seconds.  After PLOW_DURATION the arm holds the final pose.
-    _plow_alpha = float(np.clip(sim_time / PLOW_DURATION, 0.0, 1.0))
-    _plow_q = (1.0 - _plow_alpha) * ready_to_plow_q + _plow_alpha * PLOW_TARGET_Q
+    # PLOW_DURATION seconds.  This drives shoulder_lift and elbow continuously
+    # every frame; after PLOW_DURATION the arm holds the final pose.
+    _plow_interp = np.clip(sim_time / PLOW_DURATION, 0.0, 1.0)
+    _plow_q = (1.0 - _plow_interp) * ready_to_plow_q + _plow_interp * PLOW_TARGET_Q
     joint_q_target_np[:, 0, :num_ready_dofs] = _plow_q[:num_ready_dofs]
     joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
     articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
