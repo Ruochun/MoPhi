@@ -54,6 +54,7 @@ Or from the repository root after installing the mophi package:
 
 import os
 import sys
+import time
 
 import numpy as np
 
@@ -167,7 +168,10 @@ if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
 SIM_FPS = RENDER_FPS
 SIM_DT = NEWTON_DT
 
-NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
+# Debug mode: render one frame, then keep the OpenGL window alive for visual
+# inspection until the user closes it.
+PAUSE_AFTER_FIRST_FRAME = True
+NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run is ≈ 5 s at 50 Hz
 
 # ─── DEME granular terrain constants ──────────────────────────────────────
 # Physics parameters follow DEMdemo_Plow.cpp (projectchrono/DEM-Engine).
@@ -631,6 +635,30 @@ for frame in range(NUM_FRAMES):
         print(f"  frame {frame + 1:>4}/{NUM_FRAMES}  sim_time={sim_time:.3f} s")
 
 print()
+
+# ─── Debug pause after first rendered frame ──────────────────────────────────
+if PAUSE_AFTER_FIRST_FRAME and _vis_available and not USE_OMNIVERSE_VISUALIZATION and vis.is_running():
+    print("[Debug] First frame rendered. Inspect the initial configuration; close the viewer window to continue.")
+    while vis.is_running():
+        vis.begin_frame(sim_time)
+        vis.log_state(coupler.newton_state_0)
+
+        if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
+            _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+            _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
+            _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+            _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+            vis.log_clumps(
+                "dem_terrain",
+                _dem_terrain_pos_wp,
+                _dem_terrain_orient_wp,
+                _DEM_CLUMP_SPHERE_RADII,
+                _DEM_CLUMP_SPHERE_OFFSETS,
+                colors=_dem_terrain_colors_wp,
+            )
+
+        vis.end_frame()
+        time.sleep(0.01)
 
 # ─── Finalize ─────────────────────────────────────────────────────────────
 if _movie_writer is not None:
