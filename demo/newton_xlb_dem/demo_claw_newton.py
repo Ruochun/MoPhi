@@ -224,11 +224,11 @@ _DEM_TEMPLATE_MOI = [
 
 # Terrain pile geometry (world-space, z-up, ground at z = 0).
 # A compact pile beneath the arm's workspace — much smaller than DEMdemo_Plow.cpp.
-_DEM_WORLD_HS = 2.0  # domain half-size in x and y [m]
-_DEM_BOWL_BOT = -0.05  # domain bottom, just below Newton's ground plane [m]
+_DEM_WORLD_HS = 1.1  # domain half-size in x and y [m]
+_DEM_BOWL_BOT = 0.0  # domain bottom
 _DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
 _DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
-_DEM_FILL_H = 3.  # total pile height [m]
+_DEM_FILL_H = 5.  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
 
 # ─── Trajectory constants ─────────────────────────────────────────────────
