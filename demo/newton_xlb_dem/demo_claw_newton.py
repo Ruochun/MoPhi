@@ -102,7 +102,7 @@ except ImportError:
 # Mirrors the trajectory kernel from Newton's example_robot_ur10.py.
 # Each substep the simulation-time parameter `t` advances by `dt`, and the
 # corresponding joint target is linearly interpolated from the pre-computed
-# trajectory table.  `dim` is set to `world_count` (1 for a single arm).
+# trajectory table.  `dim` is set to `world_count` so one trajectory stream runs per arm.
 
 
 # ─── OBJ mesh loader ──────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ def update_joint_target_trajectory_kernel(
     num_dofs = joint_target.shape[2]
     for dof in range(num_dofs):
         # Offset dof index by world_idx so each arm (if replicated) sweeps a
-        # different phase; for world_count=1 this has no effect.
+        # different phase; for a single arm this reduces to the same trajectory.
         di = (dof + world_idx) % num_dofs
         joint_target[world_idx, 0, dof] = wp.lerp(
             joint_target_trajectory[step, world_idx, di],
@@ -177,9 +177,9 @@ WORLD_COUNT = 1  # single UR10 arm
 RENDER_FPS = 50
 FRAME_DT = 1.0 / RENDER_FPS
 
-# Keep Newton at the same step size used previously in this demo (1/500 s).
+# Keep Newton at the same step size used previously in this demo.
 NEWTON_DT = 1.0 / 500.0
-# DEME runs explicitly at 1e-5 s.
+# DEME runs at an explicitly configured fine step size.
 DEME_DT = 1.0e-5
 
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
@@ -204,16 +204,14 @@ CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-secon
 
 # ─── DEME granular terrain constants ──────────────────────────────────────
 # Physics parameters follow DEMdemo_Plow.cpp (projectchrono/DEM-Engine).
-# Ellipsoid template with semi-axes 2:1:1 (template units); Scale(0.03) gives
-# actual particle size 0.06 m × 0.03 m × 0.03 m (sand-grain scale).
+# Ellipsoid template with anisotropic semi-axes; scaling sets the physical particle size.
 _DEM_PI = 3.1415927
 _DEM_TERRAIN_SCALING = 0.03  # metres per template unit
 
-# Unscaled ellipsoid template mass and MOI (density 2600 kg/m³).
-# ellipsoid_2_1_1.csv encodes an ellipsoid elongated along its Z-template-axis
-# with semi-axes z=2, x=1, y=1 (template units).  The MOI formula for a solid
-# ellipsoid rotating about axis i is  I_i = (m/5) * (sj² + sk²)  where sj, sk
-# are the semi-axes of the two orthogonal directions.
+# Unscaled ellipsoid template mass and MOI.
+# ellipsoid_2_1_1.csv encodes an elongated ellipsoid in template coordinates.
+# The MOI terms follow the standard solid-ellipsoid formula using the two
+# orthogonal semi-axes for each principal axis.
 # These values replicate DEMdemo_Plow.cpp exactly.
 _DEM_TEMPLATE_MASS = 2600.0 * (4.0 / 3.0 * _DEM_PI * 2.0 * 1.0 * 1.0)
 _DEM_TEMPLATE_MOI = [
@@ -222,8 +220,8 @@ _DEM_TEMPLATE_MOI = [
     1.0 / 5.0 * _DEM_TEMPLATE_MASS * (1.0**2 + 1.0**2),  # I_z = (m/5)(sx²+sy²) = (m/5)(1+1)
 ]
 
-# Terrain pile geometry (world-space, z-up, ground at z = 0).
-# A compact pile beneath the arm's workspace — much smaller than DEMdemo_Plow.cpp.
+# Terrain pile geometry (world-space, z-up).
+# Configured to keep a compact pile beneath the arm workspace.
 _DEM_WORLD_HS = 1.1  # domain half-size in x and y [m]
 _DEM_BOWL_BOT = 0.0  # domain bottom
 _DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
@@ -232,17 +230,15 @@ _DEM_FILL_H = 5.  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
 
 # ─── Trajectory constants ─────────────────────────────────────────────────
-# Joints whose reported limit magnitude exceeds this threshold (6 rad ≈ 343°,
-# i.e., nearly two full turns) are considered effectively unbounded and are
-# assigned a ±π working range instead.
+# Joints whose reported limits are very large are treated as effectively
+# unbounded and assigned a practical working range instead.
 UNBOUNDED_JOINT_LIMIT_THRESHOLD = 6.0  # radians
 
 # Number of trajectory samples per radian of joint range.  The trajectory
 # table is sampled at DEME resolution (DEME_DT × CONTROL_SPEED steps per
 # micro-step) so that when excavator–particle coupling is added the arm pose
 # fed to DEME changes smoothly at DEME's finer time scale.
-# A table built at 50 samples/rad is more than fine enough for smooth,
-# stable excavator geometry updates at any reasonable DEME_SUBSTEPS value.
+# Use a sufficiently dense table to keep geometry updates smooth and stable.
 TRAJECTORY_SAMPLES_PER_RADIAN = 50
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
@@ -260,7 +256,7 @@ EXCAVATOR_OBJ_PATH = os.path.join(_REPO_ROOT, "data", "mesh", "excavator.obj")
 # ─── Load the UR10 robot model ─────────────────────────────────────────────
 # newton.utils.download_asset("universal_robots_ur10") downloads the UR10 USD
 # from the Newton Assets repository.  The arm is mounted on a cylindrical
-# pedestal at height=1.2 m so its base link clears the ground plane.
+# pedestal so its base link clears the ground plane.
 print("[Newton] Downloading UR10 robot assets ...")
 asset_path = newton.utils.download_asset("universal_robots_ur10")
 asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
@@ -282,7 +278,7 @@ ur10_sub.add_usd(
     enable_self_collisions=False,
     hide_collision_shapes=True,
 )
-# Cylindrical pedestal: body index -1 attaches to the world (fixed).
+# Cylindrical pedestal attached to the world frame (fixed base).
 ur10_sub.add_shape_cylinder(
     -1,
     xform=wp.transform(wp.vec3(0.0, 0.0, pedestal_height / 2.0)),
@@ -291,11 +287,11 @@ ur10_sub.add_shape_cylinder(
 )
 
 # ─── Attach the excavator plow mesh to the UR10 end-effector ─────────────
-# The plow OBJ is authored in centimetres (bounding box ≈ 60 × 86 × 57 cm).
+# The plow OBJ is authored in centimetres.
 # Scaling by OBJ_CM_TO_M converts it to metres.
-# The OBJ coordinate origin is near the mounting bracket of the plow (Z ≈ 0),
-# with the blade/scoop extending in the −Z direction (Z ≈ −0.54 m after scale).
-# Attaching to the ee_link (body index 7) with identity local transform places
+# The OBJ coordinate origin is near the mounting bracket of the plow, and the
+# blade/scoop extends in the local negative-Z direction.
+# Attaching to the ee_link with identity local transform places
 # the plow mount at the end-effector flange and lets the blade sweep freely as
 # the arm moves through its sinusoidal trajectory.
 OBJ_CM_TO_M = 0.01
@@ -386,7 +382,7 @@ else:
 # ─── Build the DEME granular terrain ──────────────────────────────────────
 # Creates a pile of ellipsoidal particles following the approach of
 # DEM-Engine's DEMdemo_Plow.cpp demo.  Particles are sampled layer-by-layer
-# with a Poisson-disk sampler and deposited at ground level (z ≈ 0).
+# with a Poisson-disk sampler and deposited near the ground plane.
 # No interaction with the Newton excavator in this phase — DEME runs
 # independently.  Particle–excavator coupling will be added in a future phase.
 deme_solver = None
@@ -408,7 +404,7 @@ if _deme_available:
 
         # Ellipsoid template (semi-axes 2:1:1) scaled to physical particle size.
         # The CSV file encodes the clump geometry relative to unit sphere radii;
-        # Scale() resizes the template so each particle is ~0.06 × 0.03 × 0.03 m.
+        # Scale() resizes the template to a reasonable physical particle size.
         particle_template = deme_solver.LoadClumpType(
             _DEM_TEMPLATE_MASS,
             _DEM_TEMPLATE_MOI,
@@ -428,7 +424,7 @@ if _deme_available:
         deme_solver.InstructBoxDomainBoundingBC("top_open", mat_walls)
 
         # Sample particle positions layer by layer (mirrors DEMdemo_Plow.cpp).
-        # PDSampler guarantees centre-to-centre separation ≥ 2 × scaling, so
+        # PDSampler guarantees spacing proportional to configured particle size, so
         # no two initial particles overlap.
         sampler = DEME.PDSampler(4.0 * _DEM_TERRAIN_SCALING)
         pile_positions = []
@@ -479,8 +475,7 @@ print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
 # ─── Joint trajectory setup (after coupler.initialize()) ─────────────────
 # ArticulationView provides structured access to the UR10 articulation's DOFs.
-# The "*ur10*" glob matches all UR10 instances in the model; for WORLD_COUNT=1
-# this gives view.count = 1.
+# The "*ur10*" glob matches all UR10 instances in the model.
 articulation_view = ArticulationView(
     newton_model,
     "*ur10*",
@@ -506,7 +501,7 @@ for i in range(dof_count):
     lower = dof_lower[i]
     upper = dof_upper[i]
     if not np.isfinite(lower) or abs(lower) > UNBOUNDED_JOINT_LIMIT_THRESHOLD:
-        # Unbounded joint: assume full ±π range.
+        # Unbounded joint: assume a symmetric practical working range.
         lower = -float(np.pi)
         upper = float(np.pi)
     limit_range = upper - lower
@@ -560,12 +555,9 @@ if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 # ─── DEME terrain visualisation arrays ────────────────────────────────────
 # Clump template geometry mirrors the ellipsoid_2_1_1.csv data fed to the DEME
 # solver (5 component spheres; template-unit values scaled by _DEM_TERRAIN_SCALING).
-# CSV columns: x, y, z, r (offset from clump centre in local frame, then radius).
-#   Row 0: (0, 0, 0,    1)    → sphere at centre,  r = 1 t.u.
-#   Row 1: (0, 0, 0.86, 0.88) → offset along  z,   r = 0.88 t.u.
-#   Row 2: (0, 0, 1.44, 0.64) → further along  z,  r = 0.64 t.u.
-#   Row 3: (0, 0,-0.86, 0.88) → offset along -z,   r = 0.88 t.u.
-#   Row 4: (0, 0,-1.44, 0.64) → further along -z,  r = 0.64 t.u.
+# CSV columns are x, y, z, r (offset from clump centre in local frame, then radius).
+# These arrays mirror the template's component-sphere layout so visualized clumps
+# match DEME particle geometry.
 _DEM_CLUMP_SPHERE_RADII = np.array(
     [1.00, 0.88, 0.64, 0.88, 0.64], dtype=np.float32
 ) * _DEM_TERRAIN_SCALING
@@ -597,12 +589,8 @@ print(
     f"{DEME_SUBSTEPS} DEME micro-steps per Newton substep × {DEME_DT * 1000:.3f} ms) ...\n"
 )
 
-# Point the camera toward the arm base and terrain pile.
-# The UR10 pedestal is at (0, 0, 1.2), terrain pile at (0, 0, 0–0.3).
-# Camera at (3, -3, 2.5) with Z-up convention:
-#   yaw=135° → front direction (-cos45, +sin45, .) = (-0.707, +0.707, .)
-#           → points from (+x,-y) quadrant toward origin         ✓
-#   pitch=-25° → slight downward tilt to see ground-level terrain ✓
+# Point the camera toward the arm base and terrain pile with a slight downward
+# angle so both robot motion and near-ground particle behavior remain visible.
 if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
     vis.set_camera(
         pos=wp.vec3(3.0, -3.0, 2.5),
@@ -615,16 +603,13 @@ if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 # stores them in a persistent dict and re-renders them every frame; there
 # is no need to re-submit static geometry.
 #
-# Placement rationale (camera at (3, -3, 2.5), yaw=135°, looking toward arm):
-#   • Coord axes are placed at (0.8, -0.9, 0.02) — in the camera's right-hand
-#     foreground, clear of the arm base and terrain pile.  Length 0.5 m so
-#     they are large enough to be seen from the default viewpoint.
-#   • Scale bar sits at (y=-0.9, z=0.06) — same foreground strip, raised well
-#     above the ground plane to avoid z-fighting.  Endpoint marker spheres
-#     (radius 0.04 m) make the bar ends clearly visible as coloured dots.
+# Placement rationale:
+#   • Coordinate axes are placed in the foreground, clear of the arm and terrain.
+#   • The scale bar is also placed in the foreground and slightly elevated so it
+#     remains legible and avoids z-fighting with the ground.
 if _vis_available:
     # XYZ coordinate-axis arrows at a foreground reference point.
-    # X = red, Y = green, Z = blue; each 0.5 m long.
+    # X = red, Y = green, Z = blue; all arrows share the same configurable length.
     _AXIS_LEN = 0.5
     _AXIS_OX, _AXIS_OY, _AXIS_OZ = 0.8, -0.9, 0.02  # origin in world space
     _axis_origin = np.full((3, 3), [_AXIS_OX, _AXIS_OY, _AXIS_OZ], dtype=np.float32)
@@ -647,8 +632,8 @@ if _vis_available:
         wp.array(_axis_colors, dtype=wp.vec3),
     )
 
-    # 1 m scale bar in the foreground, raised above the ground to avoid
-    # z-fighting.  Endpoint spheres (radius 0.04 m) anchor the bar ends
+    # Scale bar in the foreground, raised above the ground to avoid
+    # z-fighting.  Endpoint spheres anchor the bar ends
     # and make its extent unambiguous.
     _SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.9, 0.06  # 1 m along x
     vis.log_lines(
@@ -730,7 +715,7 @@ for frame in range(NUM_FRAMES):
         if _movie_writer is not None:
             _movie_writer.append_data(vis.get_frame().numpy())
 
-    # ── Console status (every 50 frames) ──────────────────────────────────
+    # ── Console status (periodic) ──────────────────────────────────────────
     if (frame + 1) % 50 == 0 or frame == 0:
         print(f"  frame {frame + 1:>4}/{NUM_FRAMES}  sim_time={sim_time:.3f} s")
 

@@ -244,6 +244,14 @@ Use these rules for all demo simulation loops.
   those explicit step sizes and `FRAME_DT`; do not derive physics dt values from
   frame rate.
 
+### Demo comments should explain intent, not frozen numeric choices
+
+- In demo comments, explain the purpose of a variable, action, or design choice.
+- Avoid encoding specific tuned values in comments when those values are expected
+  to change frequently (domain size, particle size, speeds, camera offsets, etc.).
+- Keep comments resilient to parameter tuning so they usually remain valid when
+  constants are updated.
+
 ---
 
 ## C++ coding conventions

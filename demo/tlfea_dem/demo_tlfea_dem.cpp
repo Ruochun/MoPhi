@@ -27,7 +27,7 @@ int main() {
     // ── 2. Initialize ────────────────────────────────────────────────────────
     // tlfea_config and dem_config are left empty; real simulations would
     // supply paths to mesh / scene description files here.
-    // num_gpus=1 is the default for single-GPU machines.
+    // num_gpus controls hardware parallelism; use the value appropriate for the machine.
     coupler.Initialize(/*tlfea_config=*/"",
                        /*dem_config=*/"",
                        /*num_gpus=*/1);

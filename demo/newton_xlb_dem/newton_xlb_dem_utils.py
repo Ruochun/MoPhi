@@ -316,10 +316,10 @@ def compute_foot_tip_poses(body_q_np, foot_tip_descriptors):
 # ─────────────────────────────────────────────────────────────────────────────
 # The robot is represented as a prescribed axis-aligned bounding box (AABB) in
 # the LBM grid.  bc_mask and missing_mask are updated in-place by GPU-resident
-# Warp kernels, eliminating the ~21 MB/frame host↔device traffic that a
+# Warp kernels, eliminating the large per-frame host↔device traffic that a
 # numpy-based approach would require.
 #
-# bc_mask layout    : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; 0 = fluid
+# bc_mask layout    : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; fluid uses the base ID
 # missing_mask layout: (Q, NX, NY, NZ), dtype bool — True when lattice direction
 #   l at cell (x,y,z) pulls from outside the solid box (halfway bounce-back flag)
 
@@ -436,8 +436,8 @@ def xlb_prescribed_robot_box_grid(
         [
             base_pos[0] - half_ext_x,
             base_pos[1] - half_ext_y,
-            # z_min is clamped to 0 because the ground plane is at z=0 and the
-            # LBM domain starts there; the box must not extend below the ground.
+            # z_min is clamped to the lower domain boundary so the box remains inside
+            # the fluid domain and does not extend below the ground region.
             max(0.0, base_pos[2] - below_base),
         ]
     )
