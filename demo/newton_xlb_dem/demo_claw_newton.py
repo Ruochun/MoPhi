@@ -170,26 +170,34 @@ def update_joint_target_trajectory_kernel(
 
 
 # ─── Simulation timing ────────────────────────────────────────────────────
-# Match Newton's UR10 example: 50 Hz policy rate, 10 substeps per frame,
-# MuJoCo solver at 1/500 s time step.
+# Physics step sizes are explicit user-facing constants.  Rendering cadence is
+# configured independently; collaboration loop counts are derived from these.
 WORLD_COUNT = 1  # single UR10 arm
-SIM_FPS = 50
-SIM_SUBSTEPS = 10
-FRAME_DT = 1.0 / SIM_FPS
-SIM_DT = FRAME_DT / SIM_SUBSTEPS  # 1/500 s per Newton substep
 
-# DEME runs at a finer time step than Newton for granular physics stability.
-# Each Newton substep is divided into DEME_SUBSTEPS micro-steps.  Set this to
-# 1 to run DEME at Newton's rate; increase it to run DEME at a finer pace.
-# When excavator–particle coupling is active the arm pose is fed to DEME at
-# DEME resolution, so a higher value here gives a smoother (more stable) force
-# boundary condition for the granular terrain.
-DEME_SUBSTEPS = 50  # DEME micro-steps per Newton substep; increase for finer granular physics
-# Each Newton substep is subdivided into DEME_SUBSTEPS micro-steps.  The
-# trajectory clock advances once per DEME micro-step (at DEME_DT resolution),
-# so Newton always sees the final trajectory value of each Newton substep while
-# DEME (and future coupling code) can query the arm pose at every micro-step.
-DEME_DT = SIM_DT / DEME_SUBSTEPS  # DEME micro-step size = SIM_DT / DEME_SUBSTEPS
+RENDER_FPS = 50
+FRAME_DT = 1.0 / RENDER_FPS
+
+# Keep Newton at the same step size used previously in this demo (1/500 s).
+NEWTON_DT = 1.0 / 500.0
+# DEME runs explicitly at 1e-5 s.
+DEME_DT = 1.0e-5
+
+SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
+if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
+    raise ValueError(
+        "FRAME_DT must be an integer multiple of NEWTON_DT. "
+        f"Got FRAME_DT={FRAME_DT:.12g}, NEWTON_DT={NEWTON_DT:.12g}."
+    )
+
+DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
+if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
+    raise ValueError(
+        "NEWTON_DT must be an integer multiple of DEME_DT. "
+        f"Got NEWTON_DT={NEWTON_DT:.12g}, DEME_DT={DEME_DT:.12g}."
+    )
+
+SIM_FPS = RENDER_FPS
+SIM_DT = NEWTON_DT
 
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
 CONTROL_SPEED = 50.0  # trajectory parameter speed [trajectory-steps / sim-second]
@@ -233,8 +241,6 @@ UNBOUNDED_JOINT_LIMIT_THRESHOLD = 6.0  # radians
 # table is sampled at DEME resolution (DEME_DT × CONTROL_SPEED steps per
 # micro-step) so that when excavator–particle coupling is added the arm pose
 # fed to DEME changes smoothly at DEME's finer time scale.
-# With CONTROL_SPEED=50 and DEME_DT = SIM_DT / DEME_SUBSTEPS:
-#   steps per DEME tick = DEME_DT × CONTROL_SPEED = (SIM_DT / DEME_SUBSTEPS) × CONTROL_SPEED
 # A table built at 50 samples/rad is more than fine enough for smooth,
 # stable excavator geometry updates at any reasonable DEME_SUBSTEPS value.
 TRAJECTORY_SAMPLES_PER_RADIAN = 50
@@ -518,7 +524,7 @@ for i in range(dof_count):
 
 # Upload trajectory table to device as a Warp array (shape: [num_steps, worlds, dofs]).
 joint_target_trajectory_wp = wp.array(joint_target_trajectory, dtype=wp.float32, device=device)
-# Per-world trajectory clock — advances by SIM_DT × CONTROL_SPEED each substep.
+# Per-world trajectory clock — advances by DEME_DT × CONTROL_SPEED each DEME micro-step.
 time_step_wp = wp.zeros(WORLD_COUNT, dtype=wp.float32, device=device)
 
 # ctrl is a (world_count, 1, dof_count) Warp array that the kernel writes into;
@@ -587,7 +593,7 @@ if _deme_available and _dem_terrain_tracker is not None and _vis_available and _
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
     f"(frame_dt={FRAME_DT * 1000:.1f} ms, "
-    f"{SIM_SUBSTEPS} Newton substeps × {SIM_DT * 1000:.1f} ms, "
+    f"{SIM_SUBSTEPS} Newton substeps × {NEWTON_DT * 1000:.3f} ms, "
     f"{DEME_SUBSTEPS} DEME micro-steps per Newton substep × {DEME_DT * 1000:.3f} ms) ...\n"
 )
 
@@ -669,9 +675,9 @@ for frame in range(NUM_FRAMES):
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
-    # ── Substep loop: Newton substeps, each divided into DEME micro-steps ──
+    # ── Collaboration loop: counts are derived from explicit dt constants ──
     for _ in range(SIM_SUBSTEPS):
-        # ── DEME micro-step loop (runs at DEME_DT = SIM_DT / DEME_SUBSTEPS) ──
+        # ── DEME micro-step loop (runs at explicit DEME_DT) ──
         # The trajectory clock is advanced at DEME resolution so that future
         # excavator–particle coupling can feed a smooth, stable arm pose to
         # DEME at every micro-step (not just once per Newton substep).

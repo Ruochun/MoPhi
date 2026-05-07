@@ -231,6 +231,21 @@ Key rules for agents:
 
 ---
 
+## Demo writing rules
+
+Use these rules for all demo simulation loops.
+
+### Physics step sizes must be explicit and decoupled from render frame rate
+
+- Define each physics system step size as an explicit user-modifiable constant
+  (for example `NEWTON_DT`, `DEME_DT`).
+- Keep rendering cadence separate (for example `RENDER_FPS`, `FRAME_DT`).
+- Derive collaboration loop counts (`SIM_SUBSTEPS`, `DEME_SUBSTEPS`, etc.) from
+  those explicit step sizes and `FRAME_DT`; do not derive physics dt values from
+  frame rate.
+
+---
+
 ## C++ coding conventions
 
 | Item | Rule |
