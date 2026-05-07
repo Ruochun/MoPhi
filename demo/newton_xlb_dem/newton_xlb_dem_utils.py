@@ -250,8 +250,7 @@ def print_visual_body_part_descriptors(descriptors):
         print(
             f"            body_idx={d['body_idx']} [{d['body_name']}]  "
             f"geo={d['geo_type'].name}  "
-            f"scale=[{d['scale'][0]:.3f},{d['scale'][1]:.3f},{d['scale'][2]:.3f}]"
-            + mesh_info
+            f"scale=[{d['scale'][0]:.3f},{d['scale'][1]:.3f},{d['scale'][2]:.3f}]" + mesh_info
         )
     print()
 
@@ -317,10 +316,10 @@ def compute_foot_tip_poses(body_q_np, foot_tip_descriptors):
 # ─────────────────────────────────────────────────────────────────────────────
 # The robot is represented as a prescribed axis-aligned bounding box (AABB) in
 # the LBM grid.  bc_mask and missing_mask are updated in-place by GPU-resident
-# Warp kernels, eliminating the ~21 MB/frame host↔device traffic that a
+# Warp kernels, eliminating the large per-frame host↔device traffic that a
 # numpy-based approach would require.
 #
-# bc_mask layout    : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; 0 = fluid
+# bc_mask layout    : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; fluid uses the base ID
 # missing_mask layout: (Q, NX, NY, NZ), dtype bool — True when lattice direction
 #   l at cell (x,y,z) pulls from outside the solid box (halfway bounce-back flag)
 
@@ -412,8 +411,9 @@ def xlb_world_to_grid_idx(world_pos, domain_min, domain_max, grid_dims):
     return np.clip(idx, [1, 1, 1], [nx - 2, ny - 2, nz - 2])
 
 
-def xlb_prescribed_robot_box_grid(base_pos, domain_min, domain_max, grid_dims, half_ext_x, half_ext_y,
-                                   below_base, above_base):
+def xlb_prescribed_robot_box_grid(
+    base_pos, domain_min, domain_max, grid_dims, half_ext_x, half_ext_y, below_base, above_base
+):
     """Return (gc_min, gc_max) integer grid arrays for the prescribed robot AABB.
 
     The box is centred on base_pos (world-space [x, y, z]) with fixed half-extents
@@ -436,8 +436,8 @@ def xlb_prescribed_robot_box_grid(base_pos, domain_min, domain_max, grid_dims, h
         [
             base_pos[0] - half_ext_x,
             base_pos[1] - half_ext_y,
-            # z_min is clamped to 0 because the ground plane is at z=0 and the
-            # LBM domain starts there; the box must not extend below the ground.
+            # z_min is clamped to the lower domain boundary so the box remains inside
+            # the fluid domain and does not extend below the ground region.
             max(0.0, base_pos[2] - below_base),
         ]
     )
@@ -457,8 +457,9 @@ def xlb_prescribed_robot_box_grid(base_pos, domain_min, domain_max, grid_dims, h
     return gc_min, gc_max
 
 
-def xlb_update_robot_box_gpu(bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max,
-                              robot_bc_id, vel_c_wp, q):
+def xlb_update_robot_box_gpu(
+    bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max, robot_bc_id, vel_c_wp, q
+):
     """Update bc_mask and missing_mask in-place on the GPU for the moving robot AABB.
 
     Clears the old robot box region and stamps the new one using Warp GPU kernels,

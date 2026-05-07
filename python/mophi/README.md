@@ -40,9 +40,10 @@ a demo without a prior CMake configure step).
 
 | File in `python/mophi/` | Canonical source | CMake rule |
 |-------------------------|------------------|------------|
-| `opengl_visualizer.py` | `src/visualization/opengl_visualizer.py` | `src/visualization/CMakeLists.txt` |
-| `omniverse_visualizer.py` | `src/visualization/omniverse_visualizer.py` | `src/visualization/CMakeLists.txt` |
-| `xlb_helpers.py` | `src/utils/xlb_helpers.py` | `src/utils/CMakeLists.txt` |
+| `visualizers/opengl_visualizer.py` | `src/visualization/opengl_visualizer.py` | `src/visualization/CMakeLists.txt` |
+| `visualizers/omniverse_visualizer.py` | `src/visualization/omniverse_visualizer.py` | `src/visualization/CMakeLists.txt` |
+| `utilities/xlb_helpers.py` | `src/utils/xlb_helpers.py` | `src/utils/CMakeLists.txt` |
+| `utilities/vis_utils.py` | `src/utils/vis_utils.py` | `src/utils/CMakeLists.txt` |
 
 ### How the copy works
 
@@ -51,8 +52,8 @@ reproduce the file verbatim into this directory:
 
 ```cmake
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/xlb_helpers.py"
-    "${CMAKE_SOURCE_DIR}/python/mophi/xlb_helpers.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vis_utils.py"
+    "${CMAKE_SOURCE_DIR}/python/mophi/utilities/vis_utils.py"
     COPYONLY
 )
 ```

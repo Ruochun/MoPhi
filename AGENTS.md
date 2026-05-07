@@ -54,7 +54,15 @@ MoPhi/
 │   ├── bindings/
 │   │   └── mophi_bindings.cpp   # pybind11 entry point — register every coupler class here
 │   └── mophi/
-│       └── __init__.py          # Python package — re-exports classes with try/except
+│       ├── __init__.py          # Python package — re-exports classes with try/except
+│       ├── visualizers/         # Visualizer backends (mirrored from src/visualization/)
+│       │   ├── __init__.py
+│       │   ├── opengl_visualizer.py
+│       │   └── omniverse_visualizer.py
+│       └── utilities/           # Shared helper modules (solver-agnostic utilities)
+│           ├── __init__.py
+│           ├── vis_utils.py     # Internal math helpers for visualizer backends
+│           └── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
 └── demo/
     ├── CMakeLists.txt           # Guards each sub-demo with if(MOPHI_BUILD_<SOLVER>)
     └── <solver_name>/           # One sub-directory per demo
@@ -91,19 +99,46 @@ coupler's own public header.
 
 [pimpl]: https://en.cppreference.com/w/cpp/language/pimpl
 
-### 3. Lifecycle: Initialize / Step / Finalize
+### 3. Lifecycle: Initialize / Finalize
 
-Every coupler must implement exactly three public lifecycle methods:
+Every coupler must implement exactly two public lifecycle methods:
 
 | Method | Responsibility |
 |--------|---------------|
 | `Initialize(...)` | Create solver objects, load configs, allocate GPU/memory resources |
-| `Step()` | Advance both solvers by one co-simulation time step and exchange coupling data |
 | `Finalize()` | Tear down solvers, release all resources |
 
 The destructor calls `Finalize()` automatically when `initialized` is `true`.
 
-### 4. Non-copyable, movable coupler classes
+### 4. No whole-sale stepper — per-solver stepping methods
+
+**Never** implement a single `Step()` method that advances all solvers in lock-step.
+Instead, expose one stepping method per participating solver so that demos can control
+the pace of each system independently (e.g., advance Newton every substep, XLB only
+once per policy frame, or DEME at a different rate):
+
+| Method | Responsibility |
+|--------|---------------|
+| `StepNewton()` | Advance the Newton rigid-body solver by one substep |
+| `StepDEME()` | Advance the DEME discrete-element solver by one substep |
+| `StepXLB()` | Advance the XLB lattice-Boltzmann solver by one substep |
+
+Name the methods after the solver they advance (`StepNewton`, `StepDEME`, `StepXLB`, …).
+Use a placeholder/no-op body guarded by the `<solver>_available` flag when a solver
+has not been connected yet.
+
+The Python bindings expose these as `step_newton()`, `step_deme()`, `step_xlb()` etc.
+(snake_case).  The demo simulation loop then looks like:
+
+```python
+for _ in range(SIM_SUBSTEPS):
+    coupler.step_newton()
+    coupler.step_deme()
+# once per policy frame:
+coupler.step_xlb()
+```
+
+### 5. Non-copyable, movable coupler classes
 
 Because couplers own resources (GPU contexts, open files, etc.) they must **never** be copied.
 Every coupler class must:
@@ -115,7 +150,7 @@ MyNewCoupler(MyNewCoupler&&)                 = default;
 MyNewCoupler& operator=(MyNewCoupler&&)      = default;
 ```
 
-### 5. Couplers live in the `mophi` namespace
+### 6. Couplers live in the `mophi` namespace
 
 All C++ classes, functions, and types defined in this repository belong to the `mophi` namespace.
 There are no nested namespaces at this time.
@@ -178,8 +213,44 @@ Key rules for agents:
   solver-agnostic.
 - **Both backends share the same public interface** — demos switch backends
   with a single constructor change; the simulation loop body is identical.
-- The files in `src/visualization/` are **mirrored** to `python/mophi/`
+- The files in `src/visualization/` are **mirrored** to `python/mophi/visualizers/`
   (they must be kept in sync).
+
+---
+
+## Python file naming conventions
+
+- **Never use a leading underscore for file or module names** (e.g. `vis_utils.py`,
+  not `_vis_utils.py`).  Leading-underscore names imply implementation-private
+  modules that callers should not import; MoPhi modules may be imported by demos
+  and agents and must have discoverable names.
+- New utility modules shared across multiple backends belong in
+  `python/mophi/utilities/`.
+- New visualizer backends belong in `python/mophi/visualizers/` and must also
+  have a mirrored copy in `src/visualization/`.
+
+---
+
+## Demo writing rules
+
+Use these rules for all demo simulation loops.
+
+### Physics step sizes must be explicit and decoupled from render frame rate
+
+- Define each physics system step size as an explicit user-modifiable constant
+  (for example `NEWTON_DT`, `DEME_DT`).
+- Keep rendering cadence separate (for example `RENDER_FPS`, `FRAME_DT`).
+- Derive collaboration loop counts (`SIM_SUBSTEPS`, `DEME_SUBSTEPS`, etc.) from
+  those explicit step sizes and `FRAME_DT`; do not derive physics dt values from
+  frame rate.
+
+### Demo comments should explain intent, not frozen numeric choices
+
+- In demo comments, explain the purpose of a variable, action, or design choice.
+- Avoid encoding specific tuned values in comments when those values are expected
+  to change frequently (domain size, particle size, speeds, camera offsets, etc.).
+- Keep comments resilient to parameter tuning so they usually remain valid when
+  constants are updated.
 
 ---
 
@@ -386,7 +457,8 @@ need for a separate C++ coupler class.  Instead, write a single
 - `struct TLFEAImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
 - `std::unique_ptr<TLFEAImpl> fea_;` owns the C++ solver via pimpl
 - `pybind11::object` members for the Python solver objects
-- All lifecycle methods declared (not defined inline): `Initialize(...)`, `Step()`, `Finalize()`
+- All lifecycle methods declared (not defined inline): `Initialize(...)`, `Finalize()`
+- Per-solver stepping methods declared: `StepNewton()`, `StepDEME()`, `StepXLB()`, … (one per participating solver)
 - Coupling data-exchange methods: e.g. `GetNodePositions()`, `SetNodeForces()`
 - Delete copy, **no** default move (pybind11 objects inhibit trivial move)
 
@@ -518,10 +590,10 @@ main README.
 - [ ] `option(MOPHI_FETCH_*)` and `option(MOPHI_BUILD_*)` in root `CMakeLists.txt`
 - [ ] `find_package(... QUIET)` for any new system deps in root `CMakeLists.txt`
 - [ ] Create `src/couplers/<name>/` directory
-- [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, lifecycle methods, delete copy / default move *(C++ coupler)*
-- [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle methods implemented *(C++ coupler)*
-- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl `struct TLFEAImpl` + `pybind11::object` members *(Python-only coupler)*
-- [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including TLFEA lifecycle *(Python-only coupler)*
+- [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, `Initialize`/`Finalize` lifecycle methods, per-solver step methods, delete copy / default move *(C++ coupler)*
+- [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle and per-solver step methods implemented *(C++ coupler)*
+- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl `struct TLFEAImpl` + `pybind11::object` members; per-solver step methods declared *(Python-only coupler)*
+- [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including per-solver step methods *(Python-only coupler)*
 - [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards; **STATIC** lib for C++ coupler or **INTERFACE** lib for Python-only coupler
 - [ ] `if(MOPHI_BUILD_*) add_subdirectory(<name>) endif()` in `src/couplers/CMakeLists.txt`
 - [ ] `#ifdef MOPHI_HAS_*` binding block in `python/bindings/mophi_bindings.cpp`

@@ -52,7 +52,9 @@ void register_newton_xlb_dem(py::module_& m) {
                                       "                       deme_solver=dem)\n"
                                       "    for step in range(steps):\n"
                                       "        # optionally update coupler.newton_control before each step\n"
-                                      "        coupler.step()\n"
+                                      "        coupler.step_newton()  # advance Newton one substep\n"
+                                      "        coupler.step_deme()    # advance DEME one substep\n"
+                                      "        # coupler.step_xlb()  # advance XLB (placeholder)\n"
                                       "        transforms = coupler.get_robot_body_transforms()\n"
                                       "    coupler.finalize()")
         .def(py::init<>())
@@ -66,12 +68,18 @@ void register_newton_xlb_dem(py::module_& m) {
              "xlb_simulation may be an XLB simulation object or None (skip XLB).\n"
              "deme_solver may be a deme.DEMSolver instance or None (skip DEME).\n"
              "sim_dt sets the co-simulation time step in seconds (default 1 ms).")
-        .def("step", &PyNewtonXLBDEMCoupler::Step,
-             "Advance one co-simulation step.\n\n"
-             "Sequence: clear Newton forces → Newton collide → Newton step → swap states\n"
-             "→ DEME placeholder (no-op) → XLB placeholder (no-op).\n"
-             "Call get_robot_body_transforms() after step() to read the spatial\n"
-             "representation of the robot.")
+        .def("step_newton", &PyNewtonXLBDEMCoupler::StepNewton,
+             "Advance Newton by one substep.\n\n"
+             "Sequence: clear forces → collide → step → swap states.\n"
+             "Write joint targets into newton_control before calling this.")
+        .def("step_deme", &PyNewtonXLBDEMCoupler::StepDEME,
+             "Advance DEME by one substep.\n\n"
+             "Calls DoStepDynamics() on the bound deme.DEMSolver.\n"
+             "No-op when no DEME solver was provided.")
+        .def("step_xlb", &PyNewtonXLBDEMCoupler::StepXLB,
+             "Advance XLB by one substep (placeholder).\n\n"
+             "No-op until fluid–robot coupling is implemented.\n"
+             "Call once per policy frame, independently of Newton / DEME.")
         .def("finalize", &PyNewtonXLBDEMCoupler::Finalize,
              "Finalize all solvers and release all resources including Python references.")
         .def("set_verbosity", &PyNewtonXLBDEMCoupler::SetVerbosity, py::arg("verbose"),

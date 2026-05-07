@@ -134,7 +134,7 @@ torch_device = wp.device_to_torch(wp.get_device())
 # ─── Load the ANYmal C robot model ─────────────────────────────────────────
 # newton.utils.download_asset("anybotics_anymal_c") downloads the ANYmal C URDF
 # and pre-trained RL walking policy from the Newton Assets repository.
-# The robot is placed at z = 0.62 m above the flat ground plane (z-up, x = forward).
+# The robot starts above the flat ground plane with a stable initial base pose.
 print("[Newton] Downloading ANYmal C robot assets ...")
 asset_path = newton.utils.download_asset("anybotics_anymal_c")
 urdf_path = str(asset_path / "urdf" / "anymal.urdf")
@@ -278,13 +278,13 @@ else:
 # ─── XLB real LBM simulation setup ───────────────────────────────────────────
 # Configures a real 3-D incompressible Navier-Stokes LBM simulation using XLB.
 # Physical scenario (world coordinates):
-#   • Inlet face at y = +2 (world) = y = NY−1 (LBM grid), blowing in −y direction.
-#   • Ground wall at z = 0 (world) = z = 0 (LBM grid), no-slip halfway bounce-back.
-#   • Outlet at y = −2 (world) = y = 0 (LBM grid), extrapolation outflow.
+#   • Inlet at the upstream y-face, blowing in the negative-y direction.
+#   • Ground wall at the domain floor, using no-slip halfway bounce-back.
+#   • Outlet at the downstream y-face, using extrapolation outflow.
 #   • All other faces are left open (no explicit BC — acceptable for a low-Re demo).
 #
 # LBM unit convention:
-#   Inlet lattice speed   _XLB_INLET_SPEED  [lu/ts], Mach number Ma ≈ 0.035.
+#   Inlet lattice speed   _XLB_INLET_SPEED  [lu/ts], kept in a low-Mach regime.
 #   Kinematic viscosity   _XLB_NU           [lu],    BGK relaxation ω = 1/(3ν+0.5).
 _XLB_SCALE = 4
 _XLB_NX, _XLB_NY, _XLB_NZ = 32 * _XLB_SCALE, 32 * _XLB_SCALE, 16 * _XLB_SCALE
@@ -326,7 +326,7 @@ _xlb_u_np = None  # velocity in (NX, NY, NZ, 3) layout; updated each vis interva
 #   the fluid, which is physically correct.
 
 # Fixed half-extents [m] of the prescribed robot box around the base body centre.
-# Sized to enclose the full ANYmal C geometry (torso + leg reach) with margin.
+# Chosen to conservatively enclose the robot geometry with margin.
 _XLB_ROBOT_HALF_EXT_X = 0.55  # ±0.55 m in x (walking direction)
 _XLB_ROBOT_HALF_EXT_Y = 0.45  # ±0.45 m in y (lateral direction)
 _XLB_ROBOT_BELOW_BASE = 0.62  # m below base centre (base is at ~0.62 m when standing)
@@ -372,8 +372,7 @@ if _xlb_available:
         _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
 
         # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
-        # (the normal component).  For the y = NY−1 face the outward normal is +y, so
-        # the functional computes u = −prescribed_value × normal = (0, −speed, 0).
+        # (the normal component) to define the intended inflow direction.
         _xlb_inlet_bc = _ZouHeBC(
             bc_type="velocity",
             prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
@@ -382,18 +381,21 @@ if _xlb_available:
         _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
         _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
 
-        # Build the robot obstacle BC at the initial base-body position (0, 0, 0.62).
+        # Build the robot obstacle BC at a representative initial base-body position.
         # The BC is added to the stepper once and never removed; bc_mask and
         # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
         _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
             np.array([0.0, 0.0, 0.62]),
-            _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX,
+            _XLB_DOMAIN_MIN,
+            _XLB_DOMAIN_MAX,
             (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE, _XLB_ROBOT_ABOVE_BASE,
+            _XLB_ROBOT_HALF_EXT_X,
+            _XLB_ROBOT_HALF_EXT_Y,
+            _XLB_ROBOT_BELOW_BASE,
+            _XLB_ROBOT_ABOVE_BASE,
         )
         if _robot_init_gc_min is None:
-            # Fallback: initial position outside domain — use a single interior cell
+            # Fallback: if the initial position is outside the domain, use a single interior cell
             # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
             # correctly on the very first simulation frame.
             _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
@@ -501,14 +503,14 @@ if _xlb_available:
 if _xlb_u_np is not None:
     _xlb_sl_u = _xlb_u_np
 else:
-    # Analytic fallback: parabolic z-profile, flow in −y direction.
+# Analytic fallback: smooth channel-like profile, flow in −y direction.
     _xlb_sl_u = np.zeros((_XLB_NX, _XLB_NY, _XLB_NZ, 3), dtype=np.float32)
     _xlb_sl_z = np.linspace(0.0, 2.0, _XLB_NZ)
     _xlb_sl_profile = 4.0 * (_xlb_sl_z / 2.0) * (1.0 - _xlb_sl_z / 2.0)
     _xlb_sl_u[:, :, :, 1] = -0.8 * _xlb_sl_profile[np.newaxis, np.newaxis, :]  # −y
 
-# Seed streamlines on a regular (12 × 8) y-plane grid just inside the inlet face
-# (y ≈ domain_max[1], flow in −y direction).
+# Seed streamlines on a regular y-plane grid just inside the inlet face so
+# flow features remain easy to inspect during visualization.
 _xlb_seed_pts = mophi.xlb_make_y_plane_seeds(_XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX)
 _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
     _xlb_sl_u, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
@@ -522,14 +524,14 @@ if _vis_available:
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
 # ─── Build the DEME placeholder solver (if DEME is available) ─────────────
-# Four representative radius types [m] — coarse dust grain size distribution.
+# Representative radius types [m] for a simple polydisperse particle set.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
-# Use DEME's Poisson-disk sampler 
-# Minimum separation = 2 × largest radius: the Poisson-disk sampler guarantees
-# this distance between sphere centres, so no two initial spheres overlap.
+# Use DEME's Poisson-disk sampler
+# The Poisson-disk sampler enforces a minimum centre-to-centre spacing based on
+# particle size so initial spheres do not overlap.
 _poisson_disk_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
-# Box x ∈ [-1.5, 1.5], y ∈ [1.0, 4.5], z ∈ a thin layer:
+# Sample particles in an upstream box region so they advect toward the robot.
 _sampled_positions = _poisson_disk_sampler.SampleBox([0.0, 2.75, 0.25], [1.5, 1.75, 0.15])
 _NUM_DEM_SPHERES = len(_sampled_positions)
 _dem_sphere_positions_np = np.array(_sampled_positions, dtype=np.float32)
@@ -541,8 +543,7 @@ _dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices],
 # so the spheres move towards the robot's face.
 _DEM_SPHERE_INIT_VELOCITY_Y = [0.0, -1.2, 0.0]  # m/s
 _DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
-# sim_dt = 1/200 → 5 ms substep (4 substeps per 50 Hz policy frame,
-# matching the inner time step from Newton's anymal example).
+# Explicit Newton simulation step for this demo.
 SIM_DT = 1.0 / 200.0
 
 if _vis_available:
@@ -634,9 +635,8 @@ command[0, 0] = 1.0  # walk forward (x-direction)
 print("[Policy] ANYmal C walking policy loaded.\n")
 
 # ─── Co-simulation loop ───────────────────────────────────────────────────
-# The ANYmal C walking policy runs at 50 Hz (one inference per frame).
-# Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics, matching the
-# 4-substep inner loop in Newton's anymal example (frame_dt = 1/50, sim_dt = 1/200).
+# The ANYmal C walking policy runs once per frame.
+# Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics.
 SIM_SUBSTEPS = 4  # physics substeps per policy frame
 FRAME_DT = SIM_DT * SIM_SUBSTEPS  # policy control rate
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
@@ -670,7 +670,7 @@ print(
 # print(f"{'Frame':>5}  {'Base X [m]':>12}  {'Base Y [m]':>12}  {'Base Z [m]':>12}  Representation")
 # print("-" * 72)
 
-# Pre-allocate the 6-element zeros buffer used to prepend free-joint DOFs each frame.
+# Pre-allocate the zero buffer used to prepend free-joint DOFs each frame.
 free_joint_zeros = torch.zeros(6, device=torch_device, dtype=torch.float32)
 
 # Set the initial camera position once before the simulation loop.
@@ -721,7 +721,7 @@ for frame in range(NUM_FRAMES):
     # ── Extract foot-tip contact proxy poses ─────────────────────────────────
     # Retrieve body transforms via get_body_q_array() — this returns the device-
     # resident Warp array directly, and .numpy() then copies only the body_q
-    # data to CPU (~1 KB for ANYmal C with ~35 bodies).
+    # data needed for CPU-side helper logic.
     # foot_tip_positions / foot_tip_rotations are needed by DEME for contact
     # geometry and will drive XLB immersed-boundary coupling in future work.
     body_q_arr = coupler.get_body_q_array()
@@ -736,26 +736,27 @@ for frame in range(NUM_FRAMES):
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
-        # TODO: No whole-sale stepper. Update this later.
-        coupler.step()
-        deme_solver.DoStepDynamics()
+        coupler.step_newton()
+        coupler.step_deme()
 
     sim_time += FRAME_DT
 
     # ── XLB LBM steps with GPU-resident robot obstacle update ─────────────────
-    # The robot AABB is computed from body_q_np[0, :3] (the base body position
-    # already fetched above for foot-tip extraction) — just 3 floats from the
-    # pre-step CPU snapshot.  When the grid-space box changes, _xlb_update_robot_box_gpu()
+    # The robot AABB is computed from the base-body position already fetched above
+    # for foot-tip extraction.  When the grid-space box changes, _xlb_update_robot_box_gpu()
     # fires Warp kernels that write directly into the device-resident bc_mask and
     # missing_mask arrays, with no CPU numpy copies and no GPU reallocation.
     if _xlb_stepper is not None:
         _robot_base_pos = body_q_np[0, :3] if body_q_np is not None else None
         _xlb_new_gc_min, _xlb_new_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
             _robot_base_pos,
-            _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX,
+            _XLB_DOMAIN_MIN,
+            _XLB_DOMAIN_MAX,
             (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE, _XLB_ROBOT_ABOVE_BASE,
+            _XLB_ROBOT_HALF_EXT_X,
+            _XLB_ROBOT_HALF_EXT_Y,
+            _XLB_ROBOT_BELOW_BASE,
+            _XLB_ROBOT_ABOVE_BASE,
         )
         _bbox_same = (
             _xlb_new_gc_min is not None
@@ -767,10 +768,14 @@ for frame in range(NUM_FRAMES):
         )
         if not _bbox_same:
             _xlb_robot_gc_min, _xlb_robot_gc_max = demo_utils.xlb_update_robot_box_gpu(
-                _xlb_bc_mask, _xlb_missing_mask,
-                _xlb_robot_gc_min, _xlb_robot_gc_max,
-                _xlb_new_gc_min, _xlb_new_gc_max,
-                _xlb_robot_bc_id, _xlb_vel_c_wp,
+                _xlb_bc_mask,
+                _xlb_missing_mask,
+                _xlb_robot_gc_min,
+                _xlb_robot_gc_max,
+                _xlb_new_gc_min,
+                _xlb_new_gc_max,
+                _xlb_robot_bc_id,
+                _xlb_vel_c_wp,
                 _xlb_vel_set.q,
             )
 
@@ -789,9 +794,7 @@ for frame in range(NUM_FRAMES):
                 _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
             )
             _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-                mophi.xlb_make_streamline_warp_arrays(
-                    _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs
-                )
+                mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs)
             )
 
     # ── Print foot-tip positions every frame ──────────────────────────────────
@@ -839,7 +842,7 @@ for frame in range(NUM_FRAMES):
         if _movie_writer is not None:
             _movie_writer.append_data(vis.get_frame().numpy())
 
-    # ── Console status (every 25 frames) ─────────────────────────────────────
+    # ── Console status (periodic) ─────────────────────────────────────────────
     # if (frame + 1) % 25 == 0 or frame == 0:
     #     if all_transforms:
     #         base = all_transforms[0]

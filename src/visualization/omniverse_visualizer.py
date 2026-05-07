@@ -34,6 +34,10 @@ real-time OpenGL rendering and offline USD export by changing a single flag:
 |            | (e.g. DEM particles, XLB streamlines)   | cloud name; unit-sphere prototype |
 |            |                                          | scaled by per-particle radii      |
 +------------+------------------------------------------+-----------------------------------+
+| DEME       | Clump centers + orientations + template  | ``UsdGeom.PointInstancer``; one   |
+|            | sphere radii and offsets                 | sphere instance per component     |
+|            |                                          | sphere of each clump              |
++------------+------------------------------------------+-----------------------------------+
 
 The resulting ``.usdc`` file can be opened with:
 
@@ -54,6 +58,8 @@ The per-frame USD attribute writes are identical for live streaming.  Replace
 from __future__ import annotations
 
 import numpy as np
+
+from ..utilities.vis_utils import rotate_batch
 
 
 class OmniverseVisualizer:
@@ -318,6 +324,104 @@ class OmniverseVisualizer:
                     )
             except Exception:
                 pass
+
+    def log_arrows(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
+        """No-op for the USD backend — accepted for API compatibility.
+
+        Arrow overlays (e.g. coordinate-axis indicators) are not exported to
+        the USD scene.  The argument signature matches
+        :meth:`~mophi.OpenGLVisualizer.log_arrows` so that demos can switch
+        backends without changing the simulation loop.
+
+        Args:
+            name:   Unique string identifier (ignored).
+            starts: Arrow tail positions (ignored).
+            ends:   Arrow tip positions (ignored).
+            colors: Arrow colours (ignored).
+            width:  Reserved (ignored).
+            hidden: Visibility flag (ignored).
+        """
+
+    def log_clumps(
+        self,
+        name: str,
+        centers,
+        orientations,
+        sphere_radii,
+        sphere_offsets,
+        *,
+        colors=None,
+    ) -> None:
+        """Record a batch of DEME clumps as USD point instances (overlapping spheres).
+
+        Each clump is expanded into its component spheres (sphere positions
+        rotated by the clump orientation and translated to the clump centre).
+        The result is forwarded to :meth:`log_points` as a single flat cloud,
+        giving each clump ``K`` sphere instances in the USD scene.
+
+        Args:
+            name:           Unique string identifier for this clump batch.
+            centers:        ``(N, 3)`` array of clump centre positions [m].
+            orientations:   ``(N, 4)`` array of per-clump xyzw quaternions.
+            sphere_radii:   ``(K,)`` array of component sphere radii [m].
+            sphere_offsets: ``(K, 3)`` array of component sphere centre offsets
+                            from the clump centre in the clump's local frame [m].
+            colors:         ``(N, 3)`` per-clump RGB colours in ``[0, 1]``.
+                            When ``None`` the prototype's default colour is used.
+        """
+        if not self._pxr_available or self._stage is None:
+            return
+
+        c_np = centers.numpy() if hasattr(centers, "numpy") else np.asarray(centers, dtype=np.float32)
+        q_np = orientations.numpy() if hasattr(orientations, "numpy") else np.asarray(orientations, dtype=np.float32)
+        r_np = sphere_radii.numpy() if hasattr(sphere_radii, "numpy") else np.asarray(sphere_radii, dtype=np.float32)
+        off_np = (
+            sphere_offsets.numpy() if hasattr(sphere_offsets, "numpy") else np.asarray(sphere_offsets, dtype=np.float32)
+        )
+
+        if c_np.ndim == 1:
+            c_np = c_np.reshape(-1, 3)
+        if off_np.ndim == 1:
+            off_np = off_np.reshape(-1, 3)
+
+        n_clumps = len(c_np)
+        n_spheres = len(r_np)
+        if n_clumps == 0 or n_spheres == 0:
+            return
+
+        # World positions of every component sphere: (N, K, 3) → (N*K, 3).
+        rotated = rotate_batch(q_np, off_np)  # (N, K, 3)
+        world_pos = c_np[:, np.newaxis, :] + rotated  # (N, K, 3)
+        pos_flat = world_pos.reshape(n_clumps * n_spheres, 3).astype(np.float32)
+
+        # Radii: tile K sphere radii across N clumps → (N*K,).
+        radii_flat = np.tile(r_np, n_clumps).astype(np.float32)
+
+        # Colours: repeat each clump colour K times → (N*K, 3).
+        colors_flat = None
+        if colors is not None:
+            col_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
+            if col_np.ndim == 2 and len(col_np) == n_clumps:
+                colors_flat = np.repeat(col_np, n_spheres, axis=0).astype(np.float32)
+
+        self.log_points(name, pos_flat, radii=radii_flat, colors=colors_flat)
+
+    def log_lines(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
+        """No-op for the USD backend — accepted for API compatibility.
+
+        Line overlays (e.g. scale bars) are not exported to the USD scene.
+        The argument signature matches
+        :meth:`~mophi.OpenGLVisualizer.log_lines` so that demos can switch
+        backends without changing the simulation loop.
+
+        Args:
+            name:   Unique string identifier (ignored).
+            starts: Line start positions (ignored).
+            ends:   Line end positions (ignored).
+            colors: Line colours (ignored).
+            width:  Reserved (ignored).
+            hidden: Visibility flag (ignored).
+        """
 
     def end_frame(self) -> None:
         """No-op for the USD backend — accepted for API compatibility.

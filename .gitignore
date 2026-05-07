@@ -38,7 +38,6 @@ __pycache__/
 *.slo
 *.lo
 *.o
-*.obj
 
 # Precompiled Headers
 *.gch
