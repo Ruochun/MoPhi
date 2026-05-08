@@ -455,8 +455,8 @@ if _deme_available:
         deme_solver.UseFrictionalHertzianModel()
         deme_solver.SetVerbosity("ERROR")
 
-        mat_walls = deme_solver.LoadMaterial({"E": 1e7, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-        mat_particles = deme_solver.LoadMaterial({"E": 1e7, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_particles = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
         # Mixed contact properties between wall and particle materials.
         deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
         deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
