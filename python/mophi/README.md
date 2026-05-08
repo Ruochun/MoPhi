@@ -42,8 +42,9 @@ a demo without a prior CMake configure step).
 |-------------------------|------------------|------------|
 | `visualizers/opengl_visualizer.py` | `src/visualization/opengl_visualizer.py` | `src/visualization/CMakeLists.txt` |
 | `visualizers/omniverse_visualizer.py` | `src/visualization/omniverse_visualizer.py` | `src/visualization/CMakeLists.txt` |
-| `utilities/xlb_helpers.py` | `src/utils/xlb_helpers.py` | `src/utils/CMakeLists.txt` |
-| `utilities/vis_utils.py` | `src/utils/vis_utils.py` | `src/utils/CMakeLists.txt` |
+| `utils/xlb_helpers.py` | `src/utils/xlb_helpers.py` | `src/utils/CMakeLists.txt` |
+| `utils/vis_utils.py` | `src/utils/vis_utils.py` | `src/utils/CMakeLists.txt` |
+| `utils/math_utils.py` | `src/utils/math_utils.py` | `src/utils/CMakeLists.txt` |
 
 ### How the copy works
 
@@ -53,7 +54,7 @@ reproduce the file verbatim into this directory:
 ```cmake
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/vis_utils.py"
-    "${CMAKE_SOURCE_DIR}/python/mophi/utilities/vis_utils.py"
+    "${CMAKE_SOURCE_DIR}/python/mophi/utils/vis_utils.py"
     COPYONLY
 )
 ```

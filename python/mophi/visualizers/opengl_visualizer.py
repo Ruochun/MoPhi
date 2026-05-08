@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..utilities.vis_utils import rotate_batch
+from ..utils.vis_utils import rotate_batch
 
 
 class OpenGLVisualizer:
@@ -261,4 +261,4 @@ class OpenGLVisualizer:
 
     # ── Note ───────────────────────────────────────────────────────────────────
     # rotate_batch (used by log_clumps) is a module-level function imported
-    # from mophi.utilities.vis_utils — it is not a class method.
+    # from mophi.utils.vis_utils — it is not a class method.

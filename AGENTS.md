@@ -59,10 +59,11 @@ MoPhi/
 │       │   ├── __init__.py
 │       │   ├── opengl_visualizer.py
 │       │   └── omniverse_visualizer.py
-│       └── utilities/           # Shared helper modules (solver-agnostic utilities)
+│       └── utils/               # Shared helper modules (solver-agnostic utilities)
 │           ├── __init__.py
 │           ├── vis_utils.py     # Internal math helpers for visualizer backends
-│           └── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
+│           ├── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
+│           └── math_utils.py    # General-purpose math helpers (quaternion ops, etc.)
 └── demo/
     ├── CMakeLists.txt           # Guards each sub-demo with if(MOPHI_BUILD_<SOLVER>)
     └── <solver_name>/           # One sub-directory per demo
@@ -225,7 +226,7 @@ Key rules for agents:
   modules that callers should not import; MoPhi modules may be imported by demos
   and agents and must have discoverable names.
 - New utility modules shared across multiple backends belong in
-  `python/mophi/utilities/`.
+  `python/mophi/utils/`.
 - New visualizer backends belong in `python/mophi/visualizers/` and must also
   have a mirrored copy in `src/visualization/`.
 

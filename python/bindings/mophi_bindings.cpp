@@ -15,6 +15,7 @@ namespace py = pybind11;
 void register_tlfea_dem(py::module_& m);
 void register_tlfea_newton(py::module_& m);
 void register_newton_xlb_dem(py::module_& m);
+void register_mesh_io(py::module_& m);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // mophi_core — Python extension module
@@ -39,4 +40,9 @@ PYBIND11_MODULE(mophi_core, m) {
     register_tlfea_dem(m);
     register_tlfea_newton(m);
     register_newton_xlb_dem(m);
+
+    // ── MoPhiEssentials mesh I/O ──────────────────────────────────────────────
+    // SurfaceMesh and load_obj are always registered regardless of which
+    // couplers are enabled; they depend only on the mophi_essentials submodule.
+    register_mesh_io(m);
 }

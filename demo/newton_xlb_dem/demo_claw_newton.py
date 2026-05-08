@@ -108,68 +108,11 @@ except ImportError:
     )
 
 
-# ─── OBJ mesh loader ──────────────────────────────────────────────────────
-# Pure-Python parser for Wavefront OBJ files.  Handles the v//vn and v/vt/vn
-# face formats used by the excavator plow mesh (all faces are triangles).
-def _load_obj_mesh(path: str, scale: float = 1.0):
-    """Parse a Wavefront OBJ file and return (vertices, indices) as numpy arrays.
-
-    Args:
-        path:  Path to the .obj file.
-        scale: Uniform scale factor applied to all vertex coordinates.  Use
-               0.01 to convert centimetre OBJ coordinates to metres.
-
-    Returns:
-        vertices:  float32 ndarray of shape (N, 3) — vertex positions [m].
-        indices:   int32 ndarray of shape (F*3,) — flat triangle index list.
-
-    Raises:
-        FileNotFoundError: If ``path`` does not exist.
-    """
-    vertices = []
-    indices = []
-    with open(path) as fh:
-        for line in fh:
-            if line.startswith("v "):
-                parts = line.split()
-                vertices.append([float(parts[1]) * scale, float(parts[2]) * scale, float(parts[3]) * scale])
-            elif line.startswith("f "):
-                # Each token is v, v/vt, v//vn, or v/vt/vn — take the vertex index only.
-                parts = line.split()[1:]
-                face_verts = [int(p.split("/")[0]) - 1 for p in parts]  # OBJ uses 1-based indices
-                if len(face_verts) == 3:
-                    indices.extend(face_verts)
-                elif len(face_verts) == 4:
-                    # Fan-triangulate quads.
-                    indices.extend([face_verts[0], face_verts[1], face_verts[2]])
-                    indices.extend([face_verts[0], face_verts[2], face_verts[3]])
-    return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
-
-
-def _quat_mul_np(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    """Multiply two quaternions given as [x, y, z, w] numpy arrays.
-
-    Returns the product q1 * q2 as a [x, y, z, w] float32 array.
-    Both Warp and DEME use the [x, y, z, w] quaternion convention.
-    """
-    x1, y1, z1, w1 = q1
-    x2, y2, z2, w2 = q2
-    return np.array(
-        [
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-        ],
-        dtype=np.float32,
-    )
-
-
 def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
     """Sync DEME plow tracker pose from Newton ee_link transform and return ee position."""
     _ee_pos = body_q_np[ee_link_body_idx, 0:3].tolist()
     _ee_quat_np = body_q_np[ee_link_body_idx, 3:7]
-    _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
+    _plow_world_quat = mophi.quat_mul(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
     plow_tracker.SetPos(_ee_pos)
     plow_tracker.SetOriQ(_plow_world_quat)
     return _ee_pos
@@ -356,10 +299,10 @@ assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", f"Unexpected ee
 
 if os.path.isfile(EXCAVATOR_OBJ_PATH):
     print(f"[Plow] Loading excavator mesh from {EXCAVATOR_OBJ_PATH} ...")
-    _plow_verts, _plow_indices = _load_obj_mesh(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
+    _plow_surface = mophi.load_obj(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
     plow_mesh = newton.Mesh(
-        _plow_verts,
-        _plow_indices,
+        _plow_surface.vertices,
+        _plow_surface.indices,
         compute_inertia=False,  # plow mass is negligible for this demo phase
         is_solid=False,  # treat as a surface shell (open plow geometry)
         color=(0.55, 0.45, 0.35),  # earthy brown — excavator steel colour
@@ -372,7 +315,7 @@ if os.path.isfile(EXCAVATOR_OBJ_PATH):
     print(
         f"[Plow] Excavator plow attached to body {ee_link_body_idx} "
         f"({ur10_sub.body_label[ee_link_body_idx]})  "
-        f"[{len(_plow_verts)} vertices, {len(_plow_indices) // 3} triangles]\n"
+        f"[{_plow_surface.num_vertices} vertices, {_plow_surface.num_faces} triangles]\n"
     )
 else:
     print(f"[Plow] WARNING: excavator OBJ not found at {EXCAVATOR_OBJ_PATH} — plow will be omitted.\n")

@@ -54,13 +54,30 @@ except ImportError:
 # xlb_make_streamline_warp_arrays additionally requires warp (Newton dependency)
 # and performs a lazy import internally, so it is safe to re-export here.
 try:
-    from .utilities.xlb_helpers import (  # noqa: F401
+    from .utils.xlb_helpers import (  # noqa: F401
         xlb_build_streamlines,
         xlb_make_streamline_warp_arrays,
         xlb_make_y_plane_seeds,
     )
 
     __all__ += ["xlb_build_streamlines", "xlb_make_streamline_warp_arrays", "xlb_make_y_plane_seeds"]
+except ImportError:
+    pass
+
+# General-purpose math helpers (quaternion operations, etc.).
+try:
+    from .utils.math_utils import quat_mul  # noqa: F401
+
+    __all__.append("quat_mul")
+except ImportError:
+    pass
+
+# SurfaceMesh and load_obj are always available — they depend only on the
+# mophi_essentials submodule which is always compiled into mophi_core.
+try:
+    from .mophi_core import SurfaceMesh, load_obj  # noqa: F401
+
+    __all__ += ["SurfaceMesh", "load_obj"]
 except ImportError:
     pass
 

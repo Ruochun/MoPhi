@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..utilities.vis_utils import rotate_batch
+from ..utils.vis_utils import rotate_batch
 
 
 class OmniverseVisualizer:
