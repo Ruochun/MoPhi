@@ -222,6 +222,13 @@ PLOW_TARGET_Q = np.array(
 # plowing motion.
 PLOW_DURATION = 1.6  # [s]
 
+# Late-stage scoop motion for the last wrist joint (wrist_3, index 5).
+# This overlays the base plowing trajectory near the end of the run so the
+# excavator rotates inward toward the arm before simulation end.
+WRIST_SCOOP_START_FRACTION = 0.75  # start scoop rotation at 75% of total run time
+WRIST_SCOOP_INWARD_DELTA = -0.90   # additional inward wrist_3 rotation [rad]
+_WRIST_3_DOF_INDEX = 5
+
 # Number of warm-up render-frames to run Newton alone (without DEME) so the
 # arm settles to its ready-to-plow joint targets before DEME settling begins.
 NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
@@ -804,9 +811,21 @@ for frame in range(NUM_FRAMES):
     # Linear interpolation from ready_to_plow_q to PLOW_TARGET_Q over
     # PLOW_DURATION seconds.  This drives shoulder_lift and elbow continuously
     # every frame; after PLOW_DURATION the arm holds the final pose.
+    #
+    # Near the end of the full simulation, apply an extra inward rotation on
+    # wrist_3 to scoop particles toward the arm's central rod.
     _plow_interp = np.clip(sim_time / PLOW_DURATION, 0.0, 1.0)
     _plow_q = (1.0 - _plow_interp) * ready_to_plow_q + _plow_interp * PLOW_TARGET_Q
-    joint_q_target_np[:, 0, :num_ready_dofs] = _plow_q[:num_ready_dofs]
+    _joint_q_cmd = _plow_q.copy()
+    if num_ready_dofs > _WRIST_3_DOF_INDEX:
+        _sim_duration = max(NUM_FRAMES * FRAME_DT, 1.0e-12)
+        _scoop_start_time = WRIST_SCOOP_START_FRACTION * _sim_duration
+        _scoop_phase_dt = max(_sim_duration - _scoop_start_time, 1.0e-12)
+        _scoop_interp = np.clip((sim_time - _scoop_start_time) / _scoop_phase_dt, 0.0, 1.0)
+        _wrist_3_scoop_target = PLOW_TARGET_Q[_WRIST_3_DOF_INDEX] + WRIST_SCOOP_INWARD_DELTA
+        _joint_q_cmd[_WRIST_3_DOF_INDEX] = (1.0 - _scoop_interp) * _plow_q[_WRIST_3_DOF_INDEX] + _scoop_interp * _wrist_3_scoop_target
+
+    joint_q_target_np[:, 0, :num_ready_dofs] = _joint_q_cmd[:num_ready_dofs]
     joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
     articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
 
