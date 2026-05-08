@@ -14,6 +14,8 @@ Example usage (requires -DMOPHI_BUILD_TLFEA_DEM=ON at CMake configure time)::
     coupler.finalize()
 """
 
+import sys as _sys
+
 from . import mophi_core  # noqa: F401 — make the C++ module accessible
 
 __all__ = []
@@ -80,6 +82,32 @@ try:
     __all__ += ["SurfaceMesh", "load_obj"]
 except ImportError:
     pass
+
+
+def fatal(msg: str) -> None:
+    """Print an error message and terminate the process with exit code 1.
+
+    This is the preferred way for MoPhi demos to report unrecoverable errors
+    (missing data files, unsatisfied build requirements, etc.).  It avoids
+    bare ``sys.exit()`` calls scattered through demo code and provides a
+    consistent error format.
+
+    Args:
+        msg: Human-readable description of the error, including any remediation
+             hint (e.g. which CMake flag to enable or package to install).
+
+    Example::
+
+        if not hasattr(mophi, "NewtonXLBDEMCoupler"):
+            mophi.fatal(
+                "mophi.NewtonXLBDEMCoupler is not available.\\n"
+                "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
+            )
+    """
+    _sys.exit(f"\n[MoPhi FATAL] {msg}\n")
+
+
+__all__ += ["fatal"]
 
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.

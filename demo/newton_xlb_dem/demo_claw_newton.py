@@ -46,7 +46,7 @@ Prerequisites
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
   • pip install newton warp-lang   (Newton rigid-body physics + Warp GPU runtime)
-  • pip install deme               (optional — DEME discrete-element solver)
+  • pip install deme               (DEME discrete-element solver — required)
 
 Running
 -------
@@ -60,52 +60,28 @@ Or from the repository root after installing the mophi package:
 """
 
 import os
-import sys
 import time
 
 import numpy as np
 
-# ─── Import MoPhi ─────────────────────────────────────────────────────────
-try:
-    import mophi
-except ImportError as exc:
-    sys.exit(
-        "ERROR: Could not import the 'mophi' package.\n"
-        "       Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON and ensure that\n"
-        "       the build directory (python/) is on PYTHONPATH.\n"
-        f"       ({exc})"
-    )
+# Required: build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON and ensure
+# python/ is on PYTHONPATH (the build tree puts the .so next to the package).
+import mophi
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
-    sys.exit(
-        "ERROR: mophi.NewtonXLBDEMCoupler is not available.\n"
-        "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
+    mophi.fatal(
+        "mophi.NewtonXLBDEMCoupler is not available.\n"
+        "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# ─── Import Newton + Warp ──────────────────────────────────────────────────
-try:
-    import newton
-    import warp as wp
-    from newton import JointTargetMode
-    from newton.selection import ArticulationView
+# Required: pip install newton warp-lang
+import newton
+import warp as wp
+from newton import JointTargetMode
+from newton.selection import ArticulationView
 
-    _newton_available = True
-except ImportError:
-    _newton_available = False
-    print("ERROR: Newton (or warp) is not installed.\n" "       Install with:  pip install newton warp-lang")
-    sys.exit(1)
-
-# ─── Import DEME (optional) ─────────────────────────────────────────────────
-try:
-    import DEME
-
-    _deme_available = True
-except ImportError:
-    _deme_available = False
-    print(
-        "INFO: DEME is not installed — granular terrain will be skipped.\n"
-        "      Install DEME to enable DEM particle simulation."
-    )
+# Required: pip install deme
+import DEME
 
 
 def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
@@ -118,18 +94,86 @@ def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_lin
     return _ee_pos
 
 
-# ─── Simulation timing ────────────────────────────────────────────────────
-# Physics step sizes are explicit user-facing constants.  Rendering cadence is
-# configured independently; collaboration loop counts are derived from these.
-WORLD_COUNT = 1  # single UR10 arm
+# ══════════════════════════════════════════════════════════════════════════════
+# Simulation configuration
+# All user-tunable constants are defined here.  Change values in this section;
+# do not scatter magic numbers through the setup code below.
+# ══════════════════════════════════════════════════════════════════════════════
 
+# ── World ─────────────────────────────────────────────────────────────────
+WORLD_COUNT = 1  # number of UR10 arms in the simulation
+
+# ── Timing ────────────────────────────────────────────────────────────────
+# Physics step sizes are explicit; rendering cadence is configured
+# independently; collaboration loop counts are derived from these.
 RENDER_FPS = 50
-FRAME_DT = 1.0 / RENDER_FPS
-
-# Keep Newton at the same step size used previously in this demo.
 NEWTON_DT = 1.0 / 500.0
-# DEME runs at an explicitly configured fine step size.
 DEME_DT = 1.0e-5
+
+# Debug mode: render one frame then keep the viewer alive for visual
+# inspection until the user closes it.
+PAUSE_AFTER_FIRST_FRAME = False
+NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run ≈ 5 s at 50 Hz
+
+# ── Scene geometry ────────────────────────────────────────────────────────
+# Height of the cylindrical pedestal that mounts the arm above the ground.
+PEDESTAL_HEIGHT = 1.2  # [m]
+# The excavator OBJ is authored in centimetres; this factor converts to metres.
+OBJ_CM_TO_M = 0.01
+
+# ── Arm joint targets — change both when re-tuning the arm trajectory ─────
+# ready_to_plow_q is the initial pose the arm holds during Newton warm-up.
+# PLOW_TARGET_Q is the end pose reached at PLOW_DURATION; both are in the
+# UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
+# These two arrays are closely coupled: always update them together.
+ready_to_plow_q = np.array(
+    [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
+    dtype=np.float32,
+)
+PLOW_TARGET_Q = np.array(
+    # A downward cut: shoulder_lift increases (less negative) and elbow decreases
+    # relative to ready_to_plow_q.  Keep wrist_2 fixed to preserve tool orientation.
+    [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0],
+    dtype=np.float32,
+)
+
+# ── Phase control ─────────────────────────────────────────────────────────
+# Number of Newton-only warm-up render-frames so the arm settles to
+# ready_to_plow_q before DEME settling begins.
+NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
+
+# Time for the granular terrain to settle under gravity before plow contact
+# is activated.  Increase if particles are still visibly moving at plow activation.
+DEME_SETTLE_TIME = 1.0  # [s]
+
+# Wall-clock (simulation) time over which to linearly interpolate from
+# ready_to_plow_q to PLOW_TARGET_Q.  Longer → slower, gentler plowing.
+PLOW_DURATION = 1.6  # [s]
+
+# Show DEME settling-phase rendering by default.  Set to False to run settling
+# as a single non-rendered blocking call (faster startup / no settling frames).
+RENDER_SETTLING_PHASE = True
+
+# Late-stage scoop motion for wrist_3 (index 5) near the end of the run.
+# Fraction of total simulation duration; start is clamped to ≥ PLOW_DURATION.
+WRIST_SCOOP_START_FRACTION = 0.75
+WRIST_SCOOP_INWARD_DELTA = -1.8  # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
+_WRIST_3_DOF_INDEX = 5  # UR10 joint order: wrist_3 is the last (0-based index 5)
+
+# ── Visualization & output ────────────────────────────────────────────────
+# Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD file
+# (requires: pip install usd-core).  False uses Newton's real-time OpenGL window.
+# The simulation loop body is identical for both backends.
+USE_OMNIVERSE_VISUALIZATION = False
+
+# Set SAVE_MOVIE = True to record the rendered simulation to a video file
+# (requires: pip install imageio imageio-ffmpeg).
+SAVE_MOVIE = True
+MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
+MOVIE_FPS = RENDER_FPS
+
+# ── Derived timing constants ──────────────────────────────────────────────
+FRAME_DT = 1.0 / RENDER_FPS
 
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
@@ -147,53 +191,8 @@ if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
 SIM_FPS = RENDER_FPS
 SIM_DT = NEWTON_DT
 
-# Debug mode: render one frame, then keep the OpenGL window alive for visual
-# inspection until the user closes it.
-PAUSE_AFTER_FIRST_FRAME = False
-NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run is ≈ 5 s at 50 Hz
-
-# ─── DEME settling and plowing parameters ─────────────────────────────────
-# Time for the granular terrain to settle under gravity before the plow is
-# activated.  Increase this value if particles are still visually moving or
-# if contact forces at plow activation are unexpectedly large.  Monitor
-# particle velocities (via DEME output) to determine a suitable settling time.
-DEME_SETTLE_TIME = 1.0  # [s] — user-changeable
-
-# Target joint configuration for active plowing.
-# In this UR10 setup, a downward cut is achieved by:
-#   • increasing shoulder_lift from the ready pose (less negative angle), and
-#   • decreasing elbow from the ready pose.
-# Keep wrist_2 fixed to preserve the plow tool orientation relative to ground.
-PLOW_TARGET_Q = np.array(
-    # shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
-    [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0],
-    dtype=np.float32,
-)
-
-# Wall-clock (simulation) time over which to linearly interpolate from the
-# ready-to-plow pose to PLOW_TARGET_Q.  Longer values give a slower, gentler
-# plowing motion.
-PLOW_DURATION = 1.6  # [s]
-
-# Late-stage scoop motion for the last wrist joint (wrist_3, index 5).
-# This overlays the base plowing trajectory near the end of the run so the
-# excavator rotates inward toward the arm before simulation end.
-# Fraction of total simulation duration; actual scoop start is clamped to be
-# no earlier than PLOW_DURATION.
-WRIST_SCOOP_START_FRACTION = 0.75
-WRIST_SCOOP_INWARD_DELTA = -1.8  # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
-_WRIST_3_DOF_INDEX = 5
-
-# Number of warm-up render-frames to run Newton alone (without DEME) so the
-# arm settles to its ready-to-plow joint targets before DEME settling begins.
-NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
-
-# Show DEME settling-phase rendering by default.  Set to False to run settling
-# as a single non-rendered blocking call (faster startup / no settling frames).
-RENDER_SETTLING_PHASE = True
-
-# Small tolerance for settling-loop time integration bounds to avoid an extra
-# loop iteration from floating-point roundoff.
+# Small tolerances for time-integration bounds to avoid an extra loop iteration
+# from floating-point roundoff.
 _SETTLING_TIME_EPSILON = 1.0e-12
 _MIN_DURATION_EPSILON = 1.0e-12
 
@@ -262,7 +261,6 @@ asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
 print(f"[Newton] Assets ready: {asset_path}\n")
 
 print("[Newton] Building UR10 model ...")
-pedestal_height = 1.2
 
 # Build a single-arm sub-builder, then replicate it WORLD_COUNT times.
 # This matches Newton's example pattern and lets ArticulationView find the
@@ -272,7 +270,7 @@ newton.solvers.SolverMuJoCo.register_custom_attributes(ur10_sub)
 
 ur10_sub.add_usd(
     asset_file,
-    xform=wp.transform(wp.vec3(0.0, 0.0, pedestal_height)),
+    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT)),
     collapse_fixed_joints=False,
     enable_self_collisions=False,
     hide_collision_shapes=True,
@@ -280,45 +278,40 @@ ur10_sub.add_usd(
 # Cylindrical pedestal attached to the world frame (fixed base).
 ur10_sub.add_shape_cylinder(
     -1,
-    xform=wp.transform(wp.vec3(0.0, 0.0, pedestal_height / 2.0)),
-    half_height=pedestal_height / 2.0,
+    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT / 2.0)),
+    half_height=PEDESTAL_HEIGHT / 2.0,
     radius=0.08,
 )
 
 # ─── Attach the excavator plow mesh to the UR10 end-effector ─────────────
-# The plow OBJ is authored in centimetres.
-# Scaling by OBJ_CM_TO_M converts it to metres.
+# The plow OBJ is authored in centimetres; OBJ_CM_TO_M converts it to metres.
 # The OBJ coordinate origin is near the mounting bracket of the plow, and the
 # blade/scoop extends in the local negative-Z direction.
 # Apply a 180° local rotation so the bowl opens downward for plowing.
-OBJ_CM_TO_M = 0.01
 PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), float(np.pi))
 
 ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
 assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", f"Unexpected ee_link body index: {ee_link_body_idx}"
 
-if os.path.isfile(EXCAVATOR_OBJ_PATH):
-    print(f"[Plow] Loading excavator mesh from {EXCAVATOR_OBJ_PATH} ...")
-    _plow_surface = mophi.load_obj(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
-    plow_mesh = newton.Mesh(
-        _plow_surface.vertices,
-        _plow_surface.indices,
-        compute_inertia=False,  # plow mass is negligible for this demo phase
-        is_solid=False,  # treat as a surface shell (open plow geometry)
-        color=(0.55, 0.45, 0.35),  # earthy brown — excavator steel colour
-    )
-    ur10_sub.add_shape_mesh(
-        ee_link_body_idx,
-        mesh=plow_mesh,
-        xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), PLOW_LOCAL_ROT),
-    )
-    print(
-        f"[Plow] Excavator plow attached to body {ee_link_body_idx} "
-        f"({ur10_sub.body_label[ee_link_body_idx]})  "
-        f"[{_plow_surface.num_vertices} vertices, {_plow_surface.num_faces} triangles]\n"
-    )
-else:
-    print(f"[Plow] WARNING: excavator OBJ not found at {EXCAVATOR_OBJ_PATH} — plow will be omitted.\n")
+print(f"[Plow] Loading excavator mesh from {EXCAVATOR_OBJ_PATH} ...")
+_plow_surface = mophi.load_obj(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
+plow_mesh = newton.Mesh(
+    _plow_surface.vertices,
+    _plow_surface.indices,
+    compute_inertia=False,  # plow mass is negligible for this demo phase
+    is_solid=False,  # treat as a surface shell (open plow geometry)
+    color=(0.55, 0.45, 0.35),  # earthy brown — excavator steel colour
+)
+ur10_sub.add_shape_mesh(
+    ee_link_body_idx,
+    mesh=plow_mesh,
+    xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), PLOW_LOCAL_ROT),
+)
+print(
+    f"[Plow] Excavator plow attached to body {ee_link_body_idx} "
+    f"({ur10_sub.body_label[ee_link_body_idx]})  "
+    f"[{_plow_surface.num_vertices} vertices, {_plow_surface.num_faces} triangles]\n"
+)
 
 # Position control with stiff gains matching Newton's UR10 example.
 for i in range(len(ur10_sub.joint_target_ke)):
@@ -345,40 +338,20 @@ newton_solver = newton.solvers.SolverMuJoCo(
 print(f"[Newton] UR10 model built: {newton_model.body_count} bodies, {newton_model.joint_count} joints.\n")
 
 # ─── Visualization backend selection ─────────────────────────────────────────
-# Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD scene file
-# (requires:  pip install usd-core).
-# Set USE_OMNIVERSE_VISUALIZATION = False (default) to use Newton's real-time
-# OpenGL window via mophi.OpenGLVisualizer.
+# USE_OMNIVERSE_VISUALIZATION is defined in the configuration block above.
 # The simulation loop body (begin_frame / log_state / end_frame)
 # is identical for both backends; only the constructor and close() differ.
-USE_OMNIVERSE_VISUALIZATION = False
-
-vis = None
-_vis_available = False
-
 if USE_OMNIVERSE_VISUALIZATION:
     vis = mophi.OmniverseVisualizer(output_path="demo_claw_newton.usdc", fps=float(SIM_FPS))
-    _vis_available = vis.pxr_available
-    if _vis_available:
-        print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
-    else:
-        print(
-            "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"
-            "      Install with:  pip install usd-core\n"
-            "      The simulation will run without visualization."
+    if not vis.pxr_available:
+        mophi.fatal(
+            "pxr (OpenUSD) is not installed — Omniverse USD export unavailable.\n"
+            "Install with:  pip install usd-core"
         )
+    print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
 else:
-    try:
-        vis = mophi.OpenGLVisualizer(newton_model)
-        _vis_available = True
-        print("[Viewer] MoPhi OpenGL visualization window opened.\n")
-    except Exception as exc:
-        vis = None
-        _vis_available = False
-        print(
-            f"[Viewer] Could not open MoPhi OpenGL viewer ({exc}).\n"
-            "         The simulation will run without visualization."
-        )
+    vis = mophi.OpenGLVisualizer(newton_model)
+    print("[Viewer] MoPhi OpenGL visualization window opened.\n")
 
 # ─── Build the DEME granular terrain ──────────────────────────────────────
 # Creates a pile of ellipsoidal particles following the approach of
@@ -386,122 +359,102 @@ else:
 # with a Poisson-disk sampler and deposited near the ground plane.
 # No interaction with the Newton excavator in this phase — DEME runs
 # independently.  Particle–excavator coupling will be added in a future phase.
-deme_solver = None
-_dem_terrain_tracker = None
-_dem_num_terrain_particles = 0
-_plow_deme_tracker = None  # DEME tracker for the kinematic excavator plow mesh
+print("[DEME] Building granular terrain (ellipsoidal particles) ...")
+deme_solver = DEME.DEMSolver()
+deme_solver.UseFrictionalHertzianModel()
+deme_solver.SetVerbosity("ERROR")
 
-if _deme_available:
-    print("[DEME] Building granular terrain (ellipsoidal particles) ...")
-    try:
-        deme_solver = DEME.DEMSolver()
-        deme_solver.UseFrictionalHertzianModel()
-        deme_solver.SetVerbosity("ERROR")
+mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+mat_particles = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+# Mixed contact properties between wall and particle materials.
+deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
+deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
 
-        mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-        mat_particles = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-        # Mixed contact properties between wall and particle materials.
-        deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
-        deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
+# Ellipsoid template (semi-axes 2:1:1) scaled to physical particle size.
+# The CSV file encodes the clump geometry relative to unit sphere radii;
+# Scale() resizes the template to a reasonable physical particle size.
+particle_template = deme_solver.LoadClumpType(
+    _DEM_TEMPLATE_MASS,
+    _DEM_TEMPLATE_MOI,
+    DEME.GetDEMEDataFile("clumps/ellipsoid_2_1_1.csv"),
+    mat_particles,
+)
+particle_template.Scale(_DEM_TERRAIN_SCALING)
 
-        # Ellipsoid template (semi-axes 2:1:1) scaled to physical particle size.
-        # The CSV file encodes the clump geometry relative to unit sphere radii;
-        # Scale() resizes the template to a reasonable physical particle size.
-        particle_template = deme_solver.LoadClumpType(
-            _DEM_TEMPLATE_MASS,
-            _DEM_TEMPLATE_MOI,
-            DEME.GetDEMEDataFile("clumps/ellipsoid_2_1_1.csv"),
-            mat_particles,
-        )
-        particle_template.Scale(_DEM_TERRAIN_SCALING)
+# Box domain: closed on bottom and four sides, open at the top so
+# particles can be launched upward by the excavator without being trapped.
+_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y = 0.0, 1.2
+deme_solver.InstructBoxDomainDimension(
+    [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_X, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_X],
+    [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y],
+    [_DEM_BOWL_BOT, _DEM_WORLD_HS * 10.0],
+)
+deme_solver.InstructBoxDomainBoundingBC("top_open", mat_walls)
 
-        # Box domain: closed on bottom and four sides, open at the top so
-        # particles can be launched upward by the excavator without being trapped.
-        _DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y = 0.0, 1.2
-        deme_solver.InstructBoxDomainDimension(
-            [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_X, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_X],
-            [-_DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y, _DEM_WORLD_HS + _DEM_BOX_POS_OFF_Y],
-            [_DEM_BOWL_BOT, _DEM_WORLD_HS * 10.0],
-        )
-        deme_solver.InstructBoxDomainBoundingBC("top_open", mat_walls)
+# Sample particle positions layer by layer (mirrors DEMdemo_Plow.cpp).
+# PDSampler guarantees spacing proportional to configured particle size, so
+# no two initial particles overlap.
+sampler = DEME.PDSampler(4.0 * _DEM_TERRAIN_SCALING)
+pile_positions = []
+layer_z = 0.0
+while layer_z < _DEM_FILL_H:
+    center = [_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, _DEM_FILL_BOT + layer_z]
+    half_ext = [_DEM_FILL_HW, _DEM_FILL_HW, 0.0]
+    layer_pts = sampler.SampleBox(center, half_ext)
+    pile_positions.extend(layer_pts)
+    layer_z += _DEM_LAYER_STEP
 
-        # Sample particle positions layer by layer (mirrors DEMdemo_Plow.cpp).
-        # PDSampler guarantees spacing proportional to configured particle size, so
-        # no two initial particles overlap.
-        sampler = DEME.PDSampler(4.0 * _DEM_TERRAIN_SCALING)
-        pile_positions = []
-        layer_z = 0.0
-        while layer_z < _DEM_FILL_H:
-            center = [_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, _DEM_FILL_BOT + layer_z]
-            half_ext = [_DEM_FILL_HW, _DEM_FILL_HW, 0.0]
-            layer_pts = sampler.SampleBox(center, half_ext)
-            pile_positions.extend(layer_pts)
-            layer_z += _DEM_LAYER_STEP
+_dem_num_terrain_particles = len(pile_positions)
+num_layers = int(_DEM_FILL_H / _DEM_LAYER_STEP) + 1
+print(f"[DEME] Sampled {_dem_num_terrain_particles} terrain particle(s) " f"in {num_layers} layer(s).")
 
-        _dem_num_terrain_particles = len(pile_positions)
-        num_layers = int(_DEM_FILL_H / _DEM_LAYER_STEP) + 1
-        print(f"[DEME] Sampled {_dem_num_terrain_particles} terrain particle(s) " f"in {num_layers} layer(s).")
+the_pile = deme_solver.AddClumps(particle_template, pile_positions)
+the_pile.SetFamily(0)
+_dem_terrain_tracker = deme_solver.Track(the_pile)
 
-        the_pile = deme_solver.AddClumps(particle_template, pile_positions)
-        the_pile.SetFamily(0)
-        _dem_terrain_tracker = deme_solver.Track(the_pile)
+deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
+deme_solver.SetInitTimeStep(DEME_DT)
+print(f"[DEME] Running at step size {DEME_DT}.\n")
+deme_solver.SetErrorOutAvgContacts(100)
 
-        deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
-        deme_solver.SetInitTimeStep(DEME_DT)
-        print(f"[DEME] Running at step size {DEME_DT}.\n")
-        deme_solver.SetErrorOutAvgContacts(100)
+# ── Excavator plow mesh: contact proxy for the plowing phase ──────────
+# The same OBJ used by Newton for visualisation is loaded into DEME as a
+# kinematic mesh body.  Contact with terrain particles is disabled during
+# settling (sleep family) and enabled only once the arm reaches the pile.
+#
+# Family assignment (defined before Initialize()):
+#   _DEME_PLOW_SLEEP_FAMILY — fixed, no contact with terrain family 0.
+#   _DEME_PLOW_ACTIVE_FAMILY — fixed, contact with terrain enabled (default).
+# The mesh switches from sleep to active via ChangeFamily() after settling.
+# Even though both families are "fixed", the tracker allows externally
+# updating the mesh pose each step (see pyDEME_ConePenetration.py pattern).
+print(f"[DEME] Loading plow mesh from {EXCAVATOR_OBJ_PATH} ...")
+_plow_deme_obj = deme_solver.AddWavefrontMeshObject(EXCAVATOR_OBJ_PATH, mat_walls)
+# Scale from centimetres to metres, matching Newton's plow mesh.
+_plow_deme_obj.Scale(OBJ_CM_TO_M)
+# Place above the terrain pile during settling (contact disabled,
+# so exact position is not critical here).
+_plow_deme_obj.SetInitPos([_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, 2.0])
+# Identity quaternion — will be corrected from Newton state after settling.
+_plow_deme_obj.SetInitQuat([0.0, 0.0, 0.0, 1.0])
+_plow_deme_obj.SetFamily(_DEME_PLOW_SLEEP_FAMILY)
+# Both families are fixed so gravity cannot move the mesh;
+# pose is driven externally via tracker.SetPos / SetOriQ each step.
+deme_solver.SetFamilyFixed(_DEME_PLOW_SLEEP_FAMILY)
+deme_solver.SetFamilyFixed(_DEME_PLOW_ACTIVE_FAMILY)
+# Disable contact between terrain (family 0) and sleep family
+# so particles fall freely without hitting the plow during settling.
+deme_solver.DisableContactBetweenFamilies(_DEME_TERRAIN_FAMILY, _DEME_PLOW_SLEEP_FAMILY)
+_plow_deme_tracker = deme_solver.Track(_plow_deme_obj)
+print(
+    f"[DEME] Plow mesh loaded "
+    f"({_plow_deme_obj.GetNumTriangles()} triangles). "
+    f"Contact disabled until settling completes.\n"
+)
 
-        # ── Excavator plow mesh: contact proxy for the plowing phase ──────────
-        # The same OBJ used by Newton for visualisation is loaded into DEME as a
-        # kinematic mesh body.  Contact with terrain particles is disabled during
-        # settling (sleep family) and enabled only once the arm reaches the pile.
-        #
-        # Family assignment (defined before Initialize()):
-        #   _DEME_PLOW_SLEEP_FAMILY — fixed, no contact with terrain family 0.
-        #   _DEME_PLOW_ACTIVE_FAMILY — fixed, contact with terrain enabled (default).
-        # The mesh switches from sleep to active via ChangeFamily() after settling.
-        # Even though both families are "fixed", the tracker allows externally
-        # updating the mesh pose each step (see pyDEME_ConePenetration.py pattern).
-        if os.path.isfile(EXCAVATOR_OBJ_PATH):
-            try:
-                print(f"[DEME] Loading plow mesh from {EXCAVATOR_OBJ_PATH} ...")
-                _plow_deme_obj = deme_solver.AddWavefrontMeshObject(EXCAVATOR_OBJ_PATH, mat_walls)
-                # Scale from centimetres to metres, matching Newton's plow mesh.
-                _plow_deme_obj.Scale(OBJ_CM_TO_M)
-                # Place above the terrain pile during settling (contact disabled,
-                # so exact position is not critical here).
-                _plow_deme_obj.SetInitPos([_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, 2.0])
-                # Identity quaternion — will be corrected from Newton state after settling.
-                _plow_deme_obj.SetInitQuat([0.0, 0.0, 0.0, 1.0])
-                _plow_deme_obj.SetFamily(_DEME_PLOW_SLEEP_FAMILY)
-                # Both families are fixed so gravity cannot move the mesh;
-                # pose is driven externally via tracker.SetPos / SetOriQ each step.
-                deme_solver.SetFamilyFixed(_DEME_PLOW_SLEEP_FAMILY)
-                deme_solver.SetFamilyFixed(_DEME_PLOW_ACTIVE_FAMILY)
-                # Disable contact between terrain (family 0) and sleep family
-                # so particles fall freely without hitting the plow during settling.
-                deme_solver.DisableContactBetweenFamilies(_DEME_TERRAIN_FAMILY, _DEME_PLOW_SLEEP_FAMILY)
-                _plow_deme_tracker = deme_solver.Track(_plow_deme_obj)
-                print(
-                    f"[DEME] Plow mesh loaded "
-                    f"({_plow_deme_obj.GetNumTriangles()} triangles). "
-                    f"Contact disabled until settling completes.\n"
-                )
-            except Exception as exc:
-                print(f"[DEME] Could not load plow mesh ({exc}) — plow contact disabled.\n")
-                _plow_deme_tracker = None
-        else:
-            print(f"[DEME] WARNING: excavator OBJ not found at {EXCAVATOR_OBJ_PATH} — plow contact omitted.\n")
+deme_solver.Initialize()
 
-        deme_solver.Initialize()
-
-        print(f"[DEME] Granular terrain initialized " f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n")
-    except Exception as exc:
-        print(f"[DEME] Could not build granular terrain ({exc}) — disabling DEME.\n")
-        deme_solver = None
-        _dem_terrain_tracker = None
-        _dem_num_terrain_particles = 0
-        _plow_deme_tracker = None
+print(f"[DEME] Granular terrain initialized " f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n")
 
 # ─── Initialize the coupler ────────────────────────────────────────────────
 # XLB is passed as None; DEME terrain solver is connected when available
@@ -539,14 +492,9 @@ assert (
 
 dof_count = articulation_view.joint_dof_count
 
-# Initialize to a ready-to-plow direction: arm reaches toward +Y and remains
-# above the terrain.  Keep any extra DOFs at their current initialized values.
+# Initialize to the ready-to-plow direction defined in the configuration block.
+# Keep any extra DOFs at their current initialized values.
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
-ready_to_plow_q = np.array(
-    # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
-    [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
-    dtype=np.float32,
-)
 num_ready_dofs = min(dof_count, len(ready_to_plow_q))
 joint_q_target_np[:, 0, :num_ready_dofs] = ready_to_plow_q[:num_ready_dofs]
 
@@ -581,13 +529,11 @@ _DEM_CLUMP_SPHERE_OFFSETS = (
     * _DEM_TERRAIN_SCALING
 )
 
-_dem_terrain_colors_wp = None
-if _deme_available and _dem_terrain_tracker is not None and _vis_available and _dem_num_terrain_particles > 0:
-    _dem_terrain_colors_wp = wp.array(
-        np.tile([0.76, 0.60, 0.42], (_dem_num_terrain_particles, 1)).astype(np.float32),
-        dtype=wp.vec3,
-    )
-    print(f"[Viewer] {_dem_num_terrain_particles} DEME terrain particle(s) registered for visualisation.\n")
+_dem_terrain_colors_wp = wp.array(
+    np.tile([0.76, 0.60, 0.42], (_dem_num_terrain_particles, 1)).astype(np.float32),
+    dtype=wp.vec3,
+)
+print(f"[Viewer] {_dem_num_terrain_particles} DEME terrain particle(s) registered for visualisation.\n")
 
 # ─── DEME terrain settling (Phase 1) ──────────────────────────────────────
 # Let the granular pile settle under gravity for DEME_SETTLE_TIME seconds
@@ -595,83 +541,68 @@ if _deme_available and _dem_terrain_tracker is not None and _vis_available and _
 # contact with terrain particles is disabled (sleep family).
 # DoDynamicsThenSync() is a blocking call that advances DEME internally and
 # returns with a synchronized state — safe to call tracker.SetPos() after it.
-if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+if not USE_OMNIVERSE_VISUALIZATION:
     vis.set_camera(
         pos=wp.vec3(3.0, -3.0, 2.5),
         pitch=-25.0,
         yaw=135.0,
     )
 
-if deme_solver is not None:
-    print(f"[DEME] Settling terrain for {DEME_SETTLE_TIME:.1f} s ...")
-    if RENDER_SETTLING_PHASE and _vis_available:
-        _settling_time = 0.0
-        _settling_frame_count = 0
-        while _settling_time < DEME_SETTLE_TIME - _SETTLING_TIME_EPSILON:
-            if _vis_available and not vis.is_running():
-                print(f"\n[Viewer] Window closed by user during settling after {_settling_frame_count} frame(s).")
-                break
-            _settling_dt = min(FRAME_DT, DEME_SETTLE_TIME - _settling_time)
-            deme_solver.DoDynamicsThenSync(_settling_dt)
-            _settling_time += _settling_dt
-            _settling_frame_count += 1
+print(f"[DEME] Settling terrain for {DEME_SETTLE_TIME:.1f} s ...")
+if RENDER_SETTLING_PHASE and not USE_OMNIVERSE_VISUALIZATION:
+    _settling_time = 0.0
+    _settling_frame_count = 0
+    while _settling_time < DEME_SETTLE_TIME - _SETTLING_TIME_EPSILON:
+        if not vis.is_running():
+            print(f"\n[Viewer] Window closed by user during settling after {_settling_frame_count} frame(s).")
+            break
+        _settling_dt = min(FRAME_DT, DEME_SETTLE_TIME - _settling_time)
+        deme_solver.DoDynamicsThenSync(_settling_dt)
+        _settling_time += _settling_dt
+        _settling_frame_count += 1
 
-            vis.begin_frame(_settling_time)
-            vis.log_state(coupler.newton_state_0)
-            if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
-                _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-                _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
-                _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-                _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
-                vis.log_clumps(
-                    "dem_terrain",
-                    _dem_terrain_pos_wp,
-                    _dem_terrain_orient_wp,
-                    _DEM_CLUMP_SPHERE_RADII,
-                    _DEM_CLUMP_SPHERE_OFFSETS,
-                    colors=_dem_terrain_colors_wp,
-                )
-            vis.end_frame()
-    else:
-        deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
-    print("[DEME] Settling complete.\n")
-
-    # After settling, teleport the DEME plow to match the Newton arm's current
-    # end-effector pose, then activate contact.
-    #
-    # Newton body_q layout (per Warp transform): [px, py, pz, qx, qy, qz, qw].
-    # The plow is attached to the ee_link body with local rotation _PLOW_LOCAL_ROT_NP,
-    # so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
-    if _plow_deme_tracker is not None:
-        _body_q_np = coupler.newton_state_0.body_q.numpy()
-        _ee_pos = _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
-        # Switch from sleep family to active family; contact with terrain is
-        # enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
-        # _DEME_TERRAIN_FAMILY).
-        deme_solver.ChangeFamily(_DEME_PLOW_SLEEP_FAMILY, _DEME_PLOW_ACTIVE_FAMILY)
-        _ee_pos_str = ", ".join(f"{v:.3f}" for v in _ee_pos)
-        print(f"[DEME] Plow contact activated.  Plow placed at ({_ee_pos_str}).\n")
-
-# ─── Movie recording settings ─────────────────────────────────────────────
-# Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
-# Requires: pip install imageio imageio-ffmpeg
-SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
-MOVIE_FPS = SIM_FPS
-
-_movie_writer = None
-if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
-    try:
-        import imageio
-
-        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
-        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
-    except ImportError:
-        print(
-            "WARNING: imageio is not installed — movie recording disabled.\n"
-            "         Install with:  pip install imageio imageio-ffmpeg"
+        vis.begin_frame(_settling_time)
+        vis.log_state(coupler.newton_state_0)
+        _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+        _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
+        _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+        _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+        vis.log_clumps(
+            "dem_terrain",
+            _dem_terrain_pos_wp,
+            _dem_terrain_orient_wp,
+            _DEM_CLUMP_SPHERE_RADII,
+            _DEM_CLUMP_SPHERE_OFFSETS,
+            colors=_dem_terrain_colors_wp,
         )
-        SAVE_MOVIE = False
+        vis.end_frame()
+else:
+    deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
+print("[DEME] Settling complete.\n")
+
+# After settling, teleport the DEME plow to match the Newton arm's current
+# end-effector pose, then activate contact.
+#
+# Newton body_q layout (per Warp transform): [px, py, pz, qx, qy, qz, qw].
+# The plow is attached to the ee_link body with local rotation _PLOW_LOCAL_ROT_NP,
+# so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
+_body_q_np = coupler.newton_state_0.body_q.numpy()
+_ee_pos = _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
+# Switch from sleep family to active family; contact with terrain is
+# enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
+# _DEME_TERRAIN_FAMILY).
+deme_solver.ChangeFamily(_DEME_PLOW_SLEEP_FAMILY, _DEME_PLOW_ACTIVE_FAMILY)
+_ee_pos_str = ", ".join(f"{v:.3f}" for v in _ee_pos)
+print(f"[DEME] Plow contact activated.  Plow placed at ({_ee_pos_str}).\n")
+
+# ─── Movie recording setup ────────────────────────────────────────────────
+# SAVE_MOVIE, MOVIE_OUTPUT_PATH, and MOVIE_FPS are set in the configuration block.
+_movie_writer = None
+if SAVE_MOVIE and not USE_OMNIVERSE_VISUALIZATION:
+    import imageio  # pip install imageio imageio-ffmpeg
+
+    _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+    print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
 
 # ─── Co-simulation loop (Phase 2: active plowing) ─────────────────────────
 # Each frame:
@@ -690,7 +621,7 @@ print(
 
 # Point the camera toward the arm base and terrain pile with a slight downward
 # angle so both robot motion and near-ground particle behavior remain visible.
-if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+if not USE_OMNIVERSE_VISUALIZATION:
     vis.set_camera(
         pos=wp.vec3(3.0, -3.0, 2.5),
         pitch=-25.0,
@@ -706,49 +637,48 @@ if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 #   • Coordinate axes are placed in the foreground, clear of the arm and terrain.
 #   • The scale bar is also placed in the foreground and slightly elevated so it
 #     remains legible and avoids z-fighting with the ground.
-if _vis_available:
-    # XYZ coordinate-axis arrows at a foreground reference point.
-    # X = red, Y = green, Z = blue; all arrows share the same configurable length.
-    _AXIS_LEN = 0.5
-    _AXIS_OX, _AXIS_OY, _AXIS_OZ = 0.8, -0.9, 0.02  # origin in world space
-    _axis_origin = np.full((3, 3), [_AXIS_OX, _AXIS_OY, _AXIS_OZ], dtype=np.float32)
-    _axis_tips = np.array(
-        [
-            [_AXIS_OX + _AXIS_LEN, _AXIS_OY, _AXIS_OZ],
-            [_AXIS_OX, _AXIS_OY + _AXIS_LEN, _AXIS_OZ],
-            [_AXIS_OX, _AXIS_OY, _AXIS_OZ + _AXIS_LEN],
-        ],
-        dtype=np.float32,
-    )
-    _axis_colors = np.array(
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        dtype=np.float32,
-    )
-    vis.log_arrows(
-        "coord_axes",
-        wp.array(_axis_origin, dtype=wp.vec3),
-        wp.array(_axis_tips, dtype=wp.vec3),
-        wp.array(_axis_colors, dtype=wp.vec3),
-    )
+# XYZ coordinate-axis arrows at a foreground reference point.
+# X = red, Y = green, Z = blue; all arrows share the same configurable length.
+_AXIS_LEN = 0.5
+_AXIS_OX, _AXIS_OY, _AXIS_OZ = 0.8, -0.9, 0.02  # origin in world space
+_axis_origin = np.full((3, 3), [_AXIS_OX, _AXIS_OY, _AXIS_OZ], dtype=np.float32)
+_axis_tips = np.array(
+    [
+        [_AXIS_OX + _AXIS_LEN, _AXIS_OY, _AXIS_OZ],
+        [_AXIS_OX, _AXIS_OY + _AXIS_LEN, _AXIS_OZ],
+        [_AXIS_OX, _AXIS_OY, _AXIS_OZ + _AXIS_LEN],
+    ],
+    dtype=np.float32,
+)
+_axis_colors = np.array(
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    dtype=np.float32,
+)
+vis.log_arrows(
+    "coord_axes",
+    wp.array(_axis_origin, dtype=wp.vec3),
+    wp.array(_axis_tips, dtype=wp.vec3),
+    wp.array(_axis_colors, dtype=wp.vec3),
+)
 
-    # Scale bar in the foreground, raised above the ground to avoid
-    # z-fighting.  Endpoint spheres anchor the bar ends
-    # and make its extent unambiguous.
-    _SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.9, 0.06  # 1 m along x
-    vis.log_lines(
-        "scale_bar",
-        wp.array([[_SB_X0, _SB_Y, _SB_Z]], dtype=wp.vec3),
-        wp.array([[_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
-        (1.0, 1.0, 0.0),  # yellow
-    )
-    # Endpoint marker spheres so the scale bar endpoints are clearly visible.
-    _sb_marker_radius = 0.04  # m
-    vis.log_points(
-        "scale_bar_markers",
-        wp.array([[_SB_X0, _SB_Y, _SB_Z], [_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
-        radii=wp.array([_sb_marker_radius, _sb_marker_radius], dtype=wp.float32),
-        colors=wp.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=wp.vec3),
-    )
+# Scale bar in the foreground, raised above the ground to avoid
+# z-fighting.  Endpoint spheres anchor the bar ends
+# and make its extent unambiguous.
+_SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.9, 0.06  # 1 m along x
+vis.log_lines(
+    "scale_bar",
+    wp.array([[_SB_X0, _SB_Y, _SB_Z]], dtype=wp.vec3),
+    wp.array([[_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
+    (1.0, 1.0, 0.0),  # yellow
+)
+# Endpoint marker spheres so the scale bar endpoints are clearly visible.
+_sb_marker_radius = 0.04  # m
+vis.log_points(
+    "scale_bar_markers",
+    wp.array([[_SB_X0, _SB_Y, _SB_Z], [_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
+    radii=wp.array([_sb_marker_radius, _sb_marker_radius], dtype=wp.float32),
+    colors=wp.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=wp.vec3),
+)
 
 sim_time = 0.0
 _sim_duration = max(NUM_FRAMES * FRAME_DT, _MIN_DURATION_EPSILON)
@@ -760,7 +690,7 @@ _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
     # For OmniverseVisualizer, vis.is_running() always returns True.
-    if _vis_available and not vis.is_running():
+    if not vis.is_running():
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
@@ -795,43 +725,39 @@ for frame in range(NUM_FRAMES):
         # The plow mesh is kinematic (SetFamilyFixed), so DEME will not move it
         # on its own; we must update it explicitly every Newton substep.
         # World orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP (180° about X).
-        if _plow_deme_tracker is not None:
-            _body_q_np = coupler.newton_state_0.body_q.numpy()
-            _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
+        _body_q_np = coupler.newton_state_0.body_q.numpy()
+        _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
 
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
         for _ in range(DEME_SUBSTEPS):
-            if deme_solver is not None:
-                coupler.step_deme()
+            coupler.step_deme()
 
     sim_time += FRAME_DT
 
     # ── Visualization ──────────────────────────────────────────────────────
-    if _vis_available:
-        vis.begin_frame(sim_time)
-        vis.log_state(coupler.newton_state_0)
+    vis.begin_frame(sim_time)
+    vis.log_state(coupler.newton_state_0)
 
-        # Render live DEME terrain particles as clumps (overlapping-sphere assemblies).
-        # Each particle's template geometry matches the ellipsoid_2_1_1.csv clump
-        # fed to the DEME solver; live positions and orientations come from the tracker.
-        if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
-            _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-            _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
-            _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-            _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
-            vis.log_clumps(
-                "dem_terrain",
-                _dem_terrain_pos_wp,
-                _dem_terrain_orient_wp,
-                _DEM_CLUMP_SPHERE_RADII,
-                _DEM_CLUMP_SPHERE_OFFSETS,
-                colors=_dem_terrain_colors_wp,
-            )
+    # Render live DEME terrain particles as clumps (overlapping-sphere assemblies).
+    # Each particle's template geometry matches the ellipsoid_2_1_1.csv clump
+    # fed to the DEME solver; live positions and orientations come from the tracker.
+    _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+    _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
+    _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+    _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+    vis.log_clumps(
+        "dem_terrain",
+        _dem_terrain_pos_wp,
+        _dem_terrain_orient_wp,
+        _DEM_CLUMP_SPHERE_RADII,
+        _DEM_CLUMP_SPHERE_OFFSETS,
+        colors=_dem_terrain_colors_wp,
+    )
 
-        vis.end_frame()
+    vis.end_frame()
 
-        if _movie_writer is not None:
-            _movie_writer.append_data(vis.get_frame().numpy())
+    if _movie_writer is not None:
+        _movie_writer.append_data(vis.get_frame().numpy())
 
     # ── Console status (periodic) ──────────────────────────────────────────
     if (frame + 1) % 50 == 0 or frame == 0:
@@ -840,25 +766,24 @@ for frame in range(NUM_FRAMES):
 print()
 
 # ─── Debug pause after first rendered frame ──────────────────────────────────
-if PAUSE_AFTER_FIRST_FRAME and _vis_available and not USE_OMNIVERSE_VISUALIZATION and vis.is_running():
+if PAUSE_AFTER_FIRST_FRAME and not USE_OMNIVERSE_VISUALIZATION and vis.is_running():
     print("[Debug] First frame rendered. Inspect the initial configuration; close the viewer window to continue.")
     while vis.is_running():
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
 
-        if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
-            _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-            _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
-            _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-            _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
-            vis.log_clumps(
-                "dem_terrain",
-                _dem_terrain_pos_wp,
-                _dem_terrain_orient_wp,
-                _DEM_CLUMP_SPHERE_RADII,
-                _DEM_CLUMP_SPHERE_OFFSETS,
-                colors=_dem_terrain_colors_wp,
-            )
+        _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+        _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
+        _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+        _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+        vis.log_clumps(
+            "dem_terrain",
+            _dem_terrain_pos_wp,
+            _dem_terrain_orient_wp,
+            _DEM_CLUMP_SPHERE_RADII,
+            _DEM_CLUMP_SPHERE_OFFSETS,
+            colors=_dem_terrain_colors_wp,
+        )
 
         vis.end_frame()
         time.sleep(5.0)
@@ -868,8 +793,7 @@ if _movie_writer is not None:
     _movie_writer.close()
     print(f"[Movie] Saved simulation recording to '{MOVIE_OUTPUT_PATH}'.\n")
 
-if vis is not None:
-    vis.close()
+vis.close()
 
 print("[Coupler] Finalizing NewtonXLBDEMCoupler ...")
 coupler.finalize()
@@ -878,7 +802,4 @@ print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 print("Demo completed successfully.")
 print(f"  Newton version : {newton.__version__}")
 print(f"  Warp  version  : {wp.__version__}")
-if _deme_available:
-    print(f"  DEME           : installed ({_dem_num_terrain_particles} terrain particles)")
-else:
-    print("  DEME           : not installed (granular terrain skipped)")
+print(f"  DEME           : installed ({_dem_num_terrain_particles} terrain particles)")
