@@ -223,7 +223,7 @@ DEME_SETTLE_TIME = 1.0  # [s] — user-changeable
 # Keep wrist_2 fixed to preserve the plow tool orientation relative to ground.
 PLOW_TARGET_Q = np.array(
     # shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
-    [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, 0.0],
+    [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 
@@ -238,7 +238,7 @@ PLOW_DURATION = 1.6  # [s]
 # Fraction of total simulation duration; actual scoop start is clamped to be
 # no earlier than PLOW_DURATION.
 WRIST_SCOOP_START_FRACTION = 0.75
-WRIST_SCOOP_INWARD_DELTA = -0.90   # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
+WRIST_SCOOP_INWARD_DELTA = -1.8  # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
 _WRIST_3_DOF_INDEX = 5
 
 # Number of warm-up render-frames to run Newton alone (without DEME) so the
@@ -287,8 +287,8 @@ _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill la
 # The plow starts in the sleep family (fixed, contact disabled) during the
 # terrain settling phase, then switches to the active family once contact is
 # enabled for plowing.
-_DEME_TERRAIN_FAMILY = 0       # default family for terrain particles
-_DEME_PLOW_SLEEP_FAMILY = 10   # fixed, contact with terrain disabled during settling
+_DEME_TERRAIN_FAMILY = 0  # default family for terrain particles
+_DEME_PLOW_SLEEP_FAMILY = 10  # fixed, contact with terrain disabled during settling
 _DEME_PLOW_ACTIVE_FAMILY = 11  # fixed, contact with terrain enabled during plowing
 
 # Plow local rotation as numpy [x, y, z, w] — mirrors PLOW_LOCAL_ROT
@@ -601,7 +601,7 @@ dof_count = articulation_view.joint_dof_count
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
 ready_to_plow_q = np.array(
     # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
-    [0.5 * np.pi, -0.95, 1.20, -0.20, -1.0 * np.pi, 0.0],
+    [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 num_ready_dofs = min(dof_count, len(ready_to_plow_q))
@@ -835,9 +835,9 @@ for frame in range(NUM_FRAMES):
         if sim_time >= _scoop_start_time:
             _scoop_interp = np.clip((sim_time - _scoop_start_time) / _scoop_phase_dt, 0.0, 1.0)
             _wrist_3_scoop_target = PLOW_TARGET_Q[_WRIST_3_DOF_INDEX] + WRIST_SCOOP_INWARD_DELTA
-            _joint_q_cmd[_WRIST_3_DOF_INDEX] = (
-                (1.0 - _scoop_interp) * _plow_q[_WRIST_3_DOF_INDEX] + _scoop_interp * _wrist_3_scoop_target
-            )
+            _joint_q_cmd[_WRIST_3_DOF_INDEX] = (1.0 - _scoop_interp) * _plow_q[
+                _WRIST_3_DOF_INDEX
+            ] + _scoop_interp * _wrist_3_scoop_target
 
     joint_q_target_np[:, 0, :num_ready_dofs] = _joint_q_cmd[:num_ready_dofs]
     joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
