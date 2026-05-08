@@ -1,34 +1,34 @@
-#include "PyTLFEANewtonCoupler.h"
+#include "PyFERISNewtonCoupler.h"
 
 #include <core/Logger.hpp>
 
 // ── CUDA runtime ──────────────────────────────────────────────────────────────
-// Must be included before any TLFEA header.  TLFEA is a CUDA-based library
+// Must be included before any FERIS header.  FERIS is a CUDA-based library
 // whose headers annotate functions with __host__ and __device__.  These
 // keywords are only defined once cuda_runtime.h has been included; without this
 // include the plain C++ compiler would report "__host__ does not name a type".
 #include <cuda_runtime.h>
 
-// ── TLFEA ─────────────────────────────────────────────────────────────────────
-// FEASolver.h is a convenience header that pulls in all TLFEA element types and
-// solver types.  TLFEAImpl below owns a GPU_FEAT10_Data (TET10 element) and a
+// ── FERIS ─────────────────────────────────────────────────────────────────────
+// FEASolver.h is a convenience header that pulls in all FERIS element types and
+// solver types.  FERISImpl below owns a GPU_FEAT10_Data (TET10 element) and a
 // SyncedAdamWNocoopSolver (AdamW-Nocoop time integrator) created in Initialize()
 // and driven in Step() via the solver's Solve() method.
-#include <tlfea/FEASolver.h>
+#include <feris/FEASolver.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TLFEAImpl — pimpl that hides tlfea::GPU_FEAT10_Data and
-//             tlfea::SyncedAdamWNocoopSolver from PyTLFEANewtonCoupler.h
+// FERISImpl — pimpl that hides feris::GPU_FEAT10_Data and
+//             feris::SyncedAdamWNocoopSolver from PyFERISNewtonCoupler.h
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct PyTLFEANewtonCoupler::TLFEAImpl {
-    /// TLFEA TET10 element data (mesh geometry, DOFs, forces).  Created and
+struct PyFERISNewtonCoupler::FERISImpl {
+    /// FERIS TET10 element data (mesh geometry, DOFs, forces).  Created and
     /// initialized in Initialize(); torn down in Finalize() via Destroy().
-    std::unique_ptr<tlfea::GPU_FEAT10_Data> fea_element;
+    std::unique_ptr<feris::GPU_FEAT10_Data> fea_element;
 
-    /// TLFEA AdamW-Nocoop time integrator.  Created after fea_element in
+    /// FERIS AdamW-Nocoop time integrator.  Created after fea_element in
     /// Initialize() and driven in Step() via its Solve() method.
-    std::unique_ptr<tlfea::SyncedAdamWNocoopSolver> fea_solver;
+    std::unique_ptr<feris::SyncedAdamWNocoopSolver> fea_solver;
 
     bool initialized{false};
     double time_step{1e-4};  ///< Co-simulation time step [s].
@@ -36,18 +36,18 @@ struct PyTLFEANewtonCoupler::TLFEAImpl {
 
 // ── Constructor / Destructor ───────────────────────────────────────────────────
 
-PyTLFEANewtonCoupler::PyTLFEANewtonCoupler()
-    : fea_(std::make_unique<TLFEAImpl>()),
+PyFERISNewtonCoupler::PyFERISNewtonCoupler()
+    : fea_(std::make_unique<FERISImpl>()),
       newton_model(pybind11::none()),
       newton_solver(pybind11::none()),
       newton_state_0(pybind11::none()),
       newton_state_1(pybind11::none()),
       newton_control(pybind11::none()),
       newton_contacts(pybind11::none()) {
-    MOPHI_INFO("PyTLFEANewtonCoupler: created");
+    MOPHI_INFO("PyFERISNewtonCoupler: created");
 }
 
-PyTLFEANewtonCoupler::~PyTLFEANewtonCoupler() {
+PyFERISNewtonCoupler::~PyFERISNewtonCoupler() {
     if (fea_ && fea_->initialized) {
         Finalize();
     }
@@ -55,23 +55,23 @@ PyTLFEANewtonCoupler::~PyTLFEANewtonCoupler() {
 
 // ── Public interface ───────────────────────────────────────────────────────────
 
-void PyTLFEANewtonCoupler::Initialize(const std::string& tlfea_config,
+void PyFERISNewtonCoupler::Initialize(const std::string& feris_config,
                                       pybind11::object newton_model_in,
                                       pybind11::object newton_solver_in,
                                       double dt) {
-    MOPHI_INFO("PyTLFEANewtonCoupler: initializing ...");
+    MOPHI_INFO("PyFERISNewtonCoupler: initializing ...");
 
-    // ── TLFEA ─────────────────────────────────────────────────────────────────
+    // ── FERIS ─────────────────────────────────────────────────────────────────
     // Create TET10 element data with placeholder dimensions (0 elements / 0 nodes).
-    // TODO: load the actual mesh from tlfea_config and use the real element count /
+    // TODO: load the actual mesh from feris_config and use the real element count /
     //       node count once mesh-loading support is implemented.
-    fea_->fea_element = std::make_unique<tlfea::GPU_FEAT10_Data>(0, 0);
+    fea_->fea_element = std::make_unique<feris::GPU_FEAT10_Data>(0, 0);
     fea_->fea_element->Initialize();
     // Create AdamW-Nocoop solver bound to the element.
-    fea_->fea_solver = std::make_unique<tlfea::SyncedAdamWNocoopSolver>(fea_->fea_element.get(),
+    fea_->fea_solver = std::make_unique<feris::SyncedAdamWNocoopSolver>(fea_->fea_element.get(),
                                                                         fea_->fea_element->get_n_constraint());
-    const std::string fea_suffix = tlfea_config.empty() ? "" : (" (config: " + tlfea_config + ")");
-    MOPHI_INFO("PyTLFEANewtonCoupler: tlfea::GPU_FEAT10_Data + SyncedAdamWNocoopSolver created%s", fea_suffix.c_str());
+    const std::string fea_suffix = feris_config.empty() ? "" : (" (config: " + feris_config + ")");
+    MOPHI_INFO("PyFERISNewtonCoupler: feris::GPU_FEAT10_Data + SyncedAdamWNocoopSolver created%s", fea_suffix.c_str());
 
     fea_->initialized = true;
 
@@ -92,20 +92,20 @@ void PyTLFEANewtonCoupler::Initialize(const std::string& tlfea_config,
                                                             newton_model.attr("joint_qd"), newton_state_0);
 
         newton_available = true;
-        MOPHI_INFO("PyTLFEANewtonCoupler: Newton model and solver bound (sim_dt=%.6f s)", sim_dt);
+        MOPHI_INFO("PyFERISNewtonCoupler: Newton model and solver bound (sim_dt=%.6f s)", sim_dt);
     } else {
-        MOPHI_INFO("PyTLFEANewtonCoupler: no Newton solver provided — TLFEA only");
+        MOPHI_INFO("PyFERISNewtonCoupler: no Newton solver provided — FERIS only");
     }
 
-    MOPHI_INFO("PyTLFEANewtonCoupler: initialized");
+    MOPHI_INFO("PyFERISNewtonCoupler: initialized");
 }
 
-void PyTLFEANewtonCoupler::Step() {
+void PyFERISNewtonCoupler::Step() {
     if (!fea_->initialized) {
-        MOPHI_ERROR("PyTLFEANewtonCoupler::Step() called before Initialize().");
+        MOPHI_ERROR("PyFERISNewtonCoupler::Step() called before Initialize().");
     }
 
-    // ── 1. Advance TLFEA ──────────────────────────────────────────────────────
+    // ── 1. Advance FERIS ──────────────────────────────────────────────────────
     // Uncomment once the solver has been fully configured and initialized:
     // fea_->fea_solver->Solve();
 
@@ -113,9 +113,9 @@ void PyTLFEANewtonCoupler::Step() {
         return;
     }
 
-    // ── 2. Extract TLFEA node positions (coupling output: TLFEA → Newton) ─────
-    // auto tlfea_xyz = GetNodePositions();
-    // TODO: convert tlfea_xyz to a warp array and pass to Newton to update
+    // ── 2. Extract FERIS node positions (coupling output: FERIS → Newton) ─────
+    // auto feris_xyz = GetFERISNodePositions();
+    // TODO: convert feris_xyz to a warp array and pass to Newton to update
     // collision geometry or rigid-body anchor points.
 
     // ── 3. Advance Newton ─────────────────────────────────────────────────────
@@ -126,15 +126,15 @@ void PyTLFEANewtonCoupler::Step() {
     // state_1 now holds the new Newton state; swap buffers for next iteration.
     std::swap(newton_state_0, newton_state_1);
 
-    // ── 4. Extract Newton forces (coupling input: Newton → TLFEA) ─────────────
+    // ── 4. Extract Newton forces (coupling input: Newton → FERIS) ─────────────
     // TODO: read contact / body forces from newton_state_0 (the just-computed
-    // state after the swap) and apply them to TLFEA:
+    // state after the swap) and apply them to FERIS:
     //   std::vector<std::array<double,3>> forces = ...;  // from Newton state
-    //   SetNodeForces(forces);
+    //   SetFERISNodeForces(forces);
 }
 
-void PyTLFEANewtonCoupler::Finalize() {
-    MOPHI_INFO("PyTLFEANewtonCoupler: finalizing ...");
+void PyFERISNewtonCoupler::Finalize() {
+    MOPHI_INFO("PyFERISNewtonCoupler: finalizing ...");
     fea_->fea_solver.reset();
     if (fea_->fea_element) {
         fea_->fea_element->Destroy();
@@ -149,14 +149,14 @@ void PyTLFEANewtonCoupler::Finalize() {
     newton_control = pybind11::none();
     newton_contacts = pybind11::none();
     newton_available = false;
-    MOPHI_INFO("PyTLFEANewtonCoupler: finalized");
+    MOPHI_INFO("PyFERISNewtonCoupler: finalized");
 }
 
-std::vector<std::array<double, 3>> PyTLFEANewtonCoupler::GetNodePositions() const {
+std::vector<std::array<double, 3>> PyFERISNewtonCoupler::GetFERISNodePositions() const {
     if (!fea_->initialized) {
         return {};
     }
-    // TODO: Return actual deformed node positions from TLFEA once the solver is
+    // TODO: Return actual deformed node positions from FERIS once the solver is
     // fully configured, e.g.:
     //   VectorXR x12, y12, z12;
     //   fea_->fea_element->RetrievePositionToCPU(x12, y12, z12);
@@ -165,14 +165,14 @@ std::vector<std::array<double, 3>> PyTLFEANewtonCoupler::GetNodePositions() cons
     return {};
 }
 
-void PyTLFEANewtonCoupler::SetNodeForces(const std::vector<std::array<double, 3>>& forces) {
+void PyFERISNewtonCoupler::SetFERISNodeForces(const std::vector<std::array<double, 3>>& forces) {
     if (!fea_->initialized) {
-        MOPHI_ERROR("PyTLFEANewtonCoupler::SetNodeForces() called before Initialize().");
+        MOPHI_ERROR("PyFERISNewtonCoupler::SetFERISNodeForces() called before Initialize().");
     }
     if (forces.empty()) {
         return;
     }
-    // TODO: Apply external forces to TLFEA nodes once the solver is fully configured,
+    // TODO: Apply external forces to FERIS nodes once the solver is fully configured,
     // e.g.:
     //   VectorXR h_f_ext(fea_->fea_element->get_n_coef() * 3);
     //   // populate h_f_ext from forces vector ...

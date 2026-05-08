@@ -21,18 +21,12 @@
 add_library(mophi_couplers INTERFACE)
 target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 
-# ── TLFEA + DEM-Engine co-simulation solver ───────────────────────────────────
-if(MOPHI_BUILD_TLFEA_DEM)
-    add_subdirectory(tlfea_dem)
-endif()
-
-# ── TLFEA + Newton co-simulation coupler ──────────────────────────────────────
-if(MOPHI_BUILD_TLFEA_NEWTON)
-    add_subdirectory(tlfea_newton)
+# ── FERIS + Newton co-simulation coupler ──────────────────────────────────────
+if(MOPHI_BUILD_FERIS_NEWTON)
+    add_subdirectory(feris_newton)
 endif()
 
 # ── Newton + XLB + DEM-Engine three-way co-simulation coupler ─────────────────
 if(MOPHI_BUILD_NEWTON_XLB_DEM)
     add_subdirectory(newton_xlb_dem)
 endif()
-

@@ -23,9 +23,9 @@ if(MOPHI_FETCH_DEMENGINE)
     mophi_fetch_external(DEMEngine)
 endif()
 
-# ── TLFEA ─────────────────────────────────────────────────────────────────────
-if(MOPHI_FETCH_TLFEA)
-    mophi_fetch_external(TLFEA)
+# ── FERIS ─────────────────────────────────────────────────────────────────────
+if(MOPHI_FETCH_FERIS)
+    mophi_fetch_external(FERIS)
 endif()
 
 # ── Newton (Python package) ───────────────────────────────────────────────────

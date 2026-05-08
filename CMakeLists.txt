@@ -13,7 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # registered in external/ExternalProjects.cmake and given a corresponding
 # option here.
 # ─────────────────────────────────────────────────────────────────────────────
-option(MOPHI_FETCH_TLFEA     "Download/update the TLFEA external project"     OFF)
+option(MOPHI_FETCH_FERIS     "Download/update the FERIS external project"     OFF)
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
 option(MOPHI_FETCH_NEWTON    "Install the Newton Python package (pip install newton)" OFF)
 option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install xlb)"       OFF)
@@ -27,8 +27,7 @@ option(MOPHI_FETCH_DEME      "Install the DEME Python package (pip install deme)
 # (via the MOPHI_FETCH_* options above); CMake emits a FATAL_ERROR at configure
 # time if a required external is missing.
 # ─────────────────────────────────────────────────────────────────────────────
-option(MOPHI_BUILD_TLFEA_DEM    "Build the TLFEA + DEM-Engine co-simulation solver" OFF)
-option(MOPHI_BUILD_TLFEA_NEWTON "Build the TLFEA + Newton co-simulation coupler"     OFF)
+option(MOPHI_BUILD_FERIS_NEWTON "Build the FERIS + Newton co-simulation coupler"     OFF)
 option(MOPHI_BUILD_NEWTON_XLB_DEM "Build the Newton + XLB + DEM-Engine three-way co-simulation coupler" OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +44,7 @@ option(MOPHI_BUILD_DEMOS "Build demonstration programs" ON)
 # CUDA Toolkit
 #
 # Searched once here so the result is available to all sub-directories.
-# Co-simulation solvers that depend on CUDA (e.g. TLFEADEMCoupler) emit a
+# Co-simulation solvers that depend on CUDA (e.g. FERISNewtonCoupler) emit a
 # CMake FATAL_ERROR at configure time when CUDAToolkit is not found rather
 # than deferring the failure to a cryptic link-time "undefined reference".
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +54,7 @@ find_package(CUDAToolkit QUIET)
 # Eigen3
 #
 # Searched once here so the result is available to all sub-directories.
-# Co-simulation solvers that depend on Eigen (e.g. TLFEADEMCoupler via TLFEA)
+# Co-simulation solvers that depend on Eigen (e.g. FERISNewtonCoupler via FERIS)
 # emit a CMake FATAL_ERROR at configure time when Eigen3 is not found.
 # ─────────────────────────────────────────────────────────────────────────────
 find_package(Eigen3 QUIET)
@@ -80,7 +79,7 @@ include(MoPhiExternalUtils)
 # step.
 #
 # Does not interfere with solvers that also use MoPhiEssentials internally
-# (e.g. TLFEA) — those are built in complete isolation via ExternalProject_Add
+# (e.g. FERIS) — those are built in complete isolation via ExternalProject_Add
 # and have no CMake target visibility into this parent build.
 # ─────────────────────────────────────────────────────────────────────────────
 set(MOPHI_ENABLE_CUDA OFF CACHE BOOL "Disable CUDA inside the MoPhiEssentials submodule (MoPhi manages CUDA per-coupler)" FORCE)

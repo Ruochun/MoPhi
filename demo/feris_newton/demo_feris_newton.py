@@ -1,32 +1,32 @@
-"""demo/tlfea_newton/demo_tlfea_newton.py
+"""demo/feris_newton/demo_feris_newton.py
 
-Demonstrates the TLFEA + Newton co-simulation via MoPhi's TLFEANewtonCoupler.
+Demonstrates the FERIS + Newton co-simulation via MoPhi's FERISNewtonCoupler.
 
 Both solvers are managed entirely through the coupler:
-  • TLFEANewtonCoupler.initialize() accepts the Newton model and solver directly.
-  • TLFEANewtonCoupler.step() advances TLFEA, exchanges coupling data (TLFEA node
-    positions → Newton geometry; Newton forces → TLFEA loads), and advances Newton —
+  • FERISNewtonCoupler.initialize() accepts the Newton model and solver directly.
+  • FERISNewtonCoupler.step() advances FERIS, exchanges coupling data (FERIS node
+    positions → Newton geometry; Newton forces → FERIS loads), and advances Newton —
     all in one call.
-  • TLFEANewtonCoupler.finalize() tears down both solvers.
+  • FERISNewtonCoupler.finalize() tears down both solvers.
 
 The demo script only builds the Newton model (describing the rigid-body physics scene)
 and then delegates all time-stepping to the coupler.
 
 Prerequisites
 -------------
-  • Build MoPhi with -DMOPHI_BUILD_TLFEA_NEWTON=ON (fetches and builds TLFEA,
-    compiles TLFEANewtonCoupler, and builds the mophi_core Python extension).
+  • Build MoPhi with -DMOPHI_BUILD_FERIS_NEWTON=ON (fetches and builds FERIS,
+    compiles FERISNewtonCoupler, and builds the mophi_core Python extension).
   • pip install newton  (or configure with -DMOPHI_FETCH_NEWTON=ON)
 
 Running
 -------
 From the MoPhi build tree (after ``cmake --build``):
 
-    python demo/tlfea_newton/demo_tlfea_newton.py
+    python demo/feris_newton/demo_feris_newton.py
 
 Or from the repository root after installing the mophi package:
 
-    python -m demo.tlfea_newton.demo_tlfea_newton
+    python -m demo.feris_newton.demo_feris_newton
 """
 
 import sys
@@ -37,15 +37,15 @@ try:
 except ImportError as exc:
     sys.exit(
         "ERROR: Could not import the 'mophi' package.\n"
-        "       Build MoPhi with -DMOPHI_BUILD_TLFEA_NEWTON=ON and ensure that\n"
+        "       Build MoPhi with -DMOPHI_BUILD_FERIS_NEWTON=ON and ensure that\n"
         "       the build directory (python/) is on PYTHONPATH.\n"
         f"       ({exc})"
     )
 
-if not hasattr(mophi, "TLFEANewtonCoupler"):
+if not hasattr(mophi, "FERISNewtonCoupler"):
     sys.exit(
-        "ERROR: mophi.TLFEANewtonCoupler is not available.\n"
-        "       Re-build MoPhi with -DMOPHI_BUILD_TLFEA_NEWTON=ON."
+        "ERROR: mophi.FERISNewtonCoupler is not available.\n"
+        "       Re-build MoPhi with -DMOPHI_BUILD_FERIS_NEWTON=ON."
     )
 
 # ─── 2. Import Newton ─────────────────────────────────────────────────────────
@@ -58,12 +58,12 @@ except ImportError:
     _newton_available = False
     print(
         "WARNING: Newton (or warp) is not installed.  "
-        "The TLFEA side will still be demonstrated;\n"
+        "The FERIS side will still be demonstrated;\n"
         "         install Newton with:  pip install newton"
     )
 
 # ─── 3. Build the Newton scene (if Newton is available) ───────────────────────
-print("=== MoPhi TLFEA + Newton co-simulation demo ===\n")
+print("=== MoPhi FERIS + Newton co-simulation demo ===\n")
 
 newton_model = None
 newton_solver = None
@@ -108,32 +108,32 @@ if _newton_available:
     print(f"[Newton] Double-pendulum model built ({newton_model.body_count} bodies).\n")
 
 # ─── 4. Initialize the coupler (passes Newton objects in) ────────────────────
-coupler = mophi.TLFEANewtonCoupler()
+coupler = mophi.FERISNewtonCoupler()
 
-print("[Coupler] Initializing TLFEANewtonCoupler ...")
+print("[Coupler] Initializing FERISNewtonCoupler ...")
 coupler.initialize(
     newton_model=newton_model,
     newton_solver=newton_solver,
     sim_dt=1.0 / 1000.0,
 )
-print("[Coupler] TLFEANewtonCoupler initialized.\n")
+print("[Coupler] FERISNewtonCoupler initialized.\n")
 
 # ─── 5. Co-simulation loop ────────────────────────────────────────────────────
 num_steps = 5
 print(f"Running {num_steps} co-simulation step(s) ...\n")
 
 for i in range(num_steps):
-    # A single coupler.step() call advances TLFEA, exchanges coupling data
-    # (TLFEA node positions → Newton; Newton forces → TLFEA), and advances Newton.
+    # A single coupler.step() call advances FERIS, exchanges coupling data
+    # (FERIS node positions → Newton; Newton forces → FERIS), and advances Newton.
     coupler.step()
     print(f"  step {i + 1}/{num_steps}  [Coupler] advanced co-simulation step")
 
 print()
 
 # ─── 6. Finalize ──────────────────────────────────────────────────────────────
-print("[Coupler] Finalizing TLFEANewtonCoupler ...")
+print("[Coupler] Finalizing FERISNewtonCoupler ...")
 coupler.finalize()
-print("[Coupler] TLFEANewtonCoupler finalized.\n")
+print("[Coupler] FERISNewtonCoupler finalized.\n")
 
 print("Demo completed successfully.")
 if _newton_available:

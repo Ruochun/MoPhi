@@ -610,7 +610,7 @@ print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 # ── Bind XLB device-resident mask arrays to the coupler ──────────────────────
 # After initialization, hand the coupler the device handles for XLB's bc_mask
 # and missing_mask.  The GPU kernels in _xlb_update_robot_box_gpu() then
-# retrieve them via coupler.get_bc_mask_array() / coupler.get_missing_mask_array()
+# retrieve them via coupler.get_xlb_bc_mask_array() / coupler.get_xlb_missing_mask_array()
 # and write to them in-place, with no CPU round-trip.
 if _xlb_stepper is not None:
     coupler.set_xlb_masks(_xlb_bc_mask, _xlb_missing_mask)
@@ -719,12 +719,12 @@ for frame in range(NUM_FRAMES):
         wp.copy(coupler.newton_control.joint_target_pos, a_wp)
 
     # ── Extract foot-tip contact proxy poses ─────────────────────────────────
-    # Retrieve body transforms via get_body_q_array() — this returns the device-
+    # Retrieve body transforms via get_newton_body_q_array() — this returns the device-
     # resident Warp array directly, and .numpy() then copies only the body_q
     # data needed for CPU-side helper logic.
     # foot_tip_positions / foot_tip_rotations are needed by DEME for contact
     # geometry and will drive XLB immersed-boundary coupling in future work.
-    body_q_arr = coupler.get_body_q_array()
+    body_q_arr = coupler.get_newton_body_q_array()
     body_q_np = body_q_arr.numpy() if body_q_arr is not None else None
     foot_tip_positions, foot_tip_rotations = demo_utils.compute_foot_tip_poses(body_q_np, foot_tip_descriptors)
 

@@ -39,13 +39,13 @@ mophi_register_external(
     EXTRA_LIB_NAMES "DEMERuntimeDataHelper"
 )
 
-# TLFEA ships CMake install rules that install headers and the static library,
-# so no HEADER_SRC override is needed.  The static library is named "tlfea_lib".
+# FERIS ships CMake install rules that install headers and the static library,
+# so no HEADER_SRC override is needed.  The static library is named "feris_lib".
 mophi_register_external(
-    NAME     TLFEA
-    URL      "https://github.com/Ruochun/TLFEA"
+    NAME     FERIS
+    URL      "https://github.com/Ruochun/FERIS"
     TAG      "main"
-    LIB_NAME "tlfea_lib"
+    LIB_NAME "feris_lib"
 )
 
 # Newton is a pure Python physics engine (GPU-accelerated, built on NVIDIA Warp).

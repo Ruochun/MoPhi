@@ -1,14 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# demo/tlfea_newton/CMakeLists.txt
+# demo/feris_newton/CMakeLists.txt
 #
-# The TLFEA + Newton demo is a pure Python script.  No C++ executable is
+# The FERIS + Newton demo is a pure Python script.  No C++ executable is
 # built here; the demo is installed alongside the MoPhi Python package so
 # that it can be run with:
 #
-#   python demo/tlfea_newton/demo_tlfea_newton.py
+#   python demo/feris_newton/demo_feris_newton.py
 #
 # Prerequisites:
-#   • MOPHI_BUILD_TLFEA_NEWTON=ON   — builds the TLFEANewtonCoupler library and
+#   • MOPHI_BUILD_FERIS_NEWTON=ON   — builds the FERISNewtonCoupler library and
 #                                     the mophi_core Python extension module.
 #   • pip install newton             — or -DMOPHI_FETCH_NEWTON=ON at configure
 #                                     time to have MoPhi install it automatically.
@@ -17,14 +17,14 @@
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # ── Custom target to run the demo ─────────────────────────────────────────────
-# Adds a `demo_tlfea_newton` build target.  Run with:
-#   cmake --build <build-dir> --target demo_tlfea_newton
-add_custom_target(demo_tlfea_newton
-    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/demo_tlfea_newton.py"
+# Adds a `demo_feris_newton` build target.  Run with:
+#   cmake --build <build-dir> --target demo_feris_newton
+add_custom_target(demo_feris_newton
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/demo_feris_newton.py"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Running TLFEA + Newton co-simulation demo"
+    COMMENT "Running FERIS + Newton co-simulation demo"
     VERBATIM
 )
 
 # ── Installation ───────────────────────────────────────────────────────────────
-install(FILES demo_tlfea_newton.py DESTINATION demo/tlfea_newton)
+install(FILES demo_feris_newton.py DESTINATION demo/feris_newton)
