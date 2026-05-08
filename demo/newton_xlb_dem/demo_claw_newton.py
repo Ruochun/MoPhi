@@ -225,8 +225,8 @@ PLOW_DURATION = 1.6  # [s]
 # Late-stage scoop motion for the last wrist joint (wrist_3, index 5).
 # This overlays the base plowing trajectory near the end of the run so the
 # excavator rotates inward toward the arm before simulation end.
-WRIST_SCOOP_START_FRACTION = 0.75  # start scoop rotation at 75% of total run time
-WRIST_SCOOP_INWARD_DELTA = -0.90   # additional inward wrist_3 rotation [rad]
+WRIST_SCOOP_START_FRACTION = 0.75  # fraction of total simulation duration (NUM_FRAMES * FRAME_DT)
+WRIST_SCOOP_INWARD_DELTA = -0.90   # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
 _WRIST_3_DOF_INDEX = 5
 
 # Number of warm-up render-frames to run Newton alone (without DEME) so the
@@ -799,6 +799,11 @@ if _vis_available:
     )
 
 sim_time = 0.0
+_sim_duration = max(NUM_FRAMES * FRAME_DT, 1.0e-12)
+# Keep scoop phase at/after the end of base plow interpolation so wrist_3
+# overlay does not compete with unfinished ready_to_plow_q -> PLOW_TARGET_Q motion.
+_scoop_start_time = max(WRIST_SCOOP_START_FRACTION * _sim_duration, PLOW_DURATION)
+_scoop_phase_dt = max(_sim_duration - _scoop_start_time, 1.0e-12)
 
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
@@ -818,9 +823,6 @@ for frame in range(NUM_FRAMES):
     _plow_q = (1.0 - _plow_interp) * ready_to_plow_q + _plow_interp * PLOW_TARGET_Q
     _joint_q_cmd = _plow_q.copy()
     if num_ready_dofs > _WRIST_3_DOF_INDEX:
-        _sim_duration = max(NUM_FRAMES * FRAME_DT, 1.0e-12)
-        _scoop_start_time = WRIST_SCOOP_START_FRACTION * _sim_duration
-        _scoop_phase_dt = max(_sim_duration - _scoop_start_time, 1.0e-12)
         _scoop_interp = np.clip((sim_time - _scoop_start_time) / _scoop_phase_dt, 0.0, 1.0)
         _wrist_3_scoop_target = PLOW_TARGET_Q[_WRIST_3_DOF_INDEX] + WRIST_SCOOP_INWARD_DELTA
         _joint_q_cmd[_WRIST_3_DOF_INDEX] = (1.0 - _scoop_interp) * _plow_q[_WRIST_3_DOF_INDEX] + _scoop_interp * _wrist_3_scoop_target
