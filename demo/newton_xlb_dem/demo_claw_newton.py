@@ -1,38 +1,45 @@
 """demo/newton_xlb_dem/demo_claw_newton.py
 
-Newton UR10 robot arm + DEME granular terrain co-simulation demo.
+Newton UR10 robot arm + DEME granular terrain co-simulation demo with plowing.
 
-This demo adds a granular terrain pile to the UR10 excavator arm simulation.
-It reproduces Newton's ``example_robot_ur10`` example inside MoPhi's
-``NewtonXLBDEMCoupler`` framework, demonstrating a single UR10 6-DOF industrial
-robot arm holding a fixed ready-to-plow pose above a pile of DEME-managed
-ellipsoidal particles.
+This demo simulates a UR10 excavator arm plowing into a granular terrain pile
+managed by DEME.  It reproduces Newton's ``example_robot_ur10`` example inside
+MoPhi's ``NewtonXLBDEMCoupler`` framework.
 
-The robot is mounted on a cylindrical pedestal above the ground plane.  All six
-revolute joints are initialized to a fixed target configuration that points the
-tooling toward +Y and keeps the arm above the terrain.
+The robot is mounted on a cylindrical pedestal above the ground plane.  Six
+revolute joints are position-controlled.  The arm starts in a ready-to-plow
+configuration above the pile and its joints are gradually driven toward a
+final plowing configuration that pushes the end-effector downward.
 
-An excavator plow mesh (``data/mesh/excavator.obj``) is rigidly attached to the
-UR10's end-effector link (``ee_link``).  The OBJ file uses centimetre units; the
-mesh is scaled by 0.01 when loaded so it is correctly sized in metres.  The plow
-is mounted with a flipped local orientation so the bowl faces downward for
-plowing.
+An excavator plow mesh (``data/mesh/excavator.obj``) serves dual roles:
 
-DEME granular terrain (Phase 2):
-  A pile of ellipsoidal particles is created using DEME, following the approach
-  of DEM-Engine's ``DEMdemo_Plow.cpp`` demo.  Particles are ellipsoids with
-  semi-axes 2:1:1, sampled layer-by-layer with a Poisson-disk sampler to form
-  a compact pile at ground level.  In this phase the terrain is DEME-only — no
-  interaction with the Newton excavator yet. Particle–excavator coupling will be
-  added in a future phase.
+  1. Visualization in Newton — rigidly attached to the UR10 end-effector link
+     (``ee_link``).  The OBJ file uses centimetre units; it is scaled by 0.01
+     so it is correctly sized in metres.  A 180° local rotation about X makes
+     the bowl face downward.
+
+  2. Contact proxy in DEME — the same OBJ is loaded into DEME as a kinematic
+     mesh body.  Its position and orientation are updated every Newton substep
+     from the arm's computed end-effector pose, so DEME always sees the plow
+     where the arm actually is.
+
+Simulation phases
+-----------------
+  Phase 0 — Newton warm-up: arm drives to the ready-to-plow joint configuration.
+  Phase 1 — DEME settling: granular terrain settles under gravity for
+    ``DEME_SETTLE_TIME`` seconds.  The plow mesh is present in DEME but
+    contact with terrain particles is disabled.
+  Phase 2 — Active plowing: contact is enabled, Newton joint targets ramp from
+    the ready-to-plow pose toward ``PLOW_TARGET_Q`` over ``PLOW_DURATION``
+    seconds, driving the plow downward into the pile.  The DEME plow position
+    is synchronised with Newton's ee_link every substep.
 
 Future phases will add:
-  • DEME–Newton coupling: forces from excavator plow on granular particles.
   • XLB (lattice-Boltzmann) fluid flow around the moving arm.
 
 The demo closely mirrors Newton's ``example_robot_ur10`` setup (single arm,
-SolverMuJoCo, position control) while wrapping all
-physics inside the MoPhi ``NewtonXLBDEMCoupler``.
+SolverMuJoCo, position control) while wrapping all physics inside the MoPhi
+``NewtonXLBDEMCoupler``.
 
 Prerequisites
 -------------
@@ -139,6 +146,35 @@ def _load_obj_mesh(path: str, scale: float = 1.0):
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
 
+def _quat_mul_np(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    """Multiply two quaternions given as [x, y, z, w] numpy arrays.
+
+    Returns the product q1 * q2 as a [x, y, z, w] float32 array.
+    Both Warp and DEME use the [x, y, z, w] quaternion convention.
+    """
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return np.array(
+        [
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ],
+        dtype=np.float32,
+    )
+
+
+def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
+    """Sync DEME plow tracker pose from Newton ee_link transform and return ee position."""
+    _ee_pos = body_q_np[ee_link_body_idx, 0:3].tolist()
+    _ee_quat_np = body_q_np[ee_link_body_idx, 3:7]
+    _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
+    plow_tracker.SetPos(_ee_pos)
+    plow_tracker.SetOriQ(_plow_world_quat)
+    return _ee_pos
+
+
 # ─── Simulation timing ────────────────────────────────────────────────────
 # Physics step sizes are explicit user-facing constants.  Rendering cadence is
 # configured independently; collaboration loop counts are derived from these.
@@ -173,6 +209,51 @@ SIM_DT = NEWTON_DT
 PAUSE_AFTER_FIRST_FRAME = False
 NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run is ≈ 5 s at 50 Hz
 
+# ─── DEME settling and plowing parameters ─────────────────────────────────
+# Time for the granular terrain to settle under gravity before the plow is
+# activated.  Increase this value if particles are still visually moving or
+# if contact forces at plow activation are unexpectedly large.  Monitor
+# particle velocities (via DEME output) to determine a suitable settling time.
+DEME_SETTLE_TIME = 1.0  # [s] — user-changeable
+
+# Target joint configuration for active plowing.
+# In this UR10 setup, a downward cut is achieved by:
+#   • increasing shoulder_lift from the ready pose (less negative angle), and
+#   • decreasing elbow from the ready pose.
+# Keep wrist_2 fixed to preserve the plow tool orientation relative to ground.
+PLOW_TARGET_Q = np.array(
+    # shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
+    [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0],
+    dtype=np.float32,
+)
+
+# Wall-clock (simulation) time over which to linearly interpolate from the
+# ready-to-plow pose to PLOW_TARGET_Q.  Longer values give a slower, gentler
+# plowing motion.
+PLOW_DURATION = 1.6  # [s]
+
+# Late-stage scoop motion for the last wrist joint (wrist_3, index 5).
+# This overlays the base plowing trajectory near the end of the run so the
+# excavator rotates inward toward the arm before simulation end.
+# Fraction of total simulation duration; actual scoop start is clamped to be
+# no earlier than PLOW_DURATION.
+WRIST_SCOOP_START_FRACTION = 0.75
+WRIST_SCOOP_INWARD_DELTA = -1.8  # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
+_WRIST_3_DOF_INDEX = 5
+
+# Number of warm-up render-frames to run Newton alone (without DEME) so the
+# arm settles to its ready-to-plow joint targets before DEME settling begins.
+NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
+
+# Show DEME settling-phase rendering by default.  Set to False to run settling
+# as a single non-rendered blocking call (faster startup / no settling frames).
+RENDER_SETTLING_PHASE = True
+
+# Small tolerance for settling-loop time integration bounds to avoid an extra
+# loop iteration from floating-point roundoff.
+_SETTLING_TIME_EPSILON = 1.0e-12
+_MIN_DURATION_EPSILON = 1.0e-12
+
 # ─── DEME granular terrain constants ──────────────────────────────────────
 # Physics parameters follow DEMdemo_Plow.cpp (projectchrono/DEM-Engine).
 # Ellipsoid template with anisotropic semi-axes; scaling sets the physical particle size.
@@ -199,6 +280,22 @@ _DEM_FILL_HW = 1.0  # pile fill half-width in x and y [m]
 _DEM_FILL_BOT = _DEM_BOWL_BOT + 3.0 * _DEM_TERRAIN_SCALING  # first layer bottom
 _DEM_FILL_H = 5.0  # total pile height [m]
 _DEM_LAYER_STEP = 4.5 * _DEM_TERRAIN_SCALING  # vertical spacing between fill layers
+
+# DEME family IDs for terrain particles and the excavator plow mesh.
+# Terrain particles are placed in family 0 (DEME default).  Plow families
+# start at 10 to leave families 1–9 free for future use (e.g., walls, probes).
+# The plow starts in the sleep family (fixed, contact disabled) during the
+# terrain settling phase, then switches to the active family once contact is
+# enabled for plowing.
+_DEME_TERRAIN_FAMILY = 0  # default family for terrain particles
+_DEME_PLOW_SLEEP_FAMILY = 10  # fixed, contact with terrain disabled during settling
+_DEME_PLOW_ACTIVE_FAMILY = 11  # fixed, contact with terrain enabled during plowing
+
+# Plow local rotation as numpy [x, y, z, w] — mirrors PLOW_LOCAL_ROT
+# (defined below via wp.quat_from_axis_angle about +X by 180°).
+# Used to compose the ee_link world quaternion with the plow's local frame when
+# updating the DEME mesh orientation from Newton's arm state each step.
+_PLOW_LOCAL_ROT_NP = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
 print("=== MoPhi UR10 Claw Arm co-simulation demo ===\n")
@@ -285,6 +382,8 @@ for i in range(len(ur10_sub.joint_target_ke)):
     ur10_sub.joint_target_ke[i] = 500
     ur10_sub.joint_target_kd[i] = 50
     ur10_sub.joint_target_mode[i] = int(JointTargetMode.POSITION)
+# Arm motion is therefore commanded through joint_target_pos values, not by
+# directly applying torques in this demo.
 
 # Replicate into a single-world builder and add the ground plane.
 builder = newton.ModelBuilder()
@@ -347,6 +446,7 @@ else:
 deme_solver = None
 _dem_terrain_tracker = None
 _dem_num_terrain_particles = 0
+_plow_deme_tracker = None  # DEME tracker for the kinematic excavator plow mesh
 
 if _deme_available:
     print("[DEME] Building granular terrain (ellipsoidal particles) ...")
@@ -355,8 +455,8 @@ if _deme_available:
         deme_solver.UseFrictionalHertzianModel()
         deme_solver.SetVerbosity("ERROR")
 
-        mat_walls = deme_solver.LoadMaterial({"E": 1e7, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-        mat_particles = deme_solver.LoadMaterial({"E": 1e7, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+        mat_particles = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
         # Mixed contact properties between wall and particle materials.
         deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
         deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
@@ -407,6 +507,49 @@ if _deme_available:
         deme_solver.SetInitTimeStep(DEME_DT)
         print(f"[DEME] Running at step size {DEME_DT}.\n")
         deme_solver.SetErrorOutAvgContacts(100)
+
+        # ── Excavator plow mesh: contact proxy for the plowing phase ──────────
+        # The same OBJ used by Newton for visualisation is loaded into DEME as a
+        # kinematic mesh body.  Contact with terrain particles is disabled during
+        # settling (sleep family) and enabled only once the arm reaches the pile.
+        #
+        # Family assignment (defined before Initialize()):
+        #   _DEME_PLOW_SLEEP_FAMILY — fixed, no contact with terrain family 0.
+        #   _DEME_PLOW_ACTIVE_FAMILY — fixed, contact with terrain enabled (default).
+        # The mesh switches from sleep to active via ChangeFamily() after settling.
+        # Even though both families are "fixed", the tracker allows externally
+        # updating the mesh pose each step (see pyDEME_ConePenetration.py pattern).
+        if os.path.isfile(EXCAVATOR_OBJ_PATH):
+            try:
+                print(f"[DEME] Loading plow mesh from {EXCAVATOR_OBJ_PATH} ...")
+                _plow_deme_obj = deme_solver.AddWavefrontMeshObject(EXCAVATOR_OBJ_PATH, mat_walls)
+                # Scale from centimetres to metres, matching Newton's plow mesh.
+                _plow_deme_obj.Scale(OBJ_CM_TO_M)
+                # Place above the terrain pile during settling (contact disabled,
+                # so exact position is not critical here).
+                _plow_deme_obj.SetInitPos([_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, 2.0])
+                # Identity quaternion — will be corrected from Newton state after settling.
+                _plow_deme_obj.SetInitQuat([0.0, 0.0, 0.0, 1.0])
+                _plow_deme_obj.SetFamily(_DEME_PLOW_SLEEP_FAMILY)
+                # Both families are fixed so gravity cannot move the mesh;
+                # pose is driven externally via tracker.SetPos / SetOriQ each step.
+                deme_solver.SetFamilyFixed(_DEME_PLOW_SLEEP_FAMILY)
+                deme_solver.SetFamilyFixed(_DEME_PLOW_ACTIVE_FAMILY)
+                # Disable contact between terrain (family 0) and sleep family
+                # so particles fall freely without hitting the plow during settling.
+                deme_solver.DisableContactBetweenFamilies(_DEME_TERRAIN_FAMILY, _DEME_PLOW_SLEEP_FAMILY)
+                _plow_deme_tracker = deme_solver.Track(_plow_deme_obj)
+                print(
+                    f"[DEME] Plow mesh loaded "
+                    f"({_plow_deme_obj.GetNumTriangles()} triangles). "
+                    f"Contact disabled until settling completes.\n"
+                )
+            except Exception as exc:
+                print(f"[DEME] Could not load plow mesh ({exc}) — plow contact disabled.\n")
+                _plow_deme_tracker = None
+        else:
+            print(f"[DEME] WARNING: excavator OBJ not found at {EXCAVATOR_OBJ_PATH} — plow contact omitted.\n")
+
         deme_solver.Initialize()
 
         print(f"[DEME] Granular terrain initialized " f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n")
@@ -415,6 +558,7 @@ if _deme_available:
         deme_solver = None
         _dem_terrain_tracker = None
         _dem_num_terrain_particles = 0
+        _plow_deme_tracker = None
 
 # ─── Initialize the coupler ────────────────────────────────────────────────
 # XLB is passed as None; DEME terrain solver is connected when available
@@ -435,6 +579,12 @@ print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 # ─── Fixed joint target setup (after coupler.initialize()) ───────────────
 # ArticulationView provides structured access to the UR10 articulation's DOFs.
 # The "*ur10*" glob matches all UR10 instances in the model.
+# Control path summary:
+#   1) Write desired joint positions into coupler.newton_control via
+#      articulation_view.set_attribute("joint_target_pos", ...).
+#   2) coupler.step_newton() advances one Newton step using those targets.
+#   3) We update the target every frame by interpolating ready_to_plow_q →
+#      PLOW_TARGET_Q, so shoulder and elbow are actively commanded throughout.
 articulation_view = ArticulationView(
     newton_model,
     "*ur10*",
@@ -451,7 +601,7 @@ dof_count = articulation_view.joint_dof_count
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
 ready_to_plow_q = np.array(
     # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
-    [0.5 * np.pi, -1.25, 1.55, -0.30, -1.0 * np.pi, 0.0],
+    [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 num_ready_dofs = min(dof_count, len(ready_to_plow_q))
@@ -463,26 +613,15 @@ articulation_view.set_attribute("joint_target_pos", coupler.newton_control, join
 
 print(f"[Control] Applied fixed ready-to-plow joint target for {num_ready_dofs} DOFs.\n")
 
-# ─── Movie recording settings ─────────────────────────────────────────────
-# Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
-# Requires: pip install imageio imageio-ffmpeg
-SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
-MOVIE_FPS = SIM_FPS
-
-_movie_writer = None
-if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
-    try:
-        import imageio
-
-        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
-        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
-    except ImportError:
-        print(
-            "WARNING: imageio is not installed — movie recording disabled.\n"
-            "         Install with:  pip install imageio imageio-ffmpeg"
-        )
-        SAVE_MOVIE = False
+# ─── Newton arm warm-up (Phase 0) ─────────────────────────────────────────
+# Run Newton alone for NEWTON_WARMUP_FRAMES render-frames so the stiff
+# position controller drives the arm to its ready-to-plow configuration.
+# After this phase, coupler.newton_state_0.body_q contains the correct
+# end-effector world transform that is used to place the DEME plow mesh.
+print(f"[Newton] Running warm-up ({NEWTON_WARMUP_FRAMES} frames × {SIM_SUBSTEPS} substeps) ...")
+for _ in range(NEWTON_WARMUP_FRAMES * SIM_SUBSTEPS):
+    coupler.step_newton()
+print("[Newton] Warm-up complete.\n")
 
 # ─── DEME terrain visualisation arrays ────────────────────────────────────
 # Clump template geometry mirrors the ellipsoid_2_1_1.csv data fed to the DEME
@@ -507,10 +646,98 @@ if _deme_available and _dem_terrain_tracker is not None and _vis_available and _
     )
     print(f"[Viewer] {_dem_num_terrain_particles} DEME terrain particle(s) registered for visualisation.\n")
 
-# ─── Co-simulation loop ────────────────────────────────────────────────────
+# ─── DEME terrain settling (Phase 1) ──────────────────────────────────────
+# Let the granular pile settle under gravity for DEME_SETTLE_TIME seconds
+# before introducing plow contact.  The plow mesh is present in DEME but
+# contact with terrain particles is disabled (sleep family).
+# DoDynamicsThenSync() is a blocking call that advances DEME internally and
+# returns with a synchronized state — safe to call tracker.SetPos() after it.
+if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+    vis.set_camera(
+        pos=wp.vec3(3.0, -3.0, 2.5),
+        pitch=-25.0,
+        yaw=135.0,
+    )
+
+if deme_solver is not None:
+    print(f"[DEME] Settling terrain for {DEME_SETTLE_TIME:.1f} s ...")
+    if RENDER_SETTLING_PHASE and _vis_available:
+        _settling_time = 0.0
+        _settling_frame_count = 0
+        while _settling_time < DEME_SETTLE_TIME - _SETTLING_TIME_EPSILON:
+            if _vis_available and not vis.is_running():
+                print(f"\n[Viewer] Window closed by user during settling after {_settling_frame_count} frame(s).")
+                break
+            _settling_dt = min(FRAME_DT, DEME_SETTLE_TIME - _settling_time)
+            deme_solver.DoDynamicsThenSync(_settling_dt)
+            _settling_time += _settling_dt
+            _settling_frame_count += 1
+
+            vis.begin_frame(_settling_time)
+            vis.log_state(coupler.newton_state_0)
+            if _dem_terrain_tracker is not None and _dem_terrain_colors_wp is not None:
+                _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
+                _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
+                _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
+                _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+                vis.log_clumps(
+                    "dem_terrain",
+                    _dem_terrain_pos_wp,
+                    _dem_terrain_orient_wp,
+                    _DEM_CLUMP_SPHERE_RADII,
+                    _DEM_CLUMP_SPHERE_OFFSETS,
+                    colors=_dem_terrain_colors_wp,
+                )
+            vis.end_frame()
+    else:
+        deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
+    print("[DEME] Settling complete.\n")
+
+    # After settling, teleport the DEME plow to match the Newton arm's current
+    # end-effector pose, then activate contact.
+    #
+    # Newton body_q layout (per Warp transform): [px, py, pz, qx, qy, qz, qw].
+    # The plow is attached to the ee_link body with local rotation _PLOW_LOCAL_ROT_NP,
+    # so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
+    if _plow_deme_tracker is not None:
+        _body_q_np = coupler.newton_state_0.body_q.numpy()
+        _ee_pos = _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
+        # Switch from sleep family to active family; contact with terrain is
+        # enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
+        # _DEME_TERRAIN_FAMILY).
+        deme_solver.ChangeFamily(_DEME_PLOW_SLEEP_FAMILY, _DEME_PLOW_ACTIVE_FAMILY)
+        _ee_pos_str = ", ".join(f"{v:.3f}" for v in _ee_pos)
+        print(f"[DEME] Plow contact activated.  Plow placed at ({_ee_pos_str}).\n")
+
+# ─── Movie recording settings ─────────────────────────────────────────────
+# Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
+# Requires: pip install imageio imageio-ffmpeg
+SAVE_MOVIE = True
+MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
+MOVIE_FPS = SIM_FPS
+
+_movie_writer = None
+if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
+    try:
+        import imageio
+
+        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
+    except ImportError:
+        print(
+            "WARNING: imageio is not installed — movie recording disabled.\n"
+            "         Install with:  pip install imageio imageio-ffmpeg"
+        )
+        SAVE_MOVIE = False
+
+# ─── Co-simulation loop (Phase 2: active plowing) ─────────────────────────
 # Each frame:
-#   1. For each substep: advance Newton and DEME.
-#   2. Visualize Newton arm state and DEME terrain particles.
+#   1. Ramp Newton joint targets from ready-to-plow toward PLOW_TARGET_Q.
+#   2. For each Newton substep:
+#        a. Advance Newton one substep.
+#        b. Sync DEME plow pose from Newton's ee_link world transform.
+#        c. Advance DEME (DEME_SUBSTEPS micro-steps per Newton substep).
+#   3. Visualize Newton arm state and DEME terrain particles.
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
     f"(frame_dt={FRAME_DT * 1000:.1f} ms, "
@@ -581,6 +808,11 @@ if _vis_available:
     )
 
 sim_time = 0.0
+_sim_duration = max(NUM_FRAMES * FRAME_DT, _MIN_DURATION_EPSILON)
+# Keep scoop phase at/after the end of base plow interpolation so wrist_3
+# overlay does not compete with unfinished ready_to_plow_q -> PLOW_TARGET_Q motion.
+_scoop_start_time = max(WRIST_SCOOP_START_FRACTION * _sim_duration, PLOW_DURATION)
+_scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
@@ -589,17 +821,45 @@ for frame in range(NUM_FRAMES):
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
         break
 
+    # ── Ramp joint targets toward plowing configuration ────────────────────
+    # Linear interpolation from ready_to_plow_q to PLOW_TARGET_Q over
+    # PLOW_DURATION seconds.  This drives shoulder_lift and elbow continuously
+    # every frame; after PLOW_DURATION the arm holds the final pose.
+    #
+    # Near the end of the full simulation, apply an extra inward rotation on
+    # wrist_3 to scoop particles toward the arm's central rod.
+    _plow_interp = np.clip(sim_time / PLOW_DURATION, 0.0, 1.0)
+    _plow_q = (1.0 - _plow_interp) * ready_to_plow_q + _plow_interp * PLOW_TARGET_Q
+    _joint_q_cmd = _plow_q.copy()
+    if num_ready_dofs > _WRIST_3_DOF_INDEX:
+        if sim_time >= _scoop_start_time:
+            _scoop_interp = np.clip((sim_time - _scoop_start_time) / _scoop_phase_dt, 0.0, 1.0)
+            _wrist_3_scoop_target = PLOW_TARGET_Q[_WRIST_3_DOF_INDEX] + WRIST_SCOOP_INWARD_DELTA
+            _joint_q_cmd[_WRIST_3_DOF_INDEX] = (1.0 - _scoop_interp) * _plow_q[
+                _WRIST_3_DOF_INDEX
+            ] + _scoop_interp * _wrist_3_scoop_target
+
+    joint_q_target_np[:, 0, :num_ready_dofs] = _joint_q_cmd[:num_ready_dofs]
+    joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
+    articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
+
     # ── Collaboration loop: counts are derived from explicit dt constants ──
     for _ in range(SIM_SUBSTEPS):
+        # Advance Newton one substep with the current joint targets.
+        coupler.step_newton()
+
+        # Synchronise DEME plow pose with Newton's end-effector world transform.
+        # The plow mesh is kinematic (SetFamilyFixed), so DEME will not move it
+        # on its own; we must update it explicitly every Newton substep.
+        # World orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP (180° about X).
+        if _plow_deme_tracker is not None:
+            _body_q_np = coupler.newton_state_0.body_q.numpy()
+            _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
+
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
-        # Arm control is fixed in this demo phase; DEME advances independently.
         for _ in range(DEME_SUBSTEPS):
-            # Advance DEME granular terrain one micro-step (no coupling to Newton yet).
             if deme_solver is not None:
                 coupler.step_deme()
-
-        # Advance Newton one substep (uses joint targets from the last DEME micro-step).
-        coupler.step_newton()
 
     sim_time += FRAME_DT
 
