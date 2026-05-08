@@ -279,7 +279,7 @@ Use these rules for all demo simulation loops.
   `SIM_SUBSTEPS = round(FRAME_DT / NEWTON_DT)`) may follow the primary block in
   a "derived constants" sub-section, but must not introduce new user-tunable
   magic numbers.
-- Variables that are closely coupled — in particular `ready_to_plow_q` and
+- Variables that are closely coupled — in particular `READY_TO_PLOW_Q` and
   `PLOW_TARGET_Q`, which together define the full arm trajectory — must be
   **adjacent** in the configuration block and accompanied by a comment explaining
   their relationship.

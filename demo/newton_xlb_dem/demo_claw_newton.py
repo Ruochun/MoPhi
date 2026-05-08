@@ -122,24 +122,24 @@ PEDESTAL_HEIGHT = 1.2  # [m]
 OBJ_CM_TO_M = 0.01
 
 # ── Arm joint targets — change both when re-tuning the arm trajectory ─────
-# ready_to_plow_q is the initial pose the arm holds during Newton warm-up.
+# READY_TO_PLOW_Q is the initial pose the arm holds during Newton warm-up.
 # PLOW_TARGET_Q is the end pose reached at PLOW_DURATION; both are in the
 # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
 # These two arrays are closely coupled: always update them together.
-ready_to_plow_q = np.array(
+READY_TO_PLOW_Q = np.array(
     [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 PLOW_TARGET_Q = np.array(
     # A downward cut: shoulder_lift increases (less negative) and elbow decreases
-    # relative to ready_to_plow_q.  Keep wrist_2 fixed to preserve tool orientation.
+    # relative to READY_TO_PLOW_Q.  Keep wrist_2 fixed to preserve tool orientation.
     [0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 
 # ── Phase control ─────────────────────────────────────────────────────────
 # Number of Newton-only warm-up render-frames so the arm settles to
-# ready_to_plow_q before DEME settling begins.
+# READY_TO_PLOW_Q before DEME settling begins.
 NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
 
 # Time for the granular terrain to settle under gravity before plow contact
@@ -147,7 +147,7 @@ NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
 DEME_SETTLE_TIME = 1.0  # [s]
 
 # Wall-clock (simulation) time over which to linearly interpolate from
-# ready_to_plow_q to PLOW_TARGET_Q.  Longer → slower, gentler plowing.
+# READY_TO_PLOW_Q to PLOW_TARGET_Q.  Longer → slower, gentler plowing.
 PLOW_DURATION = 1.6  # [s]
 
 # Show DEME settling-phase rendering by default.  Set to False to run settling
@@ -479,7 +479,7 @@ print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 #   1) Write desired joint positions into coupler.newton_control via
 #      articulation_view.set_attribute("joint_target_pos", ...).
 #   2) coupler.step_newton() advances one Newton step using those targets.
-#   3) We update the target every frame by interpolating ready_to_plow_q →
+#   3) We update the target every frame by interpolating READY_TO_PLOW_Q →
 #      PLOW_TARGET_Q, so shoulder and elbow are actively commanded throughout.
 articulation_view = ArticulationView(
     newton_model,
@@ -495,8 +495,8 @@ dof_count = articulation_view.joint_dof_count
 # Initialize to the ready-to-plow direction defined in the configuration block.
 # Keep any extra DOFs at their current initialized values.
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
-num_ready_dofs = min(dof_count, len(ready_to_plow_q))
-joint_q_target_np[:, 0, :num_ready_dofs] = ready_to_plow_q[:num_ready_dofs]
+num_ready_dofs = min(dof_count, len(READY_TO_PLOW_Q))
+joint_q_target_np[:, 0, :num_ready_dofs] = READY_TO_PLOW_Q[:num_ready_dofs]
 
 joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
 articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
@@ -683,7 +683,7 @@ vis.log_points(
 sim_time = 0.0
 _sim_duration = max(NUM_FRAMES * FRAME_DT, _MIN_DURATION_EPSILON)
 # Keep scoop phase at/after the end of base plow interpolation so wrist_3
-# overlay does not compete with unfinished ready_to_plow_q -> PLOW_TARGET_Q motion.
+# overlay does not compete with unfinished READY_TO_PLOW_Q -> PLOW_TARGET_Q motion.
 _scoop_start_time = max(WRIST_SCOOP_START_FRACTION * _sim_duration, PLOW_DURATION)
 _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 
@@ -695,14 +695,14 @@ for frame in range(NUM_FRAMES):
         break
 
     # ── Ramp joint targets toward plowing configuration ────────────────────
-    # Linear interpolation from ready_to_plow_q to PLOW_TARGET_Q over
+    # Linear interpolation from READY_TO_PLOW_Q to PLOW_TARGET_Q over
     # PLOW_DURATION seconds.  This drives shoulder_lift and elbow continuously
     # every frame; after PLOW_DURATION the arm holds the final pose.
     #
     # Near the end of the full simulation, apply an extra inward rotation on
     # wrist_3 to scoop particles toward the arm's central rod.
     _plow_interp = np.clip(sim_time / PLOW_DURATION, 0.0, 1.0)
-    _plow_q = (1.0 - _plow_interp) * ready_to_plow_q + _plow_interp * PLOW_TARGET_Q
+    _plow_q = (1.0 - _plow_interp) * READY_TO_PLOW_Q + _plow_interp * PLOW_TARGET_Q
     _joint_q_cmd = _plow_q.copy()
     if num_ready_dofs > _WRIST_3_DOF_INDEX:
         if sim_time >= _scoop_start_time:

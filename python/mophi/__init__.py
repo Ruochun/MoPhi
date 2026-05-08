@@ -92,6 +92,11 @@ def fatal(msg: str) -> None:
     bare ``sys.exit()`` calls scattered through demo code and provides a
     consistent error format.
 
+    .. note::
+        This function calls :func:`sys.exit`, which raises :class:`SystemExit`.
+        It is designed for top-level demo scripts and should not be called from
+        library code or test fixtures where clean shutdown is required.
+
     Args:
         msg: Human-readable description of the error, including any remediation
              hint (e.g. which CMake flag to enable or package to install).
