@@ -165,6 +165,16 @@ def _quat_mul_np(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     )
 
 
+def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
+    """Sync DEME plow tracker pose from Newton ee_link transform and return ee position."""
+    _ee_pos = body_q_np[ee_link_body_idx, 0:3].tolist()
+    _ee_quat_np = body_q_np[ee_link_body_idx, 3:7]
+    _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
+    plow_tracker.SetPos(_ee_pos)
+    plow_tracker.SetOriQ(_plow_world_quat)
+    return _ee_pos
+
+
 # ─── Simulation timing ────────────────────────────────────────────────────
 # Physics step sizes are explicit user-facing constants.  Rendering cadence is
 # configured independently; collaboration loop counts are derived from these.
@@ -225,7 +235,9 @@ PLOW_DURATION = 1.6  # [s]
 # Late-stage scoop motion for the last wrist joint (wrist_3, index 5).
 # This overlays the base plowing trajectory near the end of the run so the
 # excavator rotates inward toward the arm before simulation end.
-WRIST_SCOOP_START_FRACTION = 0.75  # fraction of total simulation duration (clamped to start no earlier than PLOW_DURATION)
+# Fraction of total simulation duration; actual scoop start is clamped to be
+# no earlier than PLOW_DURATION.
+WRIST_SCOOP_START_FRACTION = 0.75
 WRIST_SCOOP_INWARD_DELTA = -0.90   # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
 _WRIST_3_DOF_INDEX = 5
 
@@ -689,11 +701,7 @@ if deme_solver is not None:
     # so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
     if _plow_deme_tracker is not None:
         _body_q_np = coupler.newton_state_0.body_q.numpy()
-        _ee_pos = _body_q_np[ee_link_body_idx, 0:3].tolist()
-        _ee_quat_np = _body_q_np[ee_link_body_idx, 3:7]
-        _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
-        _plow_deme_tracker.SetPos(_ee_pos)
-        _plow_deme_tracker.SetOriQ(_plow_world_quat)
+        _ee_pos = _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
         # Switch from sleep family to active family; contact with terrain is
         # enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
         # _DEME_TERRAIN_FAMILY).
@@ -846,11 +854,7 @@ for frame in range(NUM_FRAMES):
         # World orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP (180° about X).
         if _plow_deme_tracker is not None:
             _body_q_np = coupler.newton_state_0.body_q.numpy()
-            _ee_pos = _body_q_np[ee_link_body_idx, 0:3].tolist()
-            _ee_quat_np = _body_q_np[ee_link_body_idx, 3:7]
-            _plow_world_quat = _quat_mul_np(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
-            _plow_deme_tracker.SetPos(_ee_pos)
-            _plow_deme_tracker.SetOriQ(_plow_world_quat)
+            _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
 
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
         for _ in range(DEME_SUBSTEPS):
