@@ -59,10 +59,11 @@ MoPhi/
 │       │   ├── __init__.py
 │       │   ├── opengl_visualizer.py
 │       │   └── omniverse_visualizer.py
-│       └── utilities/           # Shared helper modules (solver-agnostic utilities)
+│       └── utils/               # Shared helper modules (solver-agnostic utilities)
 │           ├── __init__.py
 │           ├── vis_utils.py     # Internal math helpers for visualizer backends
-│           └── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
+│           ├── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
+│           └── math_utils.py    # General-purpose math helpers (quaternion ops, etc.)
 └── demo/
     ├── CMakeLists.txt           # Guards each sub-demo with if(MOPHI_BUILD_<SOLVER>)
     └── <solver_name>/           # One sub-directory per demo
@@ -225,7 +226,7 @@ Key rules for agents:
   modules that callers should not import; MoPhi modules may be imported by demos
   and agents and must have discoverable names.
 - New utility modules shared across multiple backends belong in
-  `python/mophi/utilities/`.
+  `python/mophi/utils/`.
 - New visualizer backends belong in `python/mophi/visualizers/` and must also
   have a mirrored copy in `src/visualization/`.
 
@@ -251,6 +252,41 @@ Use these rules for all demo simulation loops.
   to change frequently (domain size, particle size, speeds, camera offsets, etc.).
 - Keep comments resilient to parameter tuning so they usually remain valid when
   constants are updated.
+
+### Never swallow import or runtime failures
+
+- Import every required package at the top of the demo **without** `try/except`.
+  Python's natural `ModuleNotFoundError` terminates the demo with a clear traceback;
+  add a comment showing the install command above the import if it is not obvious.
+- Never set `_available` flags or have `if _package_available:` branches that
+  silently degrade or skip required functionality.
+- Use `mophi.fatal(msg)` for runtime error conditions that the demo detects
+  explicitly (e.g. a required data file is missing, a feature was not built).
+  `mophi.fatal(msg)` prints the message and calls `sys.exit(1)`.
+- Do **not** use `try: ... except Exception as exc: print(...)` to swallow
+  failures and continue with a reduced configuration.  All failures should
+  terminate the demo immediately with an informative message.
+
+### All simulation parameters must be in a single configuration block
+
+- Define ALL user-tunable constants in a clearly-labelled configuration block
+  immediately after the imports, before any setup or solver-initialization code.
+- The block must include: timing (step sizes, frame count, durations), joint
+  targets, geometry parameters (pedestal height, mesh scale factors), phase-control
+  flags (`RENDER_SETTLING_PHASE`), visualization selection
+  (`USE_OMNIVERSE_VISUALIZATION`), and output settings (`SAVE_MOVIE`, path, FPS).
+- Constants that are *derived* from the primary configuration (e.g.
+  `SIM_SUBSTEPS = round(FRAME_DT / NEWTON_DT)`) may follow the primary block in
+  a "derived constants" sub-section, but must not introduce new user-tunable
+  magic numbers.
+- Variables that are closely coupled — in particular `READY_TO_PLOW_Q` and
+  `PLOW_TARGET_Q`, which together define the full arm trajectory — must be
+  **adjacent** in the configuration block and accompanied by a comment explaining
+  their relationship.
+- Runtime objects whose constructors require an already-initialized library
+  (e.g. `wp.quat_from_axis_angle` after `wp.init()`) may be created immediately
+  after that library's initialization call; they must reference the configuration
+  constants defined in the block above rather than introducing new literal values.
 
 ---
 

@@ -14,6 +14,8 @@ Example usage (requires -DMOPHI_BUILD_TLFEA_DEM=ON at CMake configure time)::
     coupler.finalize()
 """
 
+import sys as _sys
+
 from . import mophi_core  # noqa: F401 — make the C++ module accessible
 
 __all__ = []
@@ -54,7 +56,7 @@ except ImportError:
 # xlb_make_streamline_warp_arrays additionally requires warp (Newton dependency)
 # and performs a lazy import internally, so it is safe to re-export here.
 try:
-    from .utilities.xlb_helpers import (  # noqa: F401
+    from .utils.xlb_helpers import (  # noqa: F401
         xlb_build_streamlines,
         xlb_make_streamline_warp_arrays,
         xlb_make_y_plane_seeds,
@@ -63,6 +65,54 @@ try:
     __all__ += ["xlb_build_streamlines", "xlb_make_streamline_warp_arrays", "xlb_make_y_plane_seeds"]
 except ImportError:
     pass
+
+# General-purpose math helpers (quaternion operations, etc.).
+try:
+    from .utils.math_utils import quat_mul  # noqa: F401
+
+    __all__.append("quat_mul")
+except ImportError:
+    pass
+
+# SurfaceMesh and load_obj are always available — they depend only on the
+# mophi_essentials submodule which is always compiled into mophi_core.
+try:
+    from .mophi_core import SurfaceMesh, load_obj  # noqa: F401
+
+    __all__ += ["SurfaceMesh", "load_obj"]
+except ImportError:
+    pass
+
+
+def fatal(msg: str) -> None:
+    """Print an error message and terminate the process with exit code 1.
+
+    This is the preferred way for MoPhi demos to report unrecoverable errors
+    (missing data files, unsatisfied build requirements, etc.).  It avoids
+    bare ``sys.exit()`` calls scattered through demo code and provides a
+    consistent error format.
+
+    .. note::
+        This function calls :func:`sys.exit`, which raises :class:`SystemExit`.
+        It is designed for top-level demo scripts and should not be called from
+        library code or test fixtures where clean shutdown is required.
+
+    Args:
+        msg: Human-readable description of the error, including any remediation
+             hint (e.g. which CMake flag to enable or package to install).
+
+    Example::
+
+        if not hasattr(mophi, "NewtonXLBDEMCoupler"):
+            mophi.fatal(
+                "mophi.NewtonXLBDEMCoupler is not available.\\n"
+                "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
+            )
+    """
+    _sys.exit(f"\n[MoPhi FATAL] {msg}\n")
+
+
+__all__ += ["fatal"]
 
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.
