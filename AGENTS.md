@@ -40,6 +40,7 @@ MoPhi/
 │   │   │                        #   the aggregate mophi_couplers INTERFACE target
 │   │   └── feris_newton/        # FERIS + Newton coupler
 │   │       ├── CMakeLists.txt
+│   │       ├── PyFERISNewtonCoupler.cpp # Implementation (compiled into mophi_core)
 │   │       └── PyFERISNewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
 │   └── visualization/           # Backend-agnostic visualization layer (pure Python)
 │       ├── README.md            # Design philosophy, API contract, extension guide
@@ -472,7 +473,8 @@ Create a new directory `src/couplers/<name>/` and add these files:
 
 - `#pragma once`
 - Doxygen `///` class comment that names the external solvers owned and the pimpl members
-- Public lifecycle methods: `Initialize(...)`, `Step()`, `Finalize()`
+- Public lifecycle methods: `Initialize(...)`, `Finalize()`
+- Per-solver stepping methods: `StepSolverA()`, `StepSolverB()`, … (one per participating solver — see Rule 4)
 - Private `struct Impl; std::unique_ptr<Impl> impl_;`
 - Delete copy, default move
 
@@ -496,20 +498,20 @@ need for a separate C++ coupler class.  Instead, write a single
 `src/couplers/<name>/PyMyCoupler.h` — declares the struct with pimpl:
 
 - `#pragma once`; include only `<pybind11/pybind11.h>` and standard library headers
-- `struct FERISImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
-- `std::unique_ptr<FERISImpl> fea_;` owns the C++ solver via pimpl
+- `struct CppSolverImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
+- `std::unique_ptr<CppSolverImpl> cpp_solver_;` owns the C++ solver via pimpl
 - `pybind11::object` members for the Python solver objects
 - All lifecycle methods declared (not defined inline): `Initialize(...)`, `Finalize()`
-- Per-solver stepping methods declared: `StepNewton()`, `StepDEME()`, `StepXLB()`, … (one per participating solver)
-- Coupling data-exchange methods: e.g. `GetFERISNodePositions()`, `SetFERISNodeForces()`
+- Per-solver stepping methods declared: `StepSolverA()`, `StepSolverB()`, … (one per participating solver)
+- Coupling data-exchange methods named after the solver they access: e.g. `GetSolverANodePositions()`, `SetSolverANodeForces()`
 - Delete copy, **no** default move (pybind11 objects inhibit trivial move)
 
 `src/couplers/<name>/PyMyCoupler.cpp` — defines pimpl and implements all methods:
 
 - Include `"PyMyCoupler.h"` first, then `<core/Logger.hpp>`, then C++ solver headers
-- `struct PyMyCoupler::FERISImpl { std::unique_ptr<CSolverClass> solver; bool initialized{false}; ... };`
+- `struct PyMyCoupler::CppSolverImpl { std::unique_ptr<CSolverClass> solver; bool initialized{false}; ... };`
 - Constructor initializes pimpl and all `pybind11::none()` objects
-- Destructor calls `Finalize()` when `fea_->initialized` is `true`
+- Destructor calls `Finalize()` when `cpp_solver_->initialized` is `true`
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` — never `std::cout`
 
 This `.cpp` is compiled **directly into `mophi_core`** (not as a separate static
@@ -633,7 +635,7 @@ main README.
 - [ ] Create `src/couplers/<name>/` directory
 - [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, `Initialize`/`Finalize` lifecycle methods, per-solver step methods, delete copy / default move *(C++ coupler)*
 - [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle and per-solver step methods implemented *(C++ coupler)*
-- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl `struct FERISImpl` + `pybind11::object` members; per-solver step methods declared *(Python-only coupler)*
+- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl (e.g. `struct SolverAImpl`) + `pybind11::object` members; per-solver step methods declared *(Python-only coupler)*
 - [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including per-solver step methods *(Python-only coupler)*
 - [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards; **STATIC** lib for C++ coupler or **INTERFACE** lib for Python-only coupler
 - [ ] `if(MOPHI_BUILD_*) add_subdirectory(<name>) endif()` in `src/couplers/CMakeLists.txt`

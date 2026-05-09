@@ -6,9 +6,9 @@ opening a real-time OpenGL window, logging a Newton simulation state, logging
 arbitrary point clouds (DEM particles, XLB streamlines, …), and recording
 frames to an output buffer.
 
-In the future, an ``OmniverseVisualizer`` will offer the same interface backed
-by NVIDIA Omniverse instead of Newton's OpenGL renderer.  Demos can switch
-backends by changing a single constructor call.
+``OmniverseVisualizer`` offers the same interface backed by OpenUSD instead of
+Newton's OpenGL renderer.  Demos can switch backends by changing a single
+constructor call.
 """
 
 from __future__ import annotations

@@ -1,11 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # src/couplers/CMakeLists.txt
 #
-# Builds one static library per co-simulation solver.  Each solver lives in
-# its own subdirectory and has its own CMakeLists.txt.
+# Registers each co-simulation coupler.  Each coupler lives in its own
+# subdirectory and has its own CMakeLists.txt.  Python-only couplers produce
+# an INTERFACE target (no object files); pure C++ couplers produce a STATIC
+# library.
 #
-# Adding a new co-simulation solver:
-#   1. Create src/couplers/<name>/ with <NewCoupler>.h, .cpp, and CMakeLists.txt.
+# Adding a new co-simulation coupler:
+#   1. Create src/couplers/<name>/ with <NewCoupler>.{h,cpp} and CMakeLists.txt.
 #   2. Add an if(MOPHI_BUILD_<NAME>) add_subdirectory(<name>) endif() block below.
 #   3. Add the corresponding option() in the root CMakeLists.txt.
 # ─────────────────────────────────────────────────────────────────────────────

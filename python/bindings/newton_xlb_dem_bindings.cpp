@@ -25,10 +25,10 @@ namespace py = pybind11;
 
 void register_newton_xlb_dem(py::module_& m) {
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
-    // Three-way co-simulation coupler: Newton (walking robot, Python GPU), XLB
-    // (LBM fluid solver, Python GPU), and DEM-Engine (discrete elements, C++/CUDA).
-    // Newton is the primary active solver; XLB and DEM-Engine are placeholders that
-    // are instantiated but do not advance serious physics in Step() yet.
+    // Three-way co-simulation coupler: Newton (walking robot, Python GPU),
+    // XLB (LBM fluid solver, Python GPU), and DEME (Python discrete-element solver,
+    // pip install deme).  Newton is the primary active solver; XLB and DEME are
+    // placeholders that are instantiated but do not advance serious physics yet.
     // PyNewtonXLBDEMCoupler is defined in src/couplers/newton_xlb_dem/.
     py::class_<PyNewtonXLBDEMCoupler>(m, "NewtonXLBDEMCoupler",
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "

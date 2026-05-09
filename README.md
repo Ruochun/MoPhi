@@ -18,8 +18,8 @@ MoPhi/
 │   ├── ExternalProjects.cmake   # ← add new solver URLs here
 │   └── CMakeLists.txt           # Fetches selected external projects
 ├── src/
-│   ├── couplers/                # Multi-physics co-simulation solvers
-│   │   └── feris_newton/              # FERIS (C++) + Newton (Python) coupling
+│   ├── couplers/                # Multi-physics co-simulation couplers
+│   │   └── feris_newton/        # FERIS (C++) + Newton (Python) coupling
 │   └── visualization/           # Backend-agnostic visualization layer (pure Python)
 │       ├── README.md            # ← design philosophy and API contract
 │       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
@@ -55,14 +55,14 @@ cd MoPhi
 # If you already cloned without --recurse-submodules, initialise the submodule manually:
 #   git submodule update --init
 
-# 2. Configure with FERIS and Newton enabled
+# 2. Configure with the desired co-simulation coupler enabled
 cmake -B build \
       -DMOPHI_FETCH_FERIS=ON \
       -DMOPHI_FETCH_NEWTON=ON \
       -DMOPHI_BUILD_FERIS_NEWTON=ON
 cmake --build build
 
-# 3. Run the FERIS + Newton demo from the repo root
+# 3. Run a demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
 ```
 
@@ -76,7 +76,7 @@ cmake -B build \
       -DMOPHI_BUILD_FERIS_NEWTON=ON
 cmake --build build
 
-# Run the Python demo (FERIS solver + Newton double-pendulum as one coupled system)
+# Run the FERIS + Newton demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
 ```
 
@@ -160,12 +160,13 @@ coupler.initialize(newton_model=model, newton_solver=solver, sim_dt=2e-3)
 
 for step in range(steps):
     # Update joint control targets for the trot gait before each step.
-    targets = coupler.newton_control.joint_target.numpy().copy()
+    targets = coupler.newton_control.joint_target_pos.numpy().copy()
     # ... set sinusoidal hip/knee angles based on step * sim_dt ...
-    coupler.newton_control.joint_target.assign(
-        wp.from_numpy(targets, dtype=wp.float32, device="cuda"))
+    wp.copy(coupler.newton_control.joint_target_pos,
+            wp.from_numpy(targets, dtype=wp.float32, device="cuda"))
 
-    coupler.step()
+    coupler.step_newton()  # advance the Newton rigid-body solver
+    coupler.step_deme()    # advance the DEME discrete-element solver
 
     # Extract spatial representation: [{px,py,pz,qx,qy,qz,qw}, ...] per body.
     transforms = coupler.get_robot_body_transforms()
@@ -231,8 +232,11 @@ solver is fully configured.
 
 ## Enabling external solvers
 
-External solvers are downloaded via CMake's `FetchContent` into `external/<Name>/`.
-Control which ones are fetched with the following options:
+External C++ solvers (FERIS, DEM-Engine) are downloaded and built in isolation via
+CMake's `ExternalProject_Add` (through the `mophi_fetch_external` macro) into
+`${CMAKE_BINARY_DIR}/external/<Name>/`.  Pure-Python solvers (Newton, XLB, DEME) are
+installed as pip packages at configure time.  Control which ones are fetched with the
+following options:
 
 | Option | Default | Effect |
 |--------|---------|--------|

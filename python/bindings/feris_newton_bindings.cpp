@@ -4,8 +4,8 @@
 // MOPHI_BUILD_FERIS_NEWTON=ON (FERIS external fetched and built).
 // Newton itself is a pure Python package and is not linked into this module.
 // PyFERISNewtonCoupler (defined in src/couplers/feris_newton/PyFERISNewtonCoupler.h)
-// owns both the C++ FERISNewtonCoupler and the Newton model/solver objects,
-// bridging the two solvers inside a single step() call.
+// owns the FERIS solver objects via a C++ pimpl and the Newton model/solver objects
+// as pybind11::object members, bridging the two solvers inside a single step() call.
 #ifdef MOPHI_HAS_FERIS_NEWTON_COUPLER
     #include "PyFERISNewtonCoupler.h"  // src/couplers/feris_newton/
 #endif
@@ -23,8 +23,8 @@ namespace py = pybind11;
 
 void register_feris_newton(py::module_& m) {
 #ifdef MOPHI_HAS_FERIS_NEWTON_COUPLER
-    // Exposed as PyFERISNewtonCoupler so that the Python class owns both the C++
-    // FERISNewtonCoupler (FERIS side) and the Newton model/solver Python objects.
+    // FERISNewtonCoupler owns the FERIS solver objects in a C++ pimpl (FERISImpl)
+    // and the Newton model/solver objects as pybind11::object members.
     // step() drives the full co-simulation cycle including data exchange.
     // The struct is defined in src/couplers/feris_newton/PyFERISNewtonCoupler.h.
     py::class_<PyFERISNewtonCoupler>(m, "FERISNewtonCoupler",
