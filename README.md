@@ -18,9 +18,8 @@ MoPhi/
 │   ├── ExternalProjects.cmake   # ← add new solver URLs here
 │   └── CMakeLists.txt           # Fetches selected external projects
 ├── src/
-│   ├── couplers/                # Multi-physics co-simulation solvers
-│   │   ├── TLFEADEMCoupler.{h,cpp}    # Direct coupling of TLFEA + DEM-Engine
-│   │   └── TLFEANewtonCoupler.{h,cpp} # TLFEA (C++) + Newton (Python) coupling
+│   ├── couplers/                # Multi-physics co-simulation couplers
+│   │   └── feris_newton/        # FERIS (C++) + Newton (Python) coupling
 │   └── visualization/           # Backend-agnostic visualization layer (pure Python)
 │       ├── README.md            # ← design philosophy and API contract
 │       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
@@ -56,38 +55,32 @@ cd MoPhi
 # If you already cloned without --recurse-submodules, initialise the submodule manually:
 #   git submodule update --init
 
-# 2. Configure with the required external solvers and enable the co-sim solver
+# 2. Configure with the desired co-simulation coupler enabled
 cmake -B build \
-      -DMOPHI_FETCH_TLFEA=ON \
-      -DMOPHI_FETCH_DEMENGINE=ON \
-      -DMOPHI_BUILD_TLFEA_DEM=ON
+      -DMOPHI_FETCH_FERIS=ON \
+      -DMOPHI_FETCH_NEWTON=ON \
+      -DMOPHI_BUILD_FERIS_NEWTON=ON
 cmake --build build
 
-# 4. Use the Python package from the build tree
-PYTHONPATH=python python3 -c "
-import mophi
-c = mophi.TLFEADEMCoupler()
-c.initialize()
-c.step()
-c.finalize()
-"
+# 3. Run a demo
+PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
 ```
 
-### TLFEA + Newton (Python-based GPU physics)
+### FERIS + Newton (Python-based GPU physics)
 
 ```bash
-# Configure: fetch TLFEA, install Newton via pip, and build the coupler
+# Configure: fetch FERIS, install Newton via pip, and build the coupler
 cmake -B build \
-      -DMOPHI_FETCH_TLFEA=ON \
+      -DMOPHI_FETCH_FERIS=ON \
       -DMOPHI_FETCH_NEWTON=ON \
-      -DMOPHI_BUILD_TLFEA_NEWTON=ON
+      -DMOPHI_BUILD_FERIS_NEWTON=ON
 cmake --build build
 
-# Run the Python demo (TLFEA solver + Newton double-pendulum as one coupled system)
-PYTHONPATH=python python3 demo/tlfea_newton/demo_tlfea_newton.py
+# Run the FERIS + Newton demo
+PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
 ```
 
-The `TLFEANewtonCoupler` bridges C++ (TLFEA) and Python (Newton) inside a single
+The `FERISNewtonCoupler` bridges C++ (FERIS) and Python (Newton) inside a single
 `step()` call.  Pass the Newton model and solver at initialization time; the coupler
 manages states, forward-kinematics setup, and the per-step coupling data exchange:
 
@@ -100,21 +93,21 @@ builder = newton.ModelBuilder()
 model  = builder.finalize()
 solver = newton.solvers.SolverXPBD(model)
 
-coupler = mophi.TLFEANewtonCoupler()
+coupler = mophi.FERISNewtonCoupler()
 coupler.initialize(newton_model=model, newton_solver=solver, sim_dt=1e-3)
 
 for _ in range(steps):
-    coupler.step()   # advances TLFEA, exchanges data, advances Newton
+    coupler.step()   # advances FERIS, exchanges data, advances Newton
 
 coupler.finalize()
 ```
 
-**Coupling data exchange** (TLFEA ↔ Newton) is handled by two methods on the C++ side:
+**Coupling data exchange** (FERIS ↔ Newton) is handled by two methods on the C++ side:
 
 | Method | Direction | Purpose |
 |--------|-----------|---------|
-| `get_node_positions()` | TLFEA → Newton | Deformed FEA node positions forwarded to Newton geometry |
-| `set_node_forces(forces)` | Newton → TLFEA | Contact/body forces from Newton applied as TLFEA external loads |
+| `get_feris_node_positions()` | FERIS → Newton | Deformed FEA node positions forwarded to Newton geometry |
+| `set_feris_node_forces(forces)` | Newton → FERIS | Contact/body forces from Newton applied as FERIS external loads |
 
 Newton is installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_NEWTON=ON`.  You can also install it manually beforehand:
@@ -134,8 +127,9 @@ cmake -B build \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
 cmake --build build
 
-# Run the Python demo (walking robot + XLB placeholder + DEME placeholder)
+# Run the Python demo (walking robot + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
+# Run another demo (robotic arm with excavator + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_claw_newton.py
 ```
 
@@ -166,12 +160,13 @@ coupler.initialize(newton_model=model, newton_solver=solver, sim_dt=2e-3)
 
 for step in range(steps):
     # Update joint control targets for the trot gait before each step.
-    targets = coupler.newton_control.joint_target.numpy().copy()
+    targets = coupler.newton_control.joint_target_pos.numpy().copy()
     # ... set sinusoidal hip/knee angles based on step * sim_dt ...
-    coupler.newton_control.joint_target.assign(
-        wp.from_numpy(targets, dtype=wp.float32, device="cuda"))
+    wp.copy(coupler.newton_control.joint_target_pos,
+            wp.from_numpy(targets, dtype=wp.float32, device="cuda"))
 
-    coupler.step()
+    coupler.step_newton()  # advance the Newton rigid-body solver
+    coupler.step_deme()    # advance the DEME discrete-element solver
 
     # Extract spatial representation: [{px,py,pz,qx,qy,qz,qw}, ...] per body.
     transforms = coupler.get_robot_body_transforms()
@@ -190,10 +185,10 @@ If you try to enable the co-simulation solver without first fetching the
 required externals, CMake will emit a clear error:
 
 ```
-CMake Error: MoPhi: Co-simulation solver 'TLFEADEMCoupler' requires the
-external project 'TLFEA', which has not been fetched.
-  Fix: re-run CMake with  -DMOPHI_FETCH_TLFEA=ON
-  URL: https://github.com/Ruochun/TLFEA
+CMake Error: MoPhi: Co-simulation solver 'FERISNewtonCoupler' requires the
+external project 'FERIS', which has not been fetched.
+  Fix: re-run CMake with  -DMOPHI_FETCH_FERIS=ON
+  URL: https://github.com/Ruochun/FERIS
 ```
 
 ---
@@ -204,47 +199,48 @@ Co-simulation solvers in MoPhi (the `couplers/`) hold instances of the
 external solver classes directly — there is no wrapper layer between MoPhi and
 the solvers' own public APIs.
 
-For example, `TLFEADEMCoupler::Impl` owns:
-- `std::unique_ptr<deme::DEMSolver>` — DEM-Engine's main solver class
-- `std::unique_ptr<tlfea::SolverBase>` — TLFEA's solver interface
+For example, `PyFERISNewtonCoupler::FERISImpl` owns:
+- `std::unique_ptr<feris::GPU_FEAT10_Data>` — FERIS element data
+- `std::unique_ptr<feris::SyncedAdamWNocoopSolver>` — FERIS time integrator
 
 The coupler's `initialize()`, `step()`, and `finalize()` methods call the
-solver APIs directly (`dem->Initialize()`, `dem->DoStepDynamics()`,
-`fea->Solve()`, etc.).
+solver APIs directly (`fea_element->Initialize()`, `fea_solver->Solve()`, etc.).
 
-### Coupling a C++ solver with a Python solver (TLFEA + Newton)
+### Coupling a C++ solver with a Python solver (FERIS + Newton)
 
-When one solver is pure C++ (TLFEA) and the other is a pure Python package
+When one solver is pure C++ (FERIS) and the other is a pure Python package
 (Newton), the coupling cannot be done entirely in C++.  MoPhi's solution is a
-**thin Python-facing wrapper struct** (`PyTLFEANewtonCoupler`) defined in
+**thin Python-facing wrapper struct** (`PyFERISNewtonCoupler`) defined in
 `python/bindings/mophi_bindings.cpp`.  This wrapper:
 
-1. Owns the C++ `TLFEANewtonCoupler` as a struct member.
+1. Owns the FERIS solver objects in a C++ pimpl member.
 2. Stores the Newton model, solver, states, control, and contacts as
    `py::object` members (reference-counted Python objects).
 3. Exposes a unified `initialize() / step() / finalize()` interface to Python.
 4. Inside `step()`, drives the full coupling cycle:
-   - Advances TLFEA via `coupler.step()`.
-   - Reads `coupler.get_node_positions()` → forwards to Newton (TODO: update
-     Newton geometry / anchor points).
-   - Advances Newton (clear forces → collide → step → swap states).
-   - Reads Newton forces → applies via `coupler.set_node_forces()` (TODO).
+    - Advances FERIS via `coupler.step()`.
+    - Reads `coupler.get_feris_node_positions()` → forwards to Newton (TODO: update
+      Newton geometry / anchor points).
+    - Advances Newton (clear forces → collide → step → swap states).
+    - Reads Newton forces → applies via `coupler.set_feris_node_forces()` (TODO).
 
-The C++ `TLFEANewtonCoupler` class itself remains free of Python dependencies.
-The two data-exchange methods (`get_node_positions`, `set_node_forces`) document
-the coupling points and will be wired to the real TLFEA API calls once the
+The two data-exchange methods (`get_feris_node_positions`, `set_feris_node_forces`) document
+the coupling points and will be wired to the real FERIS API calls once the
 solver is fully configured.
 
 ---
 
 ## Enabling external solvers
 
-External solvers are downloaded via CMake's `FetchContent` into `external/<Name>/`.
-Control which ones are fetched with the following options:
+External C++ solvers (FERIS, DEM-Engine) are downloaded and built in isolation via
+CMake's `ExternalProject_Add` (through the `mophi_fetch_external` macro) into
+`${CMAKE_BINARY_DIR}/external/<Name>/`.  Pure-Python solvers (Newton, XLB, DEME) are
+installed as pip packages at configure time.  Control which ones are fetched with the
+following options:
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `-DMOPHI_FETCH_TLFEA=ON` | OFF | Download TLFEA FEA solver |
+| `-DMOPHI_FETCH_FERIS=ON` | OFF | Download FERIS FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
 | `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
 | `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install xlb`) |
@@ -274,8 +270,7 @@ Control which ones are fetched with the following options:
 
 | Option | Default | Required externals | Effect |
 |--------|---------|-------------------|--------|
-| `-DMOPHI_BUILD_TLFEA_DEM=ON` | OFF | TLFEA + DEMEngine | Build TLFEA + DEM-Engine coupler |
-| `-DMOPHI_BUILD_TLFEA_NEWTON=ON` | OFF | TLFEA + Newton (pip) + CUDA Toolkit | Build TLFEA + Newton coupler |
+| `-DMOPHI_BUILD_FERIS_NEWTON=ON` | OFF | FERIS + Newton (pip) + CUDA Toolkit | Build FERIS + Newton coupler |
 | `-DMOPHI_BUILD_NEWTON_XLB_DEM=ON` | OFF | Newton (pip) + XLB (pip, optional) + DEME (pip, optional) | Build Newton + XLB + DEME three-way coupler |
 
 If a required external is not fetched, CMake emits a `FATAL_ERROR` at
@@ -333,13 +328,12 @@ backends.
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `MOPHI_FETCH_TLFEA` | OFF | Download TLFEA into `external/TLFEA/` |
+| `MOPHI_FETCH_FERIS` | OFF | Download FERIS into `external/FERIS/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
 | `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
 | `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install xlb`) |
 | `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`pip install deme`) |
-| `MOPHI_BUILD_TLFEA_DEM` | OFF | Build the TLFEA+DEM co-simulation solver |
-| `MOPHI_BUILD_TLFEA_NEWTON` | OFF | Build the TLFEA+Newton co-simulation coupler |
+| `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
 
@@ -349,7 +343,7 @@ backends.
 
 | Name | URL | Role | Type |
 |------|-----|------|------|
-| TLFEA | https://github.com/Ruochun/TLFEA | Total-Lagrangian FEA | C++ (CMake) |
+| FERIS | https://github.com/Ruochun/FERIS | Total-Lagrangian FEA | C++ (CMake) |
 | DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM | C++ / CUDA (CMake) |
 | Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
 | XLB | https://github.com/Autodesk/XLB | GPU lattice-Boltzmann fluid | Pure Python / JAX (pip) |

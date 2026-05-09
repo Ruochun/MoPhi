@@ -217,7 +217,7 @@ std::vector<std::array<double, 7>> PyNewtonXLBDEMCoupler::GetRobotBodyTransforms
 
 // ── On-device data communication infrastructure ────────────────────────────
 
-pybind11::object PyNewtonXLBDEMCoupler::GetBodyQArray() const {
+pybind11::object PyNewtonXLBDEMCoupler::GetNewtonBodyQArray() const {
     if (!newton_available) {
         return pybind11::none();
     }
@@ -234,10 +234,10 @@ void PyNewtonXLBDEMCoupler::SetXLBMasks(pybind11::object bc_mask, pybind11::obje
     MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB bc_mask and missing_mask device handles stored");
 }
 
-pybind11::object PyNewtonXLBDEMCoupler::GetBCMaskArray() const {
+pybind11::object PyNewtonXLBDEMCoupler::GetXLBBCMaskArray() const {
     return xlb_bc_mask;
 }
 
-pybind11::object PyNewtonXLBDEMCoupler::GetMissingMaskArray() const {
+pybind11::object PyNewtonXLBDEMCoupler::GetXLBMissingMaskArray() const {
     return xlb_missing_mask;
 }

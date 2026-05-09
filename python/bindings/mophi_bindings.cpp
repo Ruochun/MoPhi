@@ -12,8 +12,7 @@ namespace py = pybind11;
 // was not enabled at build time.
 // ─────────────────────────────────────────────────────────────────────────────
 
-void register_tlfea_dem(py::module_& m);
-void register_tlfea_newton(py::module_& m);
+void register_feris_newton(py::module_& m);
 void register_newton_xlb_dem(py::module_& m);
 void register_mesh_io(py::module_& m);
 
@@ -37,8 +36,7 @@ PYBIND11_MODULE(mophi_core, m) {
     m.attr("VERBOSITY_INFO") = static_cast<int>(mophi::VERBOSITY_INFO);
 
     // ── Coupler registrations ─────────────────────────────────────────────────
-    register_tlfea_dem(m);
-    register_tlfea_newton(m);
+    register_feris_newton(m);
     register_newton_xlb_dem(m);
 
     // ── MoPhiEssentials mesh I/O ──────────────────────────────────────────────

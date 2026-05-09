@@ -16,7 +16,7 @@ CTestTestfile.cmake
 *Targets.cmake
 
 # External projects downloaded by FetchContent / mophi_fetch_external
-external/TLFEA/
+external/FERIS/
 external/DEMEngine/
 
 # Compiled Python extension module (placed in python/mophi/ at build time)

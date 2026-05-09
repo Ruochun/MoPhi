@@ -25,10 +25,10 @@ namespace py = pybind11;
 
 void register_newton_xlb_dem(py::module_& m) {
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
-    // Three-way co-simulation coupler: Newton (walking robot, Python GPU), XLB
-    // (LBM fluid solver, Python GPU), and DEM-Engine (discrete elements, C++/CUDA).
-    // Newton is the primary active solver; XLB and DEM-Engine are placeholders that
-    // are instantiated but do not advance serious physics in Step() yet.
+    // Three-way co-simulation coupler: Newton (walking robot, Python GPU),
+    // XLB (LBM fluid solver, Python GPU), and DEME (Python discrete-element solver,
+    // pip install deme).  Newton is the primary active solver; XLB and DEME are
+    // placeholders that are instantiated but do not advance serious physics yet.
     // PyNewtonXLBDEMCoupler is defined in src/couplers/newton_xlb_dem/.
     py::class_<PyNewtonXLBDEMCoupler>(m, "NewtonXLBDEMCoupler",
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "
@@ -91,8 +91,8 @@ void register_newton_xlb_dem(py::module_& m) {
              "The list has one entry per Newton body (model.body_count).\n"
              "Returns an empty list when Newton has not been initialized.\n\n"
              "NOTE: this method performs a synchronous GPU→CPU copy.  For the\n"
-             "GPU-native path, use get_body_q_array() instead.")
-        .def("get_body_q_array", &PyNewtonXLBDEMCoupler::GetBodyQArray,
+             "GPU-native path, use get_newton_body_q_array() instead.")
+        .def("get_newton_body_q_array", &PyNewtonXLBDEMCoupler::GetNewtonBodyQArray,
              "Return the device-resident body_q Warp array from newton_state_0.\n\n"
              "body_q has shape (body_count, 7) and stores each body's world-space\n"
              "transform as [px, py, pz, qx, qy, qz, qw].\n"
@@ -103,16 +103,16 @@ void register_newton_xlb_dem(py::module_& m) {
         .def("set_xlb_masks", &PyNewtonXLBDEMCoupler::SetXLBMasks, py::arg("bc_mask"), py::arg("missing_mask"),
              "Bind the XLB bc_mask and missing_mask Warp arrays to this coupler.\n\n"
              "Both arrays are device-resident wp.array objects returned by the XLB\n"
-             "stepper's prepare_fields() call.  After binding, get_bc_mask_array()\n"
-             "and get_missing_mask_array() provide the device handles so that Warp\n"
+             "stepper's prepare_fields() call.  After binding, get_xlb_bc_mask_array()\n"
+             "and get_xlb_missing_mask_array() provide the device handles so that Warp\n"
              "GPU kernels can update the obstacle masks in-place without any CPU copy.\n\n"
              "  bc_mask      : wp.array shape (1, NX, NY, NZ), dtype uint8\n"
              "  missing_mask : wp.array shape (Q, NX, NY, NZ), dtype bool")
-        .def("get_bc_mask_array", &PyNewtonXLBDEMCoupler::GetBCMaskArray,
+        .def("get_xlb_bc_mask_array", &PyNewtonXLBDEMCoupler::GetXLBBCMaskArray,
              "Return the stored XLB bc_mask Warp array, or None if not yet set.\n\n"
              "The array lives on the same device as the XLB stepper.  Warp kernels\n"
              "can write to it in-place to update the robot obstacle boundary condition.")
-        .def("get_missing_mask_array", &PyNewtonXLBDEMCoupler::GetMissingMaskArray,
+        .def("get_xlb_missing_mask_array", &PyNewtonXLBDEMCoupler::GetXLBMissingMaskArray,
              "Return the stored XLB missing_mask Warp array, or None if not yet set.\n\n"
              "The array lives on the same device as the XLB stepper.  Warp kernels\n"
              "can write to it in-place to update the lattice pull-direction flags\n"

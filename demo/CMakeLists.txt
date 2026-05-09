@@ -11,14 +11,9 @@
 #      add_subdirectory(demo/<name>).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── TLFEA + DEM-Engine demo ───────────────────────────────────────────────────
-if(MOPHI_BUILD_TLFEA_DEM)
-    add_subdirectory(tlfea_dem)
-endif()
-
-# ── TLFEA + Newton demo ───────────────────────────────────────────────────────
-if(MOPHI_BUILD_TLFEA_NEWTON)
-    add_subdirectory(tlfea_newton)
+# ── FERIS + Newton demo ───────────────────────────────────────────────────────
+if(MOPHI_BUILD_FERIS_NEWTON)
+    add_subdirectory(feris_newton)
 endif()
 
 # ── Newton + XLB + DEM-Engine three-way co-simulation demo ────────────────────

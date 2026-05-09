@@ -38,13 +38,10 @@ MoPhi/
 │   ├── couplers/                # One sub-directory per co-simulation coupler
 │   │   ├── CMakeLists.txt       # Dispatches to per-coupler add_subdirectory; creates
 │   │   │                        #   the aggregate mophi_couplers INTERFACE target
-│   │   ├── tlfea_dem/           # TLFEA + DEM-Engine coupler
-│   │   │   ├── CMakeLists.txt
-│   │   │   └── TLFEADEMCoupler.{h,cpp}
-│   │   └── tlfea_newton/        # TLFEA + Newton coupler
+│   │   └── feris_newton/        # FERIS + Newton coupler
 │   │       ├── CMakeLists.txt
-│   │       ├── TLFEANewtonCoupler.{h,cpp}
-│   │       └── PyTLFEANewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
+│   │       ├── PyFERISNewtonCoupler.cpp # Implementation (compiled into mophi_core)
+│   │       └── PyFERISNewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
 │   └── visualization/           # Backend-agnostic visualization layer (pure Python)
 │       ├── README.md            # Design philosophy, API contract, extension guide
 │       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
@@ -80,12 +77,12 @@ MoPhi/
 Coupler classes own instances of the participating single-physics solvers **directly**,
 using each solver's own public API without an intervening wrapper layer.
 
-`TLFEADEMCoupler::Impl` is the canonical example:
+`PyFERISNewtonCoupler::FERISImpl` is the canonical example:
 
 ```cpp
-struct TLFEADEMCoupler::Impl {
-    std::unique_ptr<deme::DEMSolver>  dem;   // DEM-Engine's own class
-    std::unique_ptr<tlfea::FEASolver> fea;   // TLFEA's own class
+struct PyFERISNewtonCoupler::FERISImpl {
+    std::unique_ptr<feris::GPU_FEAT10_Data> fea_element;
+    std::unique_ptr<feris::SyncedAdamWNocoopSolver> fea_solver;
 };
 ```
 
@@ -139,6 +136,16 @@ for _ in range(SIM_SUBSTEPS):
 coupler.step_xlb()
 ```
 
+### 4b. Solver-specific method naming is mandatory
+
+If a method operates on one specific solver/system, the method name must include that solver name.
+Do not use ambiguous names that hide the source system.
+
+Examples:
+- `GetNewtonBodyQArray()` (not `GetBodyQArray()`)
+- `GetFERISNodePositions()` / `SetFERISNodeForces(...)`
+- `GetXLBBCMaskArray()` / `GetXLBMissingMaskArray()`
+
 ### 5. Non-copyable, movable coupler classes
 
 Because couplers own resources (GPU contexts, open files, etc.) they must **never** be copied.
@@ -180,7 +187,7 @@ MoPhiEssentials headers) without any additional `target_link_libraries` calls.
 
 ### Does MoPhiEssentials interfere with solvers that also use it internally?
 
-No.  Solvers like TLFEA that carry MoPhiEssentials as their own submodule are built via
+No.  Solvers like FERIS that carry MoPhiEssentials as their own submodule are built via
 `ExternalProject_Add` in a **completely isolated build environment** — they have no CMake target
 visibility into MoPhi's parent build.  The two copies of MoPhiEssentials are completely independent
 and do not conflict.
@@ -364,12 +371,12 @@ succeed for users who do not need CUDA or Eigen.
 For example:
 
 ```cmake
-if(MOPHI_BUILD_TLFEA_DEM)
+if(MOPHI_BUILD_FERIS_NEWTON)
     if(NOT CUDAToolkit_FOUND)
-        message(FATAL_ERROR "MoPhi: Building TLFEADEMCoupler requires the CUDA Toolkit ...")
+        message(FATAL_ERROR "MoPhi: Building FERISNewtonCoupler requires the CUDA Toolkit ...")
     endif()
     if(NOT Eigen3_FOUND)
-        message(FATAL_ERROR "MoPhi: Building TLFEADEMCoupler requires Eigen3 ...")
+        message(FATAL_ERROR "MoPhi: Building FERISNewtonCoupler requires Eigen3 ...")
     endif()
     ...
 endif()
@@ -414,7 +421,7 @@ When `LIB_NAME` is given it also carries `IMPORTED_LOCATION` for the static libr
 
 | Use case | Tool |
 |----------|------|
-| Third-party solvers (TLFEA, DEM-Engine, …) | `ExternalProject_Add` via `mophi_fetch_external` |
+| Third-party solvers (FERIS, DEM-Engine, …) | `ExternalProject_Add` via `mophi_fetch_external` |
 | Pure build helpers with no generated headers (pybind11) | `FetchContent` |
 | Required always-on utilities shared across all solvers (MoPhiEssentials) | git submodule + `add_subdirectory` |
 
@@ -425,7 +432,7 @@ When `LIB_NAME` is given it also carries `IMPORTED_LOCATION` for the static libr
 
 ## Adding a new co-simulation solver
 
-Follow these steps exactly; use `TLFEADEMCoupler` as the reference implementation.
+Follow these steps exactly; use `PyFERISNewtonCoupler` as the reference implementation.
 
 ### 1. Register and fetch the external solvers
 
@@ -462,11 +469,12 @@ If the new solver requires a system package (CUDA, Eigen, OpenCL, …), add the 
 
 Create a new directory `src/couplers/<name>/` and add these files:
 
-`src/couplers/<name>/MyCoupler.h` — follow the structure of `TLFEADEMCoupler.h`:
+`src/couplers/<name>/MyCoupler.h` — follow the structure of existing coupler headers:
 
 - `#pragma once`
 - Doxygen `///` class comment that names the external solvers owned and the pimpl members
-- Public lifecycle methods: `Initialize(...)`, `Step()`, `Finalize()`
+- Public lifecycle methods: `Initialize(...)`, `Finalize()`
+- Per-solver stepping methods: `StepSolverA()`, `StepSolverB()`, … (one per participating solver — see Rule 4)
 - Private `struct Impl; std::unique_ptr<Impl> impl_;`
 - Delete copy, default move
 
@@ -490,20 +498,20 @@ need for a separate C++ coupler class.  Instead, write a single
 `src/couplers/<name>/PyMyCoupler.h` — declares the struct with pimpl:
 
 - `#pragma once`; include only `<pybind11/pybind11.h>` and standard library headers
-- `struct TLFEAImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
-- `std::unique_ptr<TLFEAImpl> fea_;` owns the C++ solver via pimpl
+- `struct CppSolverImpl;` forward-declaration for the pimpl (keeps C++-solver headers out)
+- `std::unique_ptr<CppSolverImpl> cpp_solver_;` owns the C++ solver via pimpl
 - `pybind11::object` members for the Python solver objects
 - All lifecycle methods declared (not defined inline): `Initialize(...)`, `Finalize()`
-- Per-solver stepping methods declared: `StepNewton()`, `StepDEME()`, `StepXLB()`, … (one per participating solver)
-- Coupling data-exchange methods: e.g. `GetNodePositions()`, `SetNodeForces()`
+- Per-solver stepping methods declared: `StepSolverA()`, `StepSolverB()`, … (one per participating solver)
+- Coupling data-exchange methods named after the solver they access: e.g. `GetSolverANodePositions()`, `SetSolverANodeForces()`
 - Delete copy, **no** default move (pybind11 objects inhibit trivial move)
 
 `src/couplers/<name>/PyMyCoupler.cpp` — defines pimpl and implements all methods:
 
 - Include `"PyMyCoupler.h"` first, then `<core/Logger.hpp>`, then C++ solver headers
-- `struct PyMyCoupler::TLFEAImpl { std::unique_ptr<CSolverClass> solver; bool initialized{false}; ... };`
+- `struct PyMyCoupler::CppSolverImpl { std::unique_ptr<CSolverClass> solver; bool initialized{false}; ... };`
 - Constructor initializes pimpl and all `pybind11::none()` objects
-- Destructor calls `Finalize()` when `fea_->initialized` is `true`
+- Destructor calls `Finalize()` when `cpp_solver_->initialized` is `true`
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` — never `std::cout`
 
 This `.cpp` is compiled **directly into `mophi_core`** (not as a separate static
@@ -515,10 +523,9 @@ After writing source files, **run `.format_all`** before committing.
 
 Create `src/couplers/<name>/CMakeLists.txt`:
 
-- **C++ coupler** (see `tlfea_dem/CMakeLists.txt`): build a `STATIC` library from
-  `MyCoupler.cpp`, link it `PUBLIC` against the required externals, and add it to
-  `mophi_couplers INTERFACE`.
-- **Python-only coupler** (see `tlfea_newton/CMakeLists.txt`): build an `INTERFACE`
+- **C++ coupler**: build a `STATIC` library from `MyCoupler.cpp`, link it `PUBLIC`
+  against the required externals, and add it to `mophi_couplers INTERFACE`.
+- **Python-only coupler** (see `feris_newton/CMakeLists.txt`): build an `INTERFACE`
   library (no object files — just carries the link and include requirements), add it
   to `mophi_couplers INTERFACE`.  The `.cpp` implementation is compiled into
   `mophi_core` by `python/CMakeLists.txt`.
@@ -628,7 +635,7 @@ main README.
 - [ ] Create `src/couplers/<name>/` directory
 - [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, `Initialize`/`Finalize` lifecycle methods, per-solver step methods, delete copy / default move *(C++ coupler)*
 - [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle and per-solver step methods implemented *(C++ coupler)*
-- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl `struct TLFEAImpl` + `pybind11::object` members; per-solver step methods declared *(Python-only coupler)*
+- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl (e.g. `struct SolverAImpl`) + `pybind11::object` members; per-solver step methods declared *(Python-only coupler)*
 - [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including per-solver step methods *(Python-only coupler)*
 - [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards; **STATIC** lib for C++ coupler or **INTERFACE** lib for Python-only coupler
 - [ ] `if(MOPHI_BUILD_*) add_subdirectory(<name>) endif()` in `src/couplers/CMakeLists.txt`

@@ -44,18 +44,18 @@
 // accessor methods so that callers can reach device arrays directly, without
 // a GPU→CPU copy:
 //
-//   GetBodyQArray()        — returns newton_state_0.body_q  (Warp array,
+//   GetNewtonBodyQArray()        — returns newton_state_0.body_q  (Warp array,
 //                            shape (body_count, 7), dtype wp.transform)
-//   GetBCMaskArray()       — returns the stored XLB bc_mask Warp array
+//   GetXLBBCMaskArray()       — returns the stored XLB bc_mask Warp array
 //                            (shape (1, NX, NY, NZ), dtype uint8)
-//   GetMissingMaskArray()  — returns the stored XLB missing_mask Warp array
+//   GetXLBMissingMaskArray()  — returns the stored XLB missing_mask Warp array
 //                            (shape (Q, NX, NY, NZ), dtype bool)
 //   SetXLBMasks(bc, mm)    — binds the XLB bc_mask / missing_mask Warp arrays
 //                            to this coupler instance
 //
-// The demo uses GetBodyQArray() to derive the robot AABB on GPU and then
-// launches Warp kernels that write directly into GetBCMaskArray() and
-// GetMissingMaskArray(), replacing the former CPU numpy path entirely.
+// The demo uses GetNewtonBodyQArray() to derive the robot AABB on GPU and then
+// launches Warp kernels that write directly into GetXLBBCMaskArray() and
+// GetXLBMissingMaskArray(), replacing the former CPU numpy path entirely.
 //
 // Lives in src/couplers/newton_xlb_dem/.
 // The declaration is compiled as part of the mophi_core Python extension module
@@ -148,7 +148,7 @@ struct PyNewtonXLBDEMCoupler {
     /// has not been initialized.
     ///
     /// @note This method performs a synchronous GPU→CPU copy via body_q.numpy().
-    ///       For GPU-native (zero-copy) access, use GetBodyQArray() instead and
+    ///       For GPU-native (zero-copy) access, use GetNewtonBodyQArray() instead and
     ///       work directly with the returned Warp array (e.g. wp.to_torch()).
     std::vector<std::array<double, 7>> GetRobotBodyTransforms() const;
 
@@ -167,13 +167,13 @@ struct PyNewtonXLBDEMCoupler {
     ///   • body_q.numpy()           — CPU copy, same as before but through the
     ///                                 device-handle interface (good for small reads)
     ///   • wp.to_torch(body_q)[...]  — zero-copy PyTorch view on the same device
-    pybind11::object GetBodyQArray() const;
+    pybind11::object GetNewtonBodyQArray() const;
 
     /// @brief Bind the XLB bc_mask and missing_mask Warp arrays to this coupler.
     ///
     /// Both arrays are device-resident wp.array objects returned by the XLB
-    /// stepper's prepare_fields() call.  After binding, GetBCMaskArray() and
-    /// GetMissingMaskArray() return these handles so that Warp GPU kernels in
+    /// stepper's prepare_fields() call.  After binding, GetXLBBCMaskArray() and
+    /// GetXLBMissingMaskArray() return these handles so that Warp GPU kernels in
     /// the demo can update the obstacle masks in-place without any CPU copy or
     /// array reallocation.
     ///
@@ -182,8 +182,8 @@ struct PyNewtonXLBDEMCoupler {
     void SetXLBMasks(pybind11::object bc_mask, pybind11::object missing_mask);
 
     /// @brief Return the stored XLB bc_mask Warp array, or None if not yet set.
-    pybind11::object GetBCMaskArray() const;
+    pybind11::object GetXLBBCMaskArray() const;
 
     /// @brief Return the stored XLB missing_mask Warp array, or None if not yet set.
-    pybind11::object GetMissingMaskArray() const;
+    pybind11::object GetXLBMissingMaskArray() const;
 };
