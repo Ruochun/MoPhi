@@ -127,8 +127,9 @@ cmake -B build \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
 cmake --build build
 
-# Run the Python demo (walking robot + XLB placeholder + DEME placeholder)
+# Run the Python demo (walking robot + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
+# Run another demo (robotic arm with excavator + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_claw_newton.py
 ```
 
