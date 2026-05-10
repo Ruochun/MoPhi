@@ -707,6 +707,10 @@ _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 if ENABLE_DEME_FORCE_FEEDBACK:
     _ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
     _deme_contact_force_np = np.zeros(3, dtype=np.float32)  # world-space [Fx, Fy, Fz]
+    # Force feedback uses a one-Newton-substep lag: the DEME contact force queried
+    # at the end of substep N is injected into Newton at substep N+1.  At
+    # NEWTON_DT = 2 ms this lag is at most one substep (2 ms), well within the
+    # coupling bandwidth of the position-controlled arm at RENDER_FPS = 50 Hz.
 
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.

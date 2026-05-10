@@ -114,7 +114,11 @@ void PyNewtonXLBDEMCoupler::StepNewton() {
         py::object body_f_np = body_f.attr("numpy")();
         py::object ext_np = newton_ext_body_forces.attr("numpy")();
 
-        // Accumulate: body_f += ext_forces (CPU round-trip; acceptable for demo fidelity).
+        // Accumulate: body_f += ext_forces.
+        // The GPU→CPU→GPU round-trip is intentional: Warp does not yet expose an
+        // in-place scatter-add kernel through pybind11, and the body_count for a
+        // single UR10 arm (~20 bodies) is small enough that the copy cost is
+        // negligible compared with the DEME micro-steps executed per Newton substep.
         py::object summed_np = np.attr("add")(body_f_np, ext_np);
 
         // Write the summed array back into the device-resident wp.array.
