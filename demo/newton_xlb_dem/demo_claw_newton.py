@@ -160,6 +160,15 @@ WRIST_SCOOP_START_FRACTION = 0.75
 WRIST_SCOOP_INWARD_DELTA = -1.8  # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
 _WRIST_3_DOF_INDEX = 5  # UR10 joint order: wrist_3 is the last (0-based index 5)
 
+# ── DEME → Newton force feedback ─────────────────────────────────────────
+# When True, the net contact force reported by DEME for the plow mesh is fed
+# back into Newton as an external body force on the ee_link each substep.
+# Newton's position controller must then generate additional joint torques to
+# maintain tracking under the granular load, so the arm's dynamics realistically
+# reflect the resistance of the terrain.  The initial and final joint targets are
+# unchanged; only the effort required to reach them is affected.
+ENABLE_DEME_FORCE_FEEDBACK = True
+
 # ── Visualization & output ────────────────────────────────────────────────
 # Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD file
 # (requires: pip install usd-core).  False uses Newton's real-time OpenGL window.
@@ -608,9 +617,11 @@ if SAVE_MOVIE and not USE_OMNIVERSE_VISUALIZATION:
 # Each frame:
 #   1. Ramp Newton joint targets from ready-to-plow toward PLOW_TARGET_Q.
 #   2. For each Newton substep:
-#        a. Advance Newton one substep.
-#        b. Sync DEME plow pose from Newton's ee_link world transform.
-#        c. Advance DEME (DEME_SUBSTEPS micro-steps per Newton substep).
+#        a. Pass the DEME contact force from the previous substep to Newton (if enabled).
+#        b. Advance Newton one substep.
+#        c. Sync DEME plow pose from Newton's ee_link world transform.
+#        d. Advance DEME (DEME_SUBSTEPS micro-steps per Newton substep).
+#        e. Query the updated DEME contact force for use in the next substep.
 #   3. Visualize Newton arm state and DEME terrain particles.
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
@@ -687,6 +698,16 @@ _sim_duration = max(NUM_FRAMES * FRAME_DT, _MIN_DURATION_EPSILON)
 _scoop_start_time = max(WRIST_SCOOP_START_FRACTION * _sim_duration, PLOW_DURATION)
 _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 
+# ─── DEME → Newton force feedback setup ───────────────────────────────────────
+# A reusable (body_count, 6) float32 scratch buffer for building the external-force
+# wp.array passed to the coupler each substep.  Only the ee_link entry is written;
+# all other entries stay zero.  The DEME force from the previous substep is kept in
+# _deme_contact_force_np and re-used as the injection for the current substep (one
+# substep lag — acceptable for this co-simulation cadence).
+if ENABLE_DEME_FORCE_FEEDBACK:
+    _ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
+    _deme_contact_force_np = np.zeros(3, dtype=np.float32)  # world-space [Fx, Fy, Fz]
+
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
     # For OmniverseVisualizer, vis.is_running() always returns True.
@@ -718,6 +739,13 @@ for frame in range(NUM_FRAMES):
 
     # ── Collaboration loop: counts are derived from explicit dt constants ──
     for _ in range(SIM_SUBSTEPS):
+        # If force feedback is enabled, inject the DEME contact force (from the
+        # previous DEME micro-step cycle) into Newton before this substep so the
+        # integrator sees the granular resistance alongside joint-actuator torques.
+        if ENABLE_DEME_FORCE_FEEDBACK:
+            _ext_forces_np[ee_link_body_idx, :3] = _deme_contact_force_np
+            coupler.set_newton_body_forces(wp.array(_ext_forces_np, dtype=wp.spatial_vector))
+
         # Advance Newton one substep with the current joint targets.
         coupler.step_newton()
 
@@ -731,6 +759,11 @@ for frame in range(NUM_FRAMES):
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
         for _ in range(DEME_SUBSTEPS):
             coupler.step_deme()
+
+        # Query the net contact force on the plow after DEME micro-steps complete.
+        # This value will be injected into Newton at the start of the next substep.
+        if ENABLE_DEME_FORCE_FEEDBACK:
+            _deme_contact_force_np[:] = np.array(_plow_deme_tracker.ContactForces(), dtype=np.float32)
 
     sim_time += FRAME_DT
 

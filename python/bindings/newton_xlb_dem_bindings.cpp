@@ -117,6 +117,18 @@ void register_newton_xlb_dem(py::module_& m) {
              "The array lives on the same device as the XLB stepper.  Warp kernels\n"
              "can write to it in-place to update the lattice pull-direction flags\n"
              "for the robot obstacle boundary condition.")
+        .def("set_newton_body_forces", &PyNewtonXLBDEMCoupler::SetNewtonBodyForces, py::arg("ext_forces_wp"),
+             "Register external body forces to be applied in the next step_newton() call.\n\n"
+             "ext_forces_wp must be a wp.array of shape (body_count,) with dtype\n"
+             "wp.spatial_vector.  Each entry is [fx, fy, fz, tx, ty, tz] in world space.\n"
+             "The forces are added to body_f after clear_forces() and collide() but\n"
+             "before step(), so the Newton integrator sees both collision and injected\n"
+             "forces together.  Pass None to disable force injection.\n\n"
+             "Typical use — feed DEME granular contact forces back to the robot arm:\n\n"
+             "    forces_np = np.zeros((model.body_count, 6), dtype=np.float32)\n"
+             "    forces_np[ee_link_idx, :3] = plow_tracker.ContactForces()\n"
+             "    coupler.set_newton_body_forces(\n"
+             "        wp.array(forces_np, dtype=wp.spatial_vector))")
         .def_readwrite("newton_control", &PyNewtonXLBDEMCoupler::newton_control,
                        "The Newton control object.  Write joint_target_pos values here before\n"
                        "calling step() to drive the robot's joints.")

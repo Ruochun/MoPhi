@@ -86,6 +86,13 @@ struct PyNewtonXLBDEMCoupler {
     pybind11::object xlb_bc_mask;       ///< wp.array (1, NX, NY, NZ) uint8,  or None
     pybind11::object xlb_missing_mask;  ///< wp.array (Q, NX, NY, NZ) bool,   or None
 
+    // External body forces injected by a coupled solver (e.g. DEME contact forces).
+    // Stored as a wp.array of shape (body_count,) dtype=wp.spatial_vector, or None.
+    // Applied inside StepNewton() after clear_forces()+collide() and before step(),
+    // so Newton integrates them together with internal joint-actuator torques.
+    // Set via SetNewtonBodyForces(); cleared to None in Finalize().
+    pybind11::object newton_ext_body_forces;  ///< wp.array (body_count,) spatial_vector, or None
+
     double sim_dt{1.0 / 1000.0};  ///< Co-simulation time step [s]
     int step_count{0};            ///< Number of StepNewton() calls completed
     bool deme_available{false};
@@ -186,4 +193,24 @@ struct PyNewtonXLBDEMCoupler {
 
     /// @brief Return the stored XLB missing_mask Warp array, or None if not yet set.
     pybind11::object GetXLBMissingMaskArray() const;
+
+    // ── DEME → Newton force feedback ───────────────────────────────────────────
+
+    /// @brief Register an external body-force array to be applied in the next StepNewton() call.
+    ///
+    /// @p ext_forces_wp must be a wp.array of shape (body_count,) with dtype
+    /// wp.spatial_vector.  Each entry is [fx, fy, fz, tx, ty, tz] in world space.
+    ///
+    /// StepNewton() adds the forces to \c newton_state_0.body_f after
+    /// clear_forces() and collide() but before step().  The stored array is
+    /// replaced every time this method is called; pass \c None to disable force
+    /// injection for subsequent steps.
+    ///
+    /// Typical usage (once per Newton substep):
+    /// @code
+    ///   forces_np = np.zeros((model.body_count, 6), dtype=np.float32)
+    ///   forces_np[ee_link_body_idx, :3] = deme_tracker.ContactForces()
+    ///   coupler.set_newton_body_forces(wp.array(forces_np, dtype=wp.spatial_vector))
+    /// @endcode
+    void SetNewtonBodyForces(pybind11::object ext_forces_wp);
 };
