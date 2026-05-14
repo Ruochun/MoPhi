@@ -33,8 +33,8 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install --upgrade newton warp-lang torch
-  • pip install xlb                         (XLB LBM solver)
+  • pip install --upgrade newton warp-lang mujoco==3.6.0 torch
+  • pip install "xlb[cuda]"                (XLB LBM solver)
   • pip install deme                        (DEME discrete-element solver)
 
 Running
@@ -69,21 +69,27 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
         "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# ─── Import Newton + Warp + PyTorch ────────────────────────────────────────
+# ─── Import Newton + Warp + MuJoCo + PyTorch ───────────────────────────────
 if find_spec("torch") is None:
     mophi.fatal("PyTorch is required for this demo.\nInstall with:  pip install torch")
-if find_spec("newton") is None or find_spec("warp") is None:
+if find_spec("newton") is None or find_spec("warp") is None or find_spec("mujoco") is None:
     mophi.fatal(
-        "Newton and Warp are required for this demo.\n"
-        "Install with:  pip install --upgrade newton warp-lang"
+        "Newton, Warp, and MuJoCo are required for this demo.\n"
+        "Install with:  pip install --upgrade newton warp-lang mujoco==3.6.0"
     )
 import torch
 import newton
 import warp as wp
+import mujoco
 
 REQUIRED_NEWTON_VERSION = "1.0.0"
 REQUIRED_WARP_VERSION = "1.12.1"
-mophi.check_newton_warp_versions(REQUIRED_NEWTON_VERSION, REQUIRED_WARP_VERSION)
+REQUIRED_MUJOCO_VERSION = "3.6.0"
+mophi.check_newton_warp_mujoco_versions(
+    REQUIRED_NEWTON_VERSION,
+    REQUIRED_WARP_VERSION,
+    REQUIRED_MUJOCO_VERSION,
+)
 
 # ─── Import demo-specific utilities ──────────────────────────────────────────
 # newton_xlb_dem_utils.py lives in the same directory as this script.
@@ -94,7 +100,7 @@ import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
 # ─── Import XLB + DEME (required for this three-way demo) ──────────────────
 if find_spec("xlb") is None:
-    mophi.fatal("XLB is required for this demo.\nInstall with:  pip install xlb")
+    mophi.fatal("XLB is required for this demo.\nInstall with:  pip install \"xlb[cuda]\"")
 if find_spec("DEME") is None:
     mophi.fatal("DEME is required for this demo.\nInstall with:  pip install deme")
 import xlb

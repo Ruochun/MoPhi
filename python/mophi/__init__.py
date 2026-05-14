@@ -68,9 +68,17 @@ except ImportError:
 
 # Package-version helper utilities.
 try:
-    from .utils.version_checker import check_newton_warp_versions, check_python_package_versions  # noqa: F401
+    from .utils.version_checker import (  # noqa: F401
+        check_newton_warp_mujoco_versions,
+        check_newton_warp_versions,
+        check_python_package_versions,
+    )
 
-    __all__ += ["check_newton_warp_versions", "check_python_package_versions"]
+    __all__ += [
+        "check_newton_warp_mujoco_versions",
+        "check_newton_warp_versions",
+        "check_python_package_versions",
+    ]
 except ImportError:
     pass
 

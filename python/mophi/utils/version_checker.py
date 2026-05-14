@@ -55,6 +55,35 @@ def check_python_package_versions(
     return False
 
 
+def check_newton_warp_mujoco_versions(
+    required_newton_version: str,
+    required_warp_version: str,
+    required_mujoco_version: str,
+    *,
+    strict: bool = False,
+) -> bool:
+    """Check Newton, Warp, and MuJoCo packages with warning-on-mismatch by default.
+
+    Args:
+        required_newton_version: Required Newton package version.
+        required_warp_version: Required Warp package version.
+        required_mujoco_version: Required MuJoCo package version.
+        strict: Whether to raise on mismatch instead of warning.
+
+    Returns:
+        True if all package versions match requirements, else False.
+    """
+    return check_python_package_versions(
+        {
+            "newton": required_newton_version,
+            "warp": required_warp_version,
+            "mujoco": required_mujoco_version,
+        },
+        package_names={"newton": "newton", "warp": "warp-lang", "mujoco": "mujoco"},
+        strict=strict,
+    )
+
+
 def check_newton_warp_versions(
     required_newton_version: str,
     required_warp_version: str,

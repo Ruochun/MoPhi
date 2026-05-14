@@ -106,6 +106,9 @@ Wraps Newton's `newton.viewer.ViewerGL` behind the stable MoPhi interface.
 **Dependencies**: `newton` Python package (imported lazily inside `__init__`
 so that the rest of MoPhi works without it).
 
+If you are running under WSL and the OpenGL window does not appear, confirm that
+WSLg GUI support is installed and working before debugging the MoPhi viewer path.
+
 **Constructor**: `OpenGLVisualizer(model)` — the Newton model is required at
 construction time because `ViewerGL.set_model()` must be called before the
 first frame is rendered.

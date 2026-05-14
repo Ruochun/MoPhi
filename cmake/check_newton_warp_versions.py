@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate required Newton/Warp Python package versions."""
+"""Validate required Newton/Warp/MuJoCo Python package versions."""
 
 import argparse
 import importlib
@@ -10,12 +10,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--newton-version", required=True)
     parser.add_argument("--warp-version", required=True)
+    parser.add_argument("--mujoco-version", required=True)
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
     required = {
         "newton": args.newton_version,
         "warp": args.warp_version,
+        "mujoco": args.mujoco_version,
     }
     errors = []
     for module_name, version in required.items():
@@ -38,10 +40,11 @@ def main() -> int:
                 f"Required:\n"
                 f"  - newton=={args.newton_version}\n"
                 f"  - warp-lang=={args.warp_version}\n"
+                f"  - mujoco=={args.mujoco_version}\n"
                 f"Problems:\n{details}\n\n"
                 "Install/fix with:\n"
                 f"  python -m pip install --upgrade newton=={args.newton_version} "
-                f"warp-lang=={args.warp_version}\n"
+                f"warp-lang=={args.warp_version} mujoco=={args.mujoco_version}\n"
             )
         return 1
 

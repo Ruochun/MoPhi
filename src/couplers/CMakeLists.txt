@@ -34,6 +34,7 @@ if(MOPHI_BUILD_FERIS_NEWTON OR MOPHI_BUILD_NEWTON_XLB_DEM)
                 "${_mophi_version_check_script}"
                 --newton-version "${MOPHI_REQUIRED_NEWTON_VERSION}"
                 --warp-version "${MOPHI_REQUIRED_WARP_VERSION}"
+                --mujoco-version "${MOPHI_REQUIRED_MUJOCO_VERSION}"
         RESULT_VARIABLE _mophi_newton_warp_version_check_result
         OUTPUT_QUIET
         ERROR_VARIABLE _mophi_newton_warp_version_check_error

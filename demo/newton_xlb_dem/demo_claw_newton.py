@@ -45,7 +45,7 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install --upgrade newton warp-lang
+  • pip install --upgrade newton warp-lang mujoco==3.6.0
   • pip install deme               (DEME discrete-element solver — required)
 
 Running
@@ -74,9 +74,10 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
         "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# Required: pip install --upgrade newton warp-lang
+# Required: pip install --upgrade newton warp-lang mujoco==3.6.0
 import newton
 import warp as wp
+import mujoco
 from newton import JointTargetMode
 from newton.selection import ArticulationView
 
@@ -85,7 +86,12 @@ import DEME
 
 REQUIRED_NEWTON_VERSION = "1.0.0"
 REQUIRED_WARP_VERSION = "1.12.1"
-mophi.check_newton_warp_versions(REQUIRED_NEWTON_VERSION, REQUIRED_WARP_VERSION)
+REQUIRED_MUJOCO_VERSION = "3.6.0"
+mophi.check_newton_warp_mujoco_versions(
+    REQUIRED_NEWTON_VERSION,
+    REQUIRED_WARP_VERSION,
+    REQUIRED_MUJOCO_VERSION,
+)
 
 
 def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
