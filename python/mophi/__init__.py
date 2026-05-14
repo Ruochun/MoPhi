@@ -20,6 +20,16 @@ from . import mophi_core  # noqa: F401 — make the C++ module accessible
 
 __all__ = []
 
+REQUIRED_NEWTON_VERSION = "1.0.0"
+REQUIRED_WARP_VERSION = "1.12.1"
+REQUIRED_MUJOCO_VERSION = "3.6.0"
+
+__all__ += [
+    "REQUIRED_NEWTON_VERSION",
+    "REQUIRED_WARP_VERSION",
+    "REQUIRED_MUJOCO_VERSION",
+]
+
 # Verbosity constants (always available — come from mophi_core unconditionally).
 try:
     from .mophi_core import VERBOSITY_ERROR, VERBOSITY_WARNING, VERBOSITY_INFO  # noqa: F401
@@ -128,7 +138,10 @@ def create_opengl_visualizer_or_fatal(model):
     if "OpenGLVisualizer" not in globals():
         fatal(
             "mophi.OpenGLVisualizer is not available.\n"
-            "Install with:  pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0\n"
+            "Install with:  pip install --upgrade "
+            f"newton=={REQUIRED_NEWTON_VERSION} "
+            f"warp-lang=={REQUIRED_WARP_VERSION} "
+            f"mujoco=={REQUIRED_MUJOCO_VERSION}\n"
             "Or switch to Omniverse visualization."
         )
     try:

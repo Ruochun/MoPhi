@@ -84,13 +84,10 @@ from newton.selection import ArticulationView
 # Required: pip install deme
 import DEME
 
-REQUIRED_NEWTON_VERSION = "1.0.0"
-REQUIRED_WARP_VERSION = "1.12.1"
-REQUIRED_MUJOCO_VERSION = "3.6.0"
 mophi.check_newton_warp_mujoco_versions(
-    REQUIRED_NEWTON_VERSION,
-    REQUIRED_WARP_VERSION,
-    REQUIRED_MUJOCO_VERSION,
+    mophi.REQUIRED_NEWTON_VERSION,
+    mophi.REQUIRED_WARP_VERSION,
+    mophi.REQUIRED_MUJOCO_VERSION,
 )
 
 
