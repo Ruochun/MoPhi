@@ -13,8 +13,8 @@
 #
 # Newton, XLB, and DEME are all pure Python packages — no C++ externals or
 # CUDA Toolkit are required for this coupler.  Newton-based couplers require
-# pinned versions:
-#   pip install --upgrade newton==1.1.0 warp-lang==1.12.1
+# specific package constraints:
+#   pip install --upgrade newton warp-lang
 # plus XLB/DEME as needed:
 #   pip install xlb deme
 # or enable -DMOPHI_FETCH_NEWTON=ON / -DMOPHI_FETCH_XLB=ON /

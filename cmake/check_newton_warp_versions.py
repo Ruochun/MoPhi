@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate pinned Newton/Warp Python package versions."""
+"""Validate required Newton/Warp Python package versions."""
 
 import argparse
 import importlib
@@ -34,7 +34,7 @@ def main() -> int:
         if not args.quiet:
             details = "\n".join(errors)
             sys.stderr.write(
-                "MoPhi: Newton-based couplers require pinned Python dependency versions.\n"
+                "MoPhi: Newton-based couplers require specific Python dependency versions.\n"
                 f"Required:\n"
                 f"  - newton=={args.newton_version}\n"
                 f"  - warp-lang=={args.warp_version}\n"

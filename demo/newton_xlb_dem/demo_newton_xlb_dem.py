@@ -33,8 +33,7 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install --upgrade newton==1.1.0 warp-lang==1.12.1 torch
-                                            (pinned Newton/Warp + PyTorch for RL policy)
+  • pip install --upgrade newton warp-lang torch
   • pip install xlb                         (XLB LBM solver)
   • pip install deme                        (DEME discrete-element solver)
 
@@ -76,29 +75,15 @@ if find_spec("torch") is None:
 if find_spec("newton") is None or find_spec("warp") is None:
     mophi.fatal(
         "Newton and Warp are required for this demo.\n"
-        "Install with:  pip install --upgrade newton==1.1.0 warp-lang==1.12.1"
+        "Install with:  pip install --upgrade newton warp-lang"
     )
 import torch
 import newton
 import warp as wp
 
-REQUIRED_NEWTON_VERSION = "1.1.0"
+REQUIRED_NEWTON_VERSION = "1.0.0"
 REQUIRED_WARP_VERSION = "1.12.1"
-# Keep these pinned values aligned with CMake variables:
-#   MOPHI_REQUIRED_NEWTON_VERSION / MOPHI_REQUIRED_WARP_VERSION
-# in the root CMakeLists.txt.
-if getattr(newton, "__version__", None) != REQUIRED_NEWTON_VERSION:
-    mophi.fatal(
-        f"Unsupported Newton version: found {getattr(newton, '__version__', 'unknown')}.\n"
-        f"This demo requires Newton {REQUIRED_NEWTON_VERSION}.\n"
-        f"Install with:  pip install --upgrade newton=={REQUIRED_NEWTON_VERSION}"
-    )
-if getattr(wp, "__version__", None) != REQUIRED_WARP_VERSION:
-    mophi.fatal(
-        f"Unsupported Warp version: found {getattr(wp, '__version__', 'unknown')}.\n"
-        f"This demo requires warp-lang {REQUIRED_WARP_VERSION}.\n"
-        f"Install with:  pip install --upgrade warp-lang=={REQUIRED_WARP_VERSION}"
-    )
+mophi.check_newton_warp_versions(REQUIRED_NEWTON_VERSION, REQUIRED_WARP_VERSION)
 
 # ─── Import demo-specific utilities ──────────────────────────────────────────
 # newton_xlb_dem_utils.py lives in the same directory as this script.
@@ -213,7 +198,12 @@ for i in range(len(builder.joint_target_ke)):
 newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
     newton_model,
-    disable_contacts=False,
+    use_mujoco_contacts=False,
+    solver="newton",
+    ls_parallel=False,
+    ls_iterations=50,
+    njmax=50,
+    nconmax=100,
 )
 
 print(f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, " f"{newton_model.joint_count} joints.\n")
@@ -256,17 +246,16 @@ if USE_OMNIVERSE_VISUALIZATION:
             "      The simulation will run without visualization."
         )
 else:
-    try:
-        vis = mophi.OpenGLVisualizer(newton_model)
-        _vis_available = True
-        print("[Viewer] MoPhi OpenGL visualization window opened.\n")
-    except Exception as exc:
-        vis = None
-        _vis_available = False
-        print(
-            f"[Viewer] Could not open MoPhi OpenGL viewer ({exc}).\n"
-            "         The simulation will run without visualization."
+    if not hasattr(mophi, "OpenGLVisualizer"):
+        mophi.fatal(
+            "mophi.OpenGLVisualizer is not available.\n"
+            "Install Newton with ViewerGL support, or switch to Omniverse visualization."
         )
+    vis = mophi.OpenGLVisualizer(newton_model)
+    if vis is None:
+        mophi.fatal("OpenGL visualization initialization failed.")
+    _vis_available = True
+    print("[Viewer] MoPhi OpenGL visualization window opened.\n")
 
 # ─── XLB real LBM simulation setup ───────────────────────────────────────────
 # Configures a real 3-D incompressible Navier-Stokes LBM simulation using XLB.

@@ -5,8 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Pinned Python dependency versions required by Newton-based couplers/demos.
-set(MOPHI_REQUIRED_NEWTON_VERSION "1.1.0" CACHE INTERNAL "Required Newton Python package version")
+# Required Python dependency constraints for Newton-based couplers/demos.
+set(MOPHI_REQUIRED_NEWTON_VERSION "1.0.0" CACHE INTERNAL "Required Newton Python package version")
 set(MOPHI_REQUIRED_WARP_VERSION "1.12.1" CACHE INTERNAL "Required Warp Python package version")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ set(MOPHI_REQUIRED_WARP_VERSION "1.12.1" CACHE INTERNAL "Required Warp Python pa
 # ─────────────────────────────────────────────────────────────────────────────
 option(MOPHI_FETCH_FERIS     "Download/update the FERIS external project"     OFF)
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
-option(MOPHI_FETCH_NEWTON    "Install pinned Newton + Warp Python packages (newton==${MOPHI_REQUIRED_NEWTON_VERSION}, warp-lang==${MOPHI_REQUIRED_WARP_VERSION})" OFF)
+option(MOPHI_FETCH_NEWTON    "Install required Newton + Warp Python packages (newton==${MOPHI_REQUIRED_NEWTON_VERSION}, warp-lang==${MOPHI_REQUIRED_WARP_VERSION})" OFF)
 option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install xlb)"       OFF)
 option(MOPHI_FETCH_DEME      "Install the DEME Python package (pip install deme)"     OFF)
 

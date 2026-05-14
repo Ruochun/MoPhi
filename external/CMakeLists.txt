@@ -18,7 +18,7 @@
 # Load the registry (must happen after MoPhiExternalUtils is included).
 include(${CMAKE_CURRENT_SOURCE_DIR}/ExternalProjects.cmake)
 
-# Required pinned versions for Newton-based MoPhi components.
+# Required dependency constraints for Newton-based MoPhi components.
 set(_mophi_newton_required_version "${MOPHI_REQUIRED_NEWTON_VERSION}")
 set(_mophi_warp_required_version "${MOPHI_REQUIRED_WARP_VERSION}")
 set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
@@ -36,7 +36,7 @@ endif()
 # ── Newton + Warp (Python packages) ───────────────────────────────────────────
 # Newton is a pure Python physics engine built on NVIDIA Warp.  It has no CMake
 # build system and cannot be handled with mophi_fetch_external / ExternalProject_Add.
-# When MOPHI_FETCH_NEWTON=ON, MoPhi enforces pinned versions at configure time:
+# When MOPHI_FETCH_NEWTON=ON, MoPhi enforces required package constraints:
 #   newton==${_mophi_newton_required_version} and warp-lang==${_mophi_warp_required_version}
 # so that couplers and demos stay stable across environments.
 #
@@ -46,7 +46,7 @@ endif()
 if(MOPHI_FETCH_NEWTON)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     message(STATUS
-        "MoPhi: Installing pinned Newton/Warp Python packages via pip "
+        "MoPhi: Installing required Newton/Warp Python packages via pip "
         "(newton==${_mophi_newton_required_version}, warp-lang==${_mophi_warp_required_version}) ...")
     execute_process(
         COMMAND           ${Python3_EXECUTABLE} -m pip install --upgrade newton==${_mophi_newton_required_version} warp-lang==${_mophi_warp_required_version}
@@ -57,7 +57,7 @@ if(MOPHI_FETCH_NEWTON)
         ERROR_STRIP_TRAILING_WHITESPACE
     )
     if(_newton_install_result EQUAL 0)
-        message(STATUS "MoPhi: Pinned Newton/Warp Python packages installed successfully")
+        message(STATUS "MoPhi: Required Newton/Warp Python packages installed successfully")
         set(MOPHI_EXTERNAL_Newton_AVAILABLE TRUE
             CACHE INTERNAL "Newton Python package available")
     else()
@@ -65,14 +65,14 @@ if(MOPHI_FETCH_NEWTON)
             "MoPhi: pip install newton==${_mophi_newton_required_version} warp-lang==${_mophi_warp_required_version} failed "
             "(exit code ${_newton_install_result}):\n"
             "${_newton_install_error}\n"
-            "Pinned Newton/Warp packages will not be available for couplers that require them.\n"
+            "Required Newton/Warp packages will not be available for couplers that require them.\n"
             "Install them manually with:\n"
             "  pip install --upgrade newton==${_mophi_newton_required_version} "
             "warp-lang==${_mophi_warp_required_version}")
     endif()
 else()
-    # Even without MOPHI_FETCH_NEWTON, detect whether the required pinned
-    # Newton/Warp versions are already installed so the summary line below
+    # Even without MOPHI_FETCH_NEWTON, detect whether the required
+    # Newton/Warp packages are already installed so the summary line below
     # reports the correct status.
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)

@@ -66,6 +66,14 @@ try:
 except ImportError:
     pass
 
+# Package-version helper utilities.
+try:
+    from .utils.version_checker import check_newton_warp_versions, check_python_package_versions  # noqa: F401
+
+    __all__ += ["check_newton_warp_versions", "check_python_package_versions"]
+except ImportError:
+    pass
+
 # SurfaceMesh and load_obj are always available — they depend only on the
 # mophi_essentials submodule which is always compiled into mophi_core.
 try:

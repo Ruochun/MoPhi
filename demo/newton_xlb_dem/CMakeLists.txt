@@ -11,7 +11,7 @@
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
 #                                        mophi_core Python extension module.
-#   • pip install --upgrade newton==1.1.0 warp-lang==1.12.1
+#   • pip install --upgrade newton warp-lang
 #                                      — or -DMOPHI_FETCH_NEWTON=ON
 #   • pip install xlb                  — or -DMOPHI_FETCH_XLB=ON  (optional)
 # ─────────────────────────────────────────────────────────────────────────────
