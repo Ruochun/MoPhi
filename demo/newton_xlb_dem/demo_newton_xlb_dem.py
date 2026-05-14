@@ -213,12 +213,7 @@ for i in range(len(builder.joint_target_ke)):
 newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
     newton_model,
-    use_mujoco_contacts=False,
-    solver="newton",
-    ls_parallel=False,
-    ls_iterations=50,
-    njmax=50,
-    nconmax=100,
+    disable_contacts=False,
 )
 
 print(f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, " f"{newton_model.joint_count} joints.\n")
