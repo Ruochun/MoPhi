@@ -52,7 +52,11 @@ def check_newton_warp_versions(
     *,
     strict: bool = False,
 ) -> bool:
-    """Check Newton and Warp versions with warning-on-mismatch by default."""
+    """Check Newton and Warp packages with warning-on-mismatch by default.
+
+    Returns:
+        True if both package versions match requirements, else False.
+    """
     return check_python_package_versions(
         {"newton": required_newton_version, "warp": required_warp_version},
         package_names={"newton": "newton", "warp": "warp-lang"},
