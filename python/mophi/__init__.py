@@ -135,7 +135,9 @@ __all__ += ["fatal"]
 
 def create_opengl_visualizer_or_fatal(model):
     """Create OpenGLVisualizer or terminate with a clear fatal message."""
-    if "OpenGLVisualizer" not in globals():
+    try:
+        visualizer_cls = OpenGLVisualizer
+    except NameError:
         fatal(
             "mophi.OpenGLVisualizer is not available.\n"
             "Install with:  pip install --upgrade "
@@ -145,7 +147,7 @@ def create_opengl_visualizer_or_fatal(model):
             "Or switch to Omniverse visualization."
         )
     try:
-        return OpenGLVisualizer(model)
+        return visualizer_cls(model)
     except Exception as exc:
         fatal(f"OpenGL visualization initialization failed: {exc}")
 
