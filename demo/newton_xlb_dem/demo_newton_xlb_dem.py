@@ -349,6 +349,8 @@ from xlb.operator.boundary_condition import (
 from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
 from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
 
+# Guard against XLB-internal runtime/setup failures with a clear fatal message.
+# This demo requires XLB; setup errors must terminate rather than silently degrade.
 try:
         _xlb_backend = _XLBComputeBackend.WARP
         _xlb_precision = _XLBPrecisionPolicy.FP32FP32
@@ -487,9 +489,10 @@ try:
             f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
         )
 except Exception as exc:
-    print(f"[XLB] Could not set up XLB simulation ({exc}) — disabling XLB.\n")
-    _xlb_stepper = None
-    xlb_simulation = None
+    mophi.fatal(
+        f"Failed to set up XLB simulation: {exc}\n"
+        "Ensure compatible XLB dependencies are installed and the environment supports the selected backend."
+    )
 
 
 # ─── XLB flow-field visualisation helpers ─────────────────────────────────────

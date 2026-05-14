@@ -21,6 +21,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/ExternalProjects.cmake)
 # Required pinned versions for Newton-based MoPhi components.
 set(_mophi_newton_required_version "${MOPHI_REQUIRED_NEWTON_VERSION}")
 set(_mophi_warp_required_version "${MOPHI_REQUIRED_WARP_VERSION}")
+set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
 
 # ── DEM-Engine ────────────────────────────────────────────────────────────────
 if(MOPHI_FETCH_DEMENGINE)
@@ -76,7 +77,11 @@ else()
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
         execute_process(
-            COMMAND         ${Python3_EXECUTABLE} -c "import newton, warp, sys; sys.exit(0 if getattr(newton, '__version__', '') == '${_mophi_newton_required_version}' and getattr(warp, '__version__', '') == '${_mophi_warp_required_version}' else 1)"
+            COMMAND         ${Python3_EXECUTABLE}
+                            "${_mophi_version_check_script}"
+                            --newton-version "${_mophi_newton_required_version}"
+                            --warp-version "${_mophi_warp_required_version}"
+                            --quiet
             RESULT_VARIABLE _newton_check_result
             OUTPUT_QUIET
             ERROR_QUIET

@@ -30,35 +30,12 @@ target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 #   warp-lang==${MOPHI_REQUIRED_WARP_VERSION}
 if(MOPHI_BUILD_FERIS_NEWTON OR MOPHI_BUILD_NEWTON_XLB_DEM)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
     execute_process(
-        COMMAND ${Python3_EXECUTABLE} -c
-                "import importlib, sys
-required = {'newton': '${MOPHI_REQUIRED_NEWTON_VERSION}', 'warp': '${MOPHI_REQUIRED_WARP_VERSION}'}
-installed = {}
-errors = []
-for module_name, version in required.items():
-    try:
-        mod = importlib.import_module(module_name)
-    except Exception:
-        errors.append(f\"{module_name}: missing (required {version})\")
-        continue
-    found = getattr(mod, '__version__', None)
-    installed[module_name] = found if found is not None else 'unknown'
-    if found != version:
-        errors.append(f\"{module_name}: found {installed[module_name]} (required {version})\")
-if errors:
-    details = '\\n'.join(errors)
-    sys.stderr.write(
-        'MoPhi: Newton-based couplers require pinned Python dependency versions.\\n'
-        'Required:\\n'
-        '  - newton==${MOPHI_REQUIRED_NEWTON_VERSION}\\n'
-        '  - warp-lang==${MOPHI_REQUIRED_WARP_VERSION}\\n'
-        f'Problems:\\n{details}\\n\\n'
-        'Install/fix with:\\n'
-        '  python -m pip install --upgrade newton==${MOPHI_REQUIRED_NEWTON_VERSION} '
-        'warp-lang==${MOPHI_REQUIRED_WARP_VERSION}\\n'
-    )
-    sys.exit(1)"
+        COMMAND ${Python3_EXECUTABLE}
+                "${_mophi_version_check_script}"
+                --newton-version "${MOPHI_REQUIRED_NEWTON_VERSION}"
+                --warp-version "${MOPHI_REQUIRED_WARP_VERSION}"
         RESULT_VARIABLE _mophi_newton_warp_version_check_result
         OUTPUT_QUIET
         ERROR_VARIABLE _mophi_newton_warp_version_check_error
