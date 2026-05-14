@@ -26,13 +26,14 @@ target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 # ── Shared Python prerequisites for Newton-based couplers ─────────────────────
 # FERISNewtonCoupler and NewtonXLBDEMCoupler both require pinned Python package
 # versions to avoid API/runtime breakage from upstream releases:
-#   newton==1.1.0 and warp-lang==1.12.1
+#   newton==${MOPHI_REQUIRED_NEWTON_VERSION} and
+#   warp-lang==${MOPHI_REQUIRED_WARP_VERSION}
 if(MOPHI_BUILD_FERIS_NEWTON OR MOPHI_BUILD_NEWTON_XLB_DEM)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     execute_process(
         COMMAND ${Python3_EXECUTABLE} -c
                 "import importlib, sys
-required = {'newton': '1.1.0', 'warp': '1.12.1'}
+required = {'newton': '${MOPHI_REQUIRED_NEWTON_VERSION}', 'warp': '${MOPHI_REQUIRED_WARP_VERSION}'}
 installed = {}
 errors = []
 for module_name, version in required.items():
@@ -50,11 +51,12 @@ if errors:
     sys.stderr.write(
         'MoPhi: Newton-based couplers require pinned Python dependency versions.\\n'
         'Required:\\n'
-        '  - newton==1.1.0\\n'
-        '  - warp-lang==1.12.1\\n'
+        '  - newton==${MOPHI_REQUIRED_NEWTON_VERSION}\\n'
+        '  - warp-lang==${MOPHI_REQUIRED_WARP_VERSION}\\n'
         f'Problems:\\n{details}\\n\\n'
         'Install/fix with:\\n'
-        '  python -m pip install --upgrade newton==1.1.0 warp-lang==1.12.1\\n'
+        '  python -m pip install --upgrade newton==${MOPHI_REQUIRED_NEWTON_VERSION} '
+        'warp-lang==${MOPHI_REQUIRED_WARP_VERSION}\\n'
     )
     sys.exit(1)"
         RESULT_VARIABLE _mophi_newton_warp_version_check_result

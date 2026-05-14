@@ -107,7 +107,7 @@ import newton_xlb_dem_utils as demo_utils  # noqa: E402
 # ─── Import XLB + DEME (required for this three-way demo) ──────────────────
 if find_spec("xlb") is None:
     mophi.fatal("XLB is required for this demo.\nInstall with:  pip install xlb")
-if find_spec("DEME") is None and find_spec("deme") is None:
+if find_spec("DEME") is None:
     mophi.fatal("DEME is required for this demo.\nInstall with:  pip install deme")
 import xlb
 import DEME
