@@ -246,14 +246,7 @@ if USE_OMNIVERSE_VISUALIZATION:
             "      The simulation will run without visualization."
         )
 else:
-    if not hasattr(mophi, "OpenGLVisualizer"):
-        mophi.fatal(
-            "mophi.OpenGLVisualizer is not available.\n"
-            "Install Newton with ViewerGL support, or switch to Omniverse visualization."
-        )
-    vis = mophi.OpenGLVisualizer(newton_model)
-    if vis is None:
-        mophi.fatal("OpenGL visualization initialization failed.")
+    vis = mophi.create_opengl_visualizer_or_fatal(newton_model)
     _vis_available = True
     print("[Viewer] MoPhi OpenGL visualization window opened.\n")
 

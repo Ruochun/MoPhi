@@ -114,6 +114,22 @@ def fatal(msg: str) -> None:
 
 __all__ += ["fatal"]
 
+
+def create_opengl_visualizer_or_fatal(model):
+    """Create OpenGLVisualizer or terminate with a clear fatal message."""
+    if "OpenGLVisualizer" not in globals():
+        fatal(
+            "mophi.OpenGLVisualizer is not available.\n"
+            "Install Newton with ViewerGL support, or switch to Omniverse visualization."
+        )
+    try:
+        return OpenGLVisualizer(model)
+    except Exception as exc:
+        fatal(f"OpenGL visualization initialization failed: {exc}")
+
+
+__all__ += ["create_opengl_visualizer_or_fatal"]
+
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.
 try:
