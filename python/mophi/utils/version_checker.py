@@ -16,6 +16,15 @@ def check_python_package_versions(
 
     By default, mismatches emit a warning and return ``False``.  Set ``strict=True``
     to raise ``RuntimeError`` instead.
+
+    Args:
+        required_versions: Mapping of import-module name to required version string.
+        package_names: Optional mapping of import-module name to pip-install package
+            name for user-facing messages.
+        strict: Whether to raise on mismatch instead of warning.
+
+    Returns:
+        True when all packages match required versions, else False in non-strict mode.
     """
     package_names = package_names or {}
     mismatches: list[str] = []
