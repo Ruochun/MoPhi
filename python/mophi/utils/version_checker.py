@@ -68,7 +68,7 @@ def check_newton_warp_mujoco_versions(
         required_newton_version: Required Newton package version.
         required_warp_version: Required Warp package version.
         required_mujoco_version: Required MuJoCo package version.
-        strict: Whether to raise on mismatch instead of warning.
+        strict: Whether to raise on mismatch instead of warning. Defaults to False.
 
     Returns:
         True if all package versions match requirements, else False.
@@ -91,6 +91,11 @@ def check_newton_warp_versions(
     strict: bool = False,
 ) -> bool:
     """Check Newton and Warp packages with warning-on-mismatch by default.
+
+    Args:
+        required_newton_version: Required Newton package version.
+        required_warp_version: Required Warp package version.
+        strict: Whether to raise on mismatch instead of warning. Defaults to False.
 
     Returns:
         True if both package versions match requirements, else False.
