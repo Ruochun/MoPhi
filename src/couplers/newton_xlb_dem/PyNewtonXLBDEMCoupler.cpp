@@ -39,11 +39,12 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
 
     // ── DEME (Python, pip install deme) ───────────────────────────────────────
     // Accept a pre-built deme.DEMSolver instance from the Python caller.
-    // Physics configuration and deme_solver.initialize() will be added later.
+    // The Python side owns DEME configuration; StepDEME() advances it via
+    // DoStepDynamics().
     if (!deme_solver_in.is_none()) {
         deme_solver = deme_solver_in;
         deme_available = true;
-        MOPHI_INFO("PyNewtonXLBDEMCoupler: deme.DEMSolver bound [placeholder]");
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: deme.DEMSolver bound");
     } else {
         MOPHI_INFO("PyNewtonXLBDEMCoupler: no DEME solver provided — DEME step will be skipped");
     }
@@ -71,13 +72,14 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
         MOPHI_INFO("PyNewtonXLBDEMCoupler: no Newton solver provided — Newton step will be skipped");
     }
 
-    // ── XLB (placeholder) ────────────────────────────────────────────────────
-    // Accept a pre-built XLB simulation from the Python caller.  Future coupling
-    // logic will feed robot geometry into XLB as a moving boundary condition.
+    // ── XLB ──────────────────────────────────────────────────────────────────
+    // Accept a pre-built XLB simulation from the Python caller.  The Python
+    // demo currently advances the XLB stepper directly while this coupler stores
+    // the simulation object and exposes mask arrays for GPU-side updates.
     if (!xlb_simulation_in.is_none()) {
         xlb_simulation = xlb_simulation_in;
         xlb_available = true;
-        MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB simulation bound [placeholder]");
+        MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB simulation bound");
     } else {
         MOPHI_INFO("PyNewtonXLBDEMCoupler: no XLB simulation provided — XLB step will be skipped");
     }
@@ -126,11 +128,10 @@ void PyNewtonXLBDEMCoupler::StepXLB() {
         return;
     }
 
-    // Placeholder: XLB is stepped directly by the demo for now.
-    // Future coupling logic will call xlb_simulation.step() here once
-    // robot-geometry boundary conditions are fed in.
+    // XLB physics is stepped directly by the Python demo for now.  This hook is
+    // kept so the coupler can own XLB stepping later without changing the API.
     if (xlb_available) {
-        // MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB step (placeholder, no-op)");
+        // MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB step hook (currently no-op)");
     }
 }
 

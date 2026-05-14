@@ -15,10 +15,10 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                bc_mask and missing_mask are updated in-place without rebuilding
                the stepper, keeping per-frame overhead to a GPU upload of the
                two mask arrays (~21 MB) instead of a full JIT re-compilation.
-  • DEME     — a placeholder discrete-element solver (pip install deme).  A
-               deme.DEMSolver is created in Python and passed to the coupler, but
-               its simulation is not advanced yet.  Future work will introduce
-               particle–robot coupling.
+  • DEME     — a real discrete-element solver (pip install deme).  A
+               deme.DEMSolver is created in Python, populated with particles and
+               contact proxies, stepped every substep, and its live particle
+               positions are visualized each frame.
 
 This three-way demo requires all three Python solvers (Newton, XLB, and DEME).
 If any required module is missing, the script exits early with an actionable
@@ -503,7 +503,7 @@ if _vis_available:
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
-# ─── Build the DEME placeholder solver (if DEME is available) ─────────────
+# ─── Build the DEME solver ────────────────────────────────────────────────
 # Representative radius types [m] for a simple polydisperse particle set.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
@@ -542,7 +542,7 @@ shank_trackers = []
 particles_tracker = None
 _FIXED_FAM = 10
 
-print("[DEME] Creating placeholder deme.DEMSolver ...")
+print("[DEME] Creating deme.DEMSolver ...")
 deme_solver = DEME.DEMSolver()
 wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
 deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
@@ -794,8 +794,7 @@ for frame in range(NUM_FRAMES):
 
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
-        # Render DEM placeholder spheres moving towards the robot.
-        # Future work will replace these with live DEME particle positions.
+        # Render live DEME particle positions.
         vis.log_points(
             "dem_particles",
             _dem_sphere_pos_wp,

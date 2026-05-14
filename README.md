@@ -139,12 +139,11 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/demo_claw_newton.py
   position-based dynamics (XPBD).  The robot's spatial representation (body
   position + orientation quaternion per body) is extracted at every step via
   `get_robot_body_transforms()`.
-- **XLB** (placeholder) — a JAX-based LBM fluid solver is instantiated but not
-  yet seriously advanced.  Future work will feed the robot's geometry as a
-  moving boundary condition.
-- **DEME** (placeholder) — a Python discrete-element solver (pip install deme)
-  is instantiated but not yet advanced.  Future work will introduce
-  particle–robot coupling.
+- **XLB** — a JAX-based LBM fluid solver that advances each frame.  The robot is
+  represented as a prescribed moving obstacle whose boundary-condition masks are
+  updated directly on the GPU.
+- **DEME** — a Python discrete-element solver (pip install deme) that advances a
+  live particle simulation alongside the robot.
 
 ```python
 import mophi, newton, warp as wp, math
