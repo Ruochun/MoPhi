@@ -25,7 +25,7 @@ def check_python_package_versions(
 
         try:
             module = importlib.import_module(module_name)
-        except Exception:
+        except ImportError:
             mismatches.append(f"{install_name}: missing (required {required_version})")
             continue
 

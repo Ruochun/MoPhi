@@ -21,7 +21,7 @@ def main() -> int:
     for module_name, version in required.items():
         try:
             mod = importlib.import_module(module_name)
-        except Exception:
+        except ImportError:
             errors.append(f"{module_name}: missing (required {version})")
             continue
 
