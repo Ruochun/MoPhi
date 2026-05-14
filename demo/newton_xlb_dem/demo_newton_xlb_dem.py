@@ -112,9 +112,6 @@ if find_spec("DEME") is None and find_spec("deme") is None:
 import xlb
 import DEME
 
-_xlb_available = True
-_deme_available = True
-
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
 
 # ─── Joint-index remapping ─────────────────────────────────────────────────
@@ -337,20 +334,19 @@ _xlb_robot_bc_id = None  # HalfwayBounceBackBC ID assigned to the robot obstacle
 _xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (q, 3) int32
 
 
-if _xlb_available:
-    print("[XLB] Setting up real LBM simulation ...")
-    from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
-    from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
-    from xlb.grid import grid_factory as _xlb_grid_factory
-    from xlb.operator.boundary_condition import (
-        ZouHeBC as _ZouHeBC,
-        HalfwayBounceBackBC as _HalfwayBounceBackBC,
-        ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
-    )
-    from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
-    from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
+print("[XLB] Setting up real LBM simulation ...")
+from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
+from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
+from xlb.grid import grid_factory as _xlb_grid_factory
+from xlb.operator.boundary_condition import (
+    ZouHeBC as _ZouHeBC,
+    HalfwayBounceBackBC as _HalfwayBounceBackBC,
+    ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
+)
+from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
+from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
 
-    try:
+try:
         _xlb_backend = _XLBComputeBackend.WARP
         _xlb_precision = _XLBPrecisionPolicy.FP32FP32
         _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
@@ -487,10 +483,10 @@ if _xlb_available:
             f"(robot BC id={_xlb_robot_bc_id}, "
             f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
         )
-    except Exception as exc:
-        print(f"[XLB] Could not set up XLB simulation ({exc}) — disabling XLB.\n")
-        _xlb_stepper = None
-        xlb_simulation = None
+except Exception as exc:
+    print(f"[XLB] Could not set up XLB simulation ({exc}) — disabling XLB.\n")
+    _xlb_stepper = None
+    xlb_simulation = None
 
 
 # ─── XLB flow-field visualisation helpers ─────────────────────────────────────
@@ -560,36 +556,35 @@ shank_trackers = []
 particles_tracker = None
 _FIXED_FAM = 10
 
-if _deme_available:
-    print("[DEME] Creating placeholder deme.DEMSolver ...")
-    deme_solver = DEME.DEMSolver()
-    wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
-    deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
-    deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
-    deme_solver.SetErrorOutAvgContacts(500)
-    # Load the shank
-    ad_hoc_pos = [0.0, 0.0, 0.0]
-    for i in range(len(foot_tip_sphere_radii)):
-        template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[0], wall_mat)
-        shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
-        shank.SetFamily(_FIXED_FAM)
-        shank_trackers.append(deme_solver.Track(shank))
-    # Fix shanks physics for DEME
-    deme_solver.SetFamilyFixed(_FIXED_FAM)
-    # Load particles
-    particle_templates = []
-    for i in range(len(_DEM_RADIUS_TYPES)):
-        particle_templates.append(deme_solver.LoadSphereType(1.0, _DEM_RADIUS_TYPES[i], wall_mat))
-    used_types = []
-    for i in range(_NUM_DEM_SPHERES):
-        used_types.append(particle_templates[_radius_indices[i]])
-    particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
-    # Init vel
-    particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
-    particles_tracker = deme_solver.Track(particles)
-    # Init
-    deme_solver.SetInitTimeStep(SIM_DT)
-    deme_solver.Initialize()
+print("[DEME] Creating placeholder deme.DEMSolver ...")
+deme_solver = DEME.DEMSolver()
+wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
+deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
+deme_solver.SetErrorOutAvgContacts(500)
+# Load the shank
+ad_hoc_pos = [0.0, 0.0, 0.0]
+for i in range(len(foot_tip_sphere_radii)):
+    template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[0], wall_mat)
+    shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
+    shank.SetFamily(_FIXED_FAM)
+    shank_trackers.append(deme_solver.Track(shank))
+# Fix shanks physics for DEME
+deme_solver.SetFamilyFixed(_FIXED_FAM)
+# Load particles
+particle_templates = []
+for i in range(len(_DEM_RADIUS_TYPES)):
+    particle_templates.append(deme_solver.LoadSphereType(1.0, _DEM_RADIUS_TYPES[i], wall_mat))
+used_types = []
+for i in range(_NUM_DEM_SPHERES):
+    used_types.append(particle_templates[_radius_indices[i]])
+particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
+# Init vel
+particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
+particles_tracker = deme_solver.Track(particles)
+# Init
+deme_solver.SetInitTimeStep(SIM_DT)
+deme_solver.Initialize()
 
 # ─── Initialize the coupler ───────────────────────────────────────────────
 coupler = mophi.NewtonXLBDEMCoupler()
@@ -725,7 +720,7 @@ for frame in range(NUM_FRAMES):
     foot_tip_positions, foot_tip_rotations = demo_utils.compute_foot_tip_poses(body_q_np, foot_tip_descriptors)
 
     # Feed the info to DEME
-    if _deme_available and foot_tip_positions:
+    if foot_tip_positions:
         for i in range(len(foot_tip_positions)):
             shank_trackers[i].SetPos(foot_tip_positions[i])
             shank_trackers[i].SetOriQ(foot_tip_rotations[i])
@@ -869,10 +864,7 @@ print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 print("Demo completed successfully.")
 print(f"  Newton version : {newton.__version__}")
 print(f"  Warp   version : {wp.__version__}")
-if _xlb_available:
-    print(f"  XLB    version : {xlb.__version__}")
-else:
-    print("  XLB            : not installed (placeholder skipped)")
+print(f"  XLB    version : {xlb.__version__}")
 print(
     "\nSpatial representation summary:\n"
     "  Each frame produced a list of body transforms "
