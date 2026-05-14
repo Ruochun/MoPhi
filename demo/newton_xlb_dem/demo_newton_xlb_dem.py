@@ -84,6 +84,9 @@ import warp as wp
 
 REQUIRED_NEWTON_VERSION = "1.1.0"
 REQUIRED_WARP_VERSION = "1.12.1"
+# Keep these pinned values aligned with CMake variables:
+#   MOPHI_REQUIRED_NEWTON_VERSION / MOPHI_REQUIRED_WARP_VERSION
+# in the root CMakeLists.txt.
 if getattr(newton, "__version__", None) != REQUIRED_NEWTON_VERSION:
     mophi.fatal(
         f"Unsupported Newton version: found {getattr(newton, '__version__', 'unknown')}.\n"
@@ -638,6 +641,8 @@ sim_time = 0.0
 # ─── Movie recording settings ────────────────────────────────────────────
 # Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
 # Requires: pip install imageio imageio-ffmpeg
+# When SAVE_MOVIE=True and imageio is missing, this demo exits with an
+# actionable install message instead of silently disabling recording.
 SAVE_MOVIE = True
 MOVIE_OUTPUT_PATH = "demo_newton_xlb_dem.mp4"
 MOVIE_FPS = 50  # frames per second for the output video
