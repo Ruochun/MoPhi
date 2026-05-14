@@ -20,9 +20,9 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                its simulation is not advanced yet.  Future work will introduce
                particle–robot coupling.
 
-Both XLB and DEME are gracefully skipped when their packages are not available,
-so the demo can run Newton-only on a CUDA machine that has only Newton and Warp
-installed.
+This three-way demo requires all three Python solvers (Newton, XLB, and DEME).
+If any required module is missing, the script exits early with an actionable
+install message.
 
 The robot setup and walking policy exactly follow Newton's
 ``newton/examples/robot/example_robot_anymal_c_walk.py``.  The only difference
@@ -33,9 +33,10 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install newton warp-lang torch   (Newton rigid-body physics + PyTorch for RL policy)
-  • pip install xlb                       (optional — XLB LBM solver)
-  • pip install deme                      (optional — DEME discrete-element solver)
+  • pip install --upgrade newton==1.1.0 warp-lang==1.12.1 torch
+                                            (pinned Newton/Warp + PyTorch for RL policy)
+  • pip install xlb                         (XLB LBM solver)
+  • pip install deme                        (DEME discrete-element solver)
 
 Running
 -------
@@ -50,41 +51,51 @@ Or from the repository root after installing the mophi package:
 
 import os
 import sys
+from importlib.util import find_spec
 
 import numpy as np
 
 # ─── Import MoPhi ─────────────────────────────────────────────────────────
-try:
-    import mophi
-except ImportError as exc:
+if find_spec("mophi") is None:
     sys.exit(
         "ERROR: Could not import the 'mophi' package.\n"
         "       Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON and ensure that\n"
-        "       the build directory (python/) is on PYTHONPATH.\n"
-        f"       ({exc})"
+        "       the build directory (python/) is on PYTHONPATH."
     )
+import mophi
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
-    sys.exit(
+    mophi.fatal(
         "ERROR: mophi.NewtonXLBDEMCoupler is not available.\n"
         "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
 # ─── Import Newton + Warp + PyTorch ────────────────────────────────────────
-try:
-    import torch
-    import newton
-    import warp as wp
-
-    _newton_available = True
-except ImportError:
-    _newton_available = False
-    print(
-        "WARNING: Newton, warp, or torch is not installed.  "
-        "The demo cannot proceed without Newton.\n"
-        "         Install with:  pip install newton warp-lang torch"
+if find_spec("torch") is None:
+    mophi.fatal("PyTorch is required for this demo.\nInstall with:  pip install torch")
+if find_spec("newton") is None or find_spec("warp") is None:
+    mophi.fatal(
+        "Newton and Warp are required for this demo.\n"
+        "Install with:  pip install --upgrade newton==1.1.0 warp-lang==1.12.1"
     )
-    sys.exit(1)
+import torch
+import newton
+import warp as wp
+
+REQUIRED_NEWTON_VERSION = "1.1.0"
+REQUIRED_WARP_VERSION = "1.12.1"
+if getattr(newton, "__version__", None) != REQUIRED_NEWTON_VERSION:
+    mophi.fatal(
+        f"Unsupported Newton version: found {getattr(newton, '__version__', 'unknown')}.\n"
+        f"This demo requires Newton {REQUIRED_NEWTON_VERSION}.\n"
+        f"Install with:  pip install --upgrade newton=={REQUIRED_NEWTON_VERSION}"
+    )
+if getattr(wp, "__version__", None) != REQUIRED_WARP_VERSION:
+    mophi.fatal(
+        f"Unsupported Warp version: found {getattr(wp, '__version__', 'unknown')}.\n"
+        f"This demo requires warp-lang {REQUIRED_WARP_VERSION}.\n"
+        f"Install with:  pip install --upgrade warp-lang=={REQUIRED_WARP_VERSION}"
+    )
 
 # ─── Import demo-specific utilities ──────────────────────────────────────────
 # newton_xlb_dem_utils.py lives in the same directory as this script.
@@ -93,29 +104,16 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
-# ─── Import XLB (optional) ─────────────────────────────────────────────────
-try:
-    import xlb
+# ─── Import XLB + DEME (required for this three-way demo) ──────────────────
+if find_spec("xlb") is None:
+    mophi.fatal("XLB is required for this demo.\nInstall with:  pip install xlb")
+if find_spec("DEME") is None and find_spec("deme") is None:
+    mophi.fatal("DEME is required for this demo.\nInstall with:  pip install deme")
+import xlb
+import DEME
 
-    _xlb_available = True
-except ImportError:
-    _xlb_available = False
-    print(
-        "INFO: XLB is not installed — the XLB solver will be skipped (placeholder only).\n"
-        "      Install with:  pip install xlb"
-    )
-
-# ─── Import DEME (optional) ────────────────────────────────────────────────
-try:
-    import DEME
-
-    _deme_available = True
-except ImportError:
-    _deme_available = False
-    print(
-        "INFO: DEME is not installed — the DEME solver will be skipped (placeholder only).\n"
-        "      Install with:  pip install deme"
-    )
+_xlb_available = True
+_deme_available = True
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
 
@@ -341,18 +339,18 @@ _xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (
 
 if _xlb_available:
     print("[XLB] Setting up real LBM simulation ...")
-    try:
-        from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
-        from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
-        from xlb.grid import grid_factory as _xlb_grid_factory
-        from xlb.operator.boundary_condition import (
-            ZouHeBC as _ZouHeBC,
-            HalfwayBounceBackBC as _HalfwayBounceBackBC,
-            ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
-        )
-        from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
-        from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
+    from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
+    from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
+    from xlb.grid import grid_factory as _xlb_grid_factory
+    from xlb.operator.boundary_condition import (
+        ZouHeBC as _ZouHeBC,
+        HalfwayBounceBackBC as _HalfwayBounceBackBC,
+        ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
+    )
+    from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
+    from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
 
+    try:
         _xlb_backend = _XLBComputeBackend.WARP
         _xlb_precision = _XLBPrecisionPolicy.FP32FP32
         _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
@@ -651,17 +649,15 @@ MOVIE_FPS = 50  # frames per second for the output video
 
 _movie_writer = None
 if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
-    try:
-        import imageio
-
-        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
-        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
-    except ImportError:
-        print(
-            "WARNING: imageio is not installed — movie recording disabled.\n"
-            "         Install with:  pip install imageio imageio-ffmpeg"
+    if find_spec("imageio") is None:
+        mophi.fatal(
+            "imageio is required when SAVE_MOVIE=True.\n"
+            "Install with:  pip install imageio imageio-ffmpeg"
         )
-        SAVE_MOVIE = False
+    import imageio
+
+    _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+    print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
 
 print(
     f"Running up to {NUM_FRAMES} policy frame(s) "

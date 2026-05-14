@@ -15,7 +15,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ─────────────────────────────────────────────────────────────────────────────
 option(MOPHI_FETCH_FERIS     "Download/update the FERIS external project"     OFF)
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
-option(MOPHI_FETCH_NEWTON    "Install the Newton Python package (pip install newton)" OFF)
+option(MOPHI_FETCH_NEWTON    "Install pinned Newton + Warp Python packages (newton==1.1.0, warp-lang==1.12.1)" OFF)
 option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install xlb)"       OFF)
 option(MOPHI_FETCH_DEME      "Install the DEME Python package (pip install deme)"     OFF)
 

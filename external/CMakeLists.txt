@@ -28,20 +28,21 @@ if(MOPHI_FETCH_FERIS)
     mophi_fetch_external(FERIS)
 endif()
 
-# ── Newton (Python package) ───────────────────────────────────────────────────
-# Newton is a pure Python physics engine — it has no CMake build system and
-# cannot be handled with mophi_fetch_external / ExternalProject_Add.  When
-# MOPHI_FETCH_NEWTON=ON, MoPhi installs Newton via pip at configure time so
-# that it is immediately importable in the Python demo and any user scripts.
+# ── Newton + Warp (Python packages) ───────────────────────────────────────────
+# Newton is a pure Python physics engine built on NVIDIA Warp.  It has no CMake
+# build system and cannot be handled with mophi_fetch_external / ExternalProject_Add.
+# When MOPHI_FETCH_NEWTON=ON, MoPhi enforces pinned versions at configure time:
+#   newton==1.1.0 and warp-lang==1.12.1
+# so that couplers and demos stay stable across environments.
 #
 # Note: this pip install uses whatever Python interpreter CMake finds first
 # (the same one that will build the pybind11 extension module).  Users running
 # inside a virtual environment should activate it before invoking CMake.
 if(MOPHI_FETCH_NEWTON)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    message(STATUS "MoPhi: Installing Newton Python package via pip ...")
+    message(STATUS "MoPhi: Installing pinned Newton/Warp Python packages via pip (newton==1.1.0, warp-lang==1.12.1) ...")
     execute_process(
-        COMMAND           ${Python3_EXECUTABLE} -m pip install newton
+        COMMAND           ${Python3_EXECUTABLE} -m pip install --upgrade newton==1.1.0 warp-lang==1.12.1
         RESULT_VARIABLE   _newton_install_result
         OUTPUT_VARIABLE   _newton_install_output
         ERROR_VARIABLE    _newton_install_error
@@ -49,23 +50,25 @@ if(MOPHI_FETCH_NEWTON)
         ERROR_STRIP_TRAILING_WHITESPACE
     )
     if(_newton_install_result EQUAL 0)
-        message(STATUS "MoPhi: Newton Python package installed successfully")
+        message(STATUS "MoPhi: Pinned Newton/Warp Python packages installed successfully")
         set(MOPHI_EXTERNAL_Newton_AVAILABLE TRUE
             CACHE INTERNAL "Newton Python package available")
     else()
         message(WARNING
-            "MoPhi: pip install newton failed (exit code ${_newton_install_result}):\n"
+            "MoPhi: pip install newton==1.1.0 warp-lang==1.12.1 failed (exit code ${_newton_install_result}):\n"
             "${_newton_install_error}\n"
-            "Newton will not be available for the demo.  "
-            "Install it manually with:  pip install newton")
+            "Pinned Newton/Warp packages will not be available for couplers that require them.\n"
+            "Install them manually with:\n"
+            "  pip install --upgrade newton==1.1.0 warp-lang==1.12.1")
     endif()
 else()
-    # Even without MOPHI_FETCH_NEWTON, detect a pre-installed Newton so the
-    # summary line below reports the correct status.
+    # Even without MOPHI_FETCH_NEWTON, detect whether the required pinned
+    # Newton/Warp versions are already installed so the summary line below
+    # reports the correct status.
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
         execute_process(
-            COMMAND         ${Python3_EXECUTABLE} -c "import newton"
+            COMMAND         ${Python3_EXECUTABLE} -c "import newton, warp, sys; sys.exit(0 if getattr(newton, '__version__', '') == '1.1.0' and getattr(warp, '__version__', '') == '1.12.1' else 1)"
             RESULT_VARIABLE _newton_check_result
             OUTPUT_QUIET
             ERROR_QUIET

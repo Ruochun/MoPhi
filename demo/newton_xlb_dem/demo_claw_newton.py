@@ -45,7 +45,8 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install newton warp-lang   (Newton rigid-body physics + Warp GPU runtime)
+  • pip install --upgrade newton==1.1.0 warp-lang==1.12.1
+                                   (pinned Newton + Warp GPU runtime)
   • pip install deme               (DEME discrete-element solver — required)
 
 Running
@@ -74,7 +75,7 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
         "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# Required: pip install newton warp-lang
+# Required: pip install --upgrade newton==1.1.0 warp-lang==1.12.1
 import newton
 import warp as wp
 from newton import JointTargetMode

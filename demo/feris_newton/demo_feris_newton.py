@@ -16,7 +16,8 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_FERIS_NEWTON=ON (fetches and builds FERIS,
     compiles FERISNewtonCoupler, and builds the mophi_core Python extension).
-  • pip install newton  (or configure with -DMOPHI_FETCH_NEWTON=ON)
+  • pip install --upgrade newton==1.1.0 warp-lang==1.12.1
+    (or configure with -DMOPHI_FETCH_NEWTON=ON)
 
 Running
 -------
@@ -59,7 +60,8 @@ except ImportError:
     print(
         "WARNING: Newton (or warp) is not installed.  "
         "The FERIS side will still be demonstrated;\n"
-        "         install Newton with:  pip install newton"
+        "         install pinned versions with:\n"
+        "           pip install --upgrade newton==1.1.0 warp-lang==1.12.1"
     )
 
 # ─── 3. Build the Newton scene (if Newton is available) ───────────────────────

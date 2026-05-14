@@ -109,11 +109,11 @@ coupler.finalize()
 | `get_feris_node_positions()` | FERIS → Newton | Deformed FEA node positions forwarded to Newton geometry |
 | `set_feris_node_forces(forces)` | Newton → FERIS | Contact/body forces from Newton applied as FERIS external loads |
 
-Newton is installed by MoPhi via pip at configure time when
+Newton (with pinned Warp) is installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_NEWTON=ON`.  You can also install it manually beforehand:
 
 ```bash
-pip install newton
+pip install --upgrade newton==1.1.0 warp-lang==1.12.1
 ```
 
 ### Newton + XLB + DEME (three-way coupling)
@@ -242,7 +242,7 @@ following options:
 |--------|---------|--------|
 | `-DMOPHI_FETCH_FERIS=ON` | OFF | Download FERIS FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
-| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
+| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install pinned Newton + Warp (`pip install --upgrade newton==1.1.0 warp-lang==1.12.1`) |
 | `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install xlb`) |
 | `-DMOPHI_FETCH_DEME=ON` | OFF | Install DEME Python package (`pip install deme`) |
 
@@ -330,7 +330,7 @@ backends.
 |--------|---------|--------|
 | `MOPHI_FETCH_FERIS` | OFF | Download FERIS into `external/FERIS/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
-| `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
+| `MOPHI_FETCH_NEWTON` | OFF | Install pinned Newton + Warp (`pip install --upgrade newton==1.1.0 warp-lang==1.12.1`) |
 | `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install xlb`) |
 | `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`pip install deme`) |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
