@@ -128,7 +128,8 @@ def create_opengl_visualizer_or_fatal(model):
     if "OpenGLVisualizer" not in globals():
         fatal(
             "mophi.OpenGLVisualizer is not available.\n"
-            "Install Newton with ViewerGL support, or switch to Omniverse visualization."
+            "Install with:  pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0\n"
+            "Or switch to Omniverse visualization."
         )
     try:
         return OpenGLVisualizer(model)
