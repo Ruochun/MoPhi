@@ -23,6 +23,29 @@
 add_library(mophi_couplers INTERFACE)
 target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 
+# ── Shared Python prerequisites for Newton-based couplers ─────────────────────
+# FERISNewtonCoupler and NewtonXLBDEMCoupler both require compatible Python
+# dependencies to avoid API/runtime breakage from upstream releases.
+if(MOPHI_BUILD_FERIS_NEWTON OR MOPHI_BUILD_NEWTON_XLB_DEM)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE}
+                "${_mophi_version_check_script}"
+                --newton-version "${MOPHI_REQUIRED_NEWTON_VERSION}"
+                --warp-version "${MOPHI_REQUIRED_WARP_VERSION}"
+                --mujoco-version "${MOPHI_REQUIRED_MUJOCO_VERSION}"
+        RESULT_VARIABLE _mophi_newton_warp_version_check_result
+        OUTPUT_QUIET
+        ERROR_VARIABLE _mophi_newton_warp_version_check_error
+        ERROR_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT _mophi_newton_warp_version_check_result EQUAL 0)
+        message(FATAL_ERROR
+            "${_mophi_newton_warp_version_check_error}")
+    endif()
+endif()
+
 # ── FERIS + Newton co-simulation coupler ──────────────────────────────────────
 if(MOPHI_BUILD_FERIS_NEWTON)
     add_subdirectory(feris_newton)

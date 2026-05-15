@@ -23,16 +23,16 @@
 // body each frame.  bc_mask and missing_mask are updated on-device via Warp
 // kernels without any CPU round-trip.
 //
-// DEME is a placeholder: a deme.DEMSolver Python object is created
-// inside Initialize() but the simulation is not advanced during Step().
-// Future work will introduce particle–robot coupling (particles interacting
-// with the robot's surface mesh).  DEME is used via pip install deme so that
+// DEME is an active discrete-element solver in this setup: a Python
+// deme.DEMSolver object is provided by the caller, retained by the coupler,
+// and advanced during StepDEME().  DEME is used via pip install deme so that
 // no C++ build of DEM-Engine is required for this coupler.
 //
 // Per-solver stepping methods (no whole-sale stepper):
 //   StepNewton() — advance Newton by one substep (clear forces → collide → step → swap states).
 //   StepDEME()   — advance DEME by one substep (calls DoStepDynamics() on the Python object).
-//   StepXLB()    — advance XLB by one substep (placeholder; future work will call stepper.step()).
+//   StepXLB()    — reserved hook for XLB stepping; currently a no-op because
+//                  the Python demo advances the XLB stepper directly.
 //
 // The demo controls the pace of each system independently.  For example, Newton and DEME
 // may be advanced every substep while XLB is advanced only once per policy frame.

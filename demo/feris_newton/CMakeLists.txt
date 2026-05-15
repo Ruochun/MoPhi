@@ -10,8 +10,9 @@
 # Prerequisites:
 #   • MOPHI_BUILD_FERIS_NEWTON=ON   — builds the FERISNewtonCoupler library and
 #                                     the mophi_core Python extension module.
-#   • pip install newton             — or -DMOPHI_FETCH_NEWTON=ON at configure
-#                                     time to have MoPhi install it automatically.
+#   • pip install --upgrade newton warp-lang mujoco==3.6.0
+#                                   — or -DMOPHI_FETCH_NEWTON=ON at configure
+#                                     time to have MoPhi install required packages automatically.
 # ─────────────────────────────────────────────────────────────────────────────
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

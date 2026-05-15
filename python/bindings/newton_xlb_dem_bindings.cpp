@@ -27,17 +27,16 @@ void register_newton_xlb_dem(py::module_& m) {
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
     // Three-way co-simulation coupler: Newton (walking robot, Python GPU),
     // XLB (LBM fluid solver, Python GPU), and DEME (Python discrete-element solver,
-    // pip install deme).  Newton is the primary active solver; XLB and DEME are
-    // placeholders that are instantiated but do not advance serious physics yet.
+    // pip install deme).  Newton drives the articulated robot, XLB advances a
+    // fluid solve in Python, and DEME advances live granular/contact physics.
     // PyNewtonXLBDEMCoupler is defined in src/couplers/newton_xlb_dem/.
     py::class_<PyNewtonXLBDEMCoupler>(m, "NewtonXLBDEMCoupler",
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "
                                       "physics), XLB (lattice-Boltzmann fluid solver), and DEME (Python "
                                       "discrete-element solver, pip install deme).\n\n"
                                       "Newton drives a walking robot and produces a spatial representation "
-                                      "(body transforms) at every step.  XLB and DEME are placeholder "
-                                      "solvers that are instantiated but not seriously advanced yet; future "
-                                      "work will feed the robot geometry into both.\n\n"
+                                      "(body transforms) at every step.  XLB advances fluid physics in "
+                                      "Python, and DEME advances live discrete-element physics.\n\n"
                                       "Usage::\n\n"
                                       "    import mophi, newton, warp as wp, deme\n"
                                       "    wp.init()\n"
@@ -54,7 +53,7 @@ void register_newton_xlb_dem(py::module_& m) {
                                       "        # optionally update coupler.newton_control before each step\n"
                                       "        coupler.step_newton()  # advance Newton one substep\n"
                                       "        coupler.step_deme()    # advance DEME one substep\n"
-                                      "        # coupler.step_xlb()  # advance XLB (placeholder)\n"
+                                      "        # coupler.step_xlb()  # reserved hook; demo advances XLB directly\n"
                                       "        transforms = coupler.get_robot_body_transforms()\n"
                                       "    coupler.finalize()")
         .def(py::init<>())
@@ -77,8 +76,8 @@ void register_newton_xlb_dem(py::module_& m) {
              "Calls DoStepDynamics() on the bound deme.DEMSolver.\n"
              "No-op when no DEME solver was provided.")
         .def("step_xlb", &PyNewtonXLBDEMCoupler::StepXLB,
-             "Advance XLB by one substep (placeholder).\n\n"
-             "No-op until fluid–robot coupling is implemented.\n"
+             "Advance XLB by one substep.\n\n"
+             "Currently a no-op hook because the Python demo advances the XLB solver directly.\n"
              "Call once per policy frame, independently of Newton / DEME.")
         .def("finalize", &PyNewtonXLBDEMCoupler::Finalize,
              "Finalize all solvers and release all resources including Python references.")

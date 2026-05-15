@@ -20,6 +20,16 @@ from . import mophi_core  # noqa: F401 — make the C++ module accessible
 
 __all__ = []
 
+REQUIRED_NEWTON_VERSION = "1.0.0"
+REQUIRED_WARP_VERSION = "1.12.1"
+REQUIRED_MUJOCO_VERSION = "3.6.0"
+
+__all__ += [
+    "REQUIRED_NEWTON_VERSION",
+    "REQUIRED_WARP_VERSION",
+    "REQUIRED_MUJOCO_VERSION",
+]
+
 # Verbosity constants (always available — come from mophi_core unconditionally).
 try:
     from .mophi_core import VERBOSITY_ERROR, VERBOSITY_WARNING, VERBOSITY_INFO  # noqa: F401
@@ -66,6 +76,22 @@ try:
 except ImportError:
     pass
 
+# Package-version helper utilities.
+try:
+    from .utils.version_checker import (  # noqa: F401
+        check_newton_warp_mujoco_versions,
+        check_newton_warp_versions,
+        check_python_package_versions,
+    )
+
+    __all__ += [
+        "check_newton_warp_mujoco_versions",
+        "check_newton_warp_versions",
+        "check_python_package_versions",
+    ]
+except ImportError:
+    pass
+
 # SurfaceMesh and load_obj are always available — they depend only on the
 # mophi_essentials submodule which is always compiled into mophi_core.
 try:
@@ -105,6 +131,28 @@ def fatal(msg: str) -> None:
 
 
 __all__ += ["fatal"]
+
+
+def create_opengl_visualizer_or_fatal(model):
+    """Create OpenGLVisualizer or terminate with a clear fatal message."""
+    try:
+        visualizer_cls = OpenGLVisualizer
+    except NameError:
+        fatal(
+            "mophi.OpenGLVisualizer is not available.\n"
+            "Install with:  pip install --upgrade "
+            f"newton=={REQUIRED_NEWTON_VERSION} "
+            f"warp-lang=={REQUIRED_WARP_VERSION} "
+            f"mujoco=={REQUIRED_MUJOCO_VERSION}\n"
+            "Or switch to Omniverse visualization."
+        )
+    try:
+        return visualizer_cls(model)
+    except Exception as exc:
+        fatal(f"OpenGL visualization initialization failed: {exc}")
+
+
+__all__ += ["create_opengl_visualizer_or_fatal"]
 
 # OpenGLVisualizer wraps Newton's ViewerGL behind a stable MoPhi interface.
 # Available whenever newton is installed; no special CMake flag required.

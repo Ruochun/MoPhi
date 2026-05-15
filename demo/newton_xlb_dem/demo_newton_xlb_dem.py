@@ -15,14 +15,14 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                bc_mask and missing_mask are updated in-place without rebuilding
                the stepper, keeping per-frame overhead to a GPU upload of the
                two mask arrays (~21 MB) instead of a full JIT re-compilation.
-  • DEME     — a placeholder discrete-element solver (pip install deme).  A
-               deme.DEMSolver is created in Python and passed to the coupler, but
-               its simulation is not advanced yet.  Future work will introduce
-               particle–robot coupling.
+  • DEME     — a real discrete-element solver (pip install deme).  A
+               deme.DEMSolver is created in Python, populated with particles and
+               contact proxies, stepped every substep, and its live particle
+               positions are visualized each frame.
 
-Both XLB and DEME are gracefully skipped when their packages are not available,
-so the demo can run Newton-only on a CUDA machine that has only Newton and Warp
-installed.
+This three-way demo requires all three Python solvers (Newton, XLB, and DEME).
+If any required module is missing, the script exits early with an actionable
+install message.
 
 The robot setup and walking policy exactly follow Newton's
 ``newton/examples/robot/example_robot_anymal_c_walk.py``.  The only difference
@@ -33,9 +33,9 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install newton warp-lang torch   (Newton rigid-body physics + PyTorch for RL policy)
-  • pip install xlb                       (optional — XLB LBM solver)
-  • pip install deme                      (optional — DEME discrete-element solver)
+  • pip install --upgrade newton warp-lang mujoco==3.6.0 torch
+  • pip install "xlb[cuda]"                (XLB LBM solver)
+  • pip install deme                        (DEME discrete-element solver)
 
 Running
 -------
@@ -50,41 +50,43 @@ Or from the repository root after installing the mophi package:
 
 import os
 import sys
+from importlib.util import find_spec
 
 import numpy as np
 
 # ─── Import MoPhi ─────────────────────────────────────────────────────────
-try:
-    import mophi
-except ImportError as exc:
+if find_spec("mophi") is None:
     sys.exit(
         "ERROR: Could not import the 'mophi' package.\n"
         "       Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON and ensure that\n"
-        "       the build directory (python/) is on PYTHONPATH.\n"
-        f"       ({exc})"
+        "       the build directory (python/) is on PYTHONPATH."
     )
+import mophi
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
-    sys.exit(
+    mophi.fatal(
         "ERROR: mophi.NewtonXLBDEMCoupler is not available.\n"
         "       Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
     )
 
-# ─── Import Newton + Warp + PyTorch ────────────────────────────────────────
-try:
-    import torch
-    import newton
-    import warp as wp
-
-    _newton_available = True
-except ImportError:
-    _newton_available = False
-    print(
-        "WARNING: Newton, warp, or torch is not installed.  "
-        "The demo cannot proceed without Newton.\n"
-        "         Install with:  pip install newton warp-lang torch"
+# ─── Import Newton + Warp + MuJoCo + PyTorch ───────────────────────────────
+if find_spec("torch") is None:
+    mophi.fatal("PyTorch is required for this demo.\nInstall with:  pip install torch")
+if find_spec("newton") is None or find_spec("warp") is None or find_spec("mujoco") is None:
+    mophi.fatal(
+        "Newton, Warp, and MuJoCo are required for this demo.\n"
+        "Install with:  pip install --upgrade newton warp-lang mujoco==3.6.0"
     )
-    sys.exit(1)
+import torch
+import newton
+import warp as wp
+import mujoco
+
+mophi.check_newton_warp_mujoco_versions(
+    mophi.REQUIRED_NEWTON_VERSION,
+    mophi.REQUIRED_WARP_VERSION,
+    mophi.REQUIRED_MUJOCO_VERSION,
+)
 
 # ─── Import demo-specific utilities ──────────────────────────────────────────
 # newton_xlb_dem_utils.py lives in the same directory as this script.
@@ -93,29 +95,13 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
-# ─── Import XLB (optional) ─────────────────────────────────────────────────
-try:
-    import xlb
-
-    _xlb_available = True
-except ImportError:
-    _xlb_available = False
-    print(
-        "INFO: XLB is not installed — the XLB solver will be skipped (placeholder only).\n"
-        "      Install with:  pip install xlb"
-    )
-
-# ─── Import DEME (optional) ────────────────────────────────────────────────
-try:
-    import DEME
-
-    _deme_available = True
-except ImportError:
-    _deme_available = False
-    print(
-        "INFO: DEME is not installed — the DEME solver will be skipped (placeholder only).\n"
-        "      Install with:  pip install deme"
-    )
+# ─── Import XLB + DEME (required for this three-way demo) ──────────────────
+if find_spec("xlb") is None:
+    mophi.fatal('XLB is required for this demo.\nInstall with:  pip install "xlb[cuda]"')
+if find_spec("DEME") is None:
+    mophi.fatal("DEME is required for this demo.\nInstall with:  pip install deme")
+import xlb
+import DEME
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
 
@@ -263,17 +249,9 @@ if USE_OMNIVERSE_VISUALIZATION:
             "      The simulation will run without visualization."
         )
 else:
-    try:
-        vis = mophi.OpenGLVisualizer(newton_model)
-        _vis_available = True
-        print("[Viewer] MoPhi OpenGL visualization window opened.\n")
-    except Exception as exc:
-        vis = None
-        _vis_available = False
-        print(
-            f"[Viewer] Could not open MoPhi OpenGL viewer ({exc}).\n"
-            "         The simulation will run without visualization."
-        )
+    vis = mophi.create_opengl_visualizer_or_fatal(newton_model)
+    _vis_available = True
+    print("[Viewer] MoPhi OpenGL visualization window opened.\n")
 
 # ─── XLB real LBM simulation setup ───────────────────────────────────────────
 # Configures a real 3-D incompressible Navier-Stokes LBM simulation using XLB.
@@ -339,160 +317,160 @@ _xlb_robot_bc_id = None  # HalfwayBounceBackBC ID assigned to the robot obstacle
 _xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (q, 3) int32
 
 
-if _xlb_available:
-    print("[XLB] Setting up real LBM simulation ...")
+print("[XLB] Setting up real LBM simulation ...")
+from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
+from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
+from xlb.grid import grid_factory as _xlb_grid_factory
+from xlb.operator.boundary_condition import (
+    ZouHeBC as _ZouHeBC,
+    HalfwayBounceBackBC as _HalfwayBounceBackBC,
+    ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
+)
+from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
+from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
+
+# Guard against XLB-internal runtime/setup failures with a clear fatal message.
+# This demo requires XLB; setup errors must terminate rather than silently degrade.
+try:
+    _xlb_backend = _XLBComputeBackend.WARP
+    _xlb_precision = _XLBPrecisionPolicy.FP32FP32
+    _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
+    xlb.init(_xlb_vel_set, _xlb_backend, _xlb_precision)
+
+    _xlb_grid = _xlb_grid_factory((_XLB_NX, _XLB_NY, _XLB_NZ), compute_backend=_xlb_backend)
+
+    # Build non-overlapping boundary index sets.
+    _box = _xlb_grid.bounding_box_indices()
+    _box_no_e = _xlb_grid.bounding_box_indices(remove_edges=True)
+
+    _xlb_inlet_idx = _box_no_e["back"]  # y_max face  –  incoming flow (-y direction)
+    _xlb_outlet_idx = _box_no_e["front"]  # y_min face  –  outflow
+    _xlb_wall_idx = [
+        _box["bottom"][i] + _box["top"][i] + _box["left"][i] + _box["right"][i] for i in range(_xlb_vel_set.d)
+    ]
+    _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
+
+    # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
+    # (the normal component) to define the intended inflow direction.
+    _xlb_inlet_bc = _ZouHeBC(
+        bc_type="velocity",
+        prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
+        indices=_xlb_inlet_idx,
+    )
+    _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
+    _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
+
+    # Build the robot obstacle BC at a representative initial base-body position.
+    # The BC is added to the stepper once and never removed; bc_mask and
+    # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
+    _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
+        np.array([0.0, 0.0, 0.62]),
+        _XLB_DOMAIN_MIN,
+        _XLB_DOMAIN_MAX,
+        (_XLB_NX, _XLB_NY, _XLB_NZ),
+        _XLB_ROBOT_HALF_EXT_X,
+        _XLB_ROBOT_HALF_EXT_Y,
+        _XLB_ROBOT_BELOW_BASE,
+        _XLB_ROBOT_ABOVE_BASE,
+    )
+    if _robot_init_gc_min is None:
+        # Fallback: if the initial position is outside the domain, use a single interior cell
+        # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
+        # correctly on the very first simulation frame.
+        _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
+        _robot_init_gc_max = _robot_init_gc_min.copy()
+    _rxi = np.arange(_robot_init_gc_min[0], _robot_init_gc_max[0] + 1)
+    _ryi = np.arange(_robot_init_gc_min[1], _robot_init_gc_max[1] + 1)
+    _rzi = np.arange(_robot_init_gc_min[2], _robot_init_gc_max[2] + 1)
+    _rgx, _rgy, _rgz = np.meshgrid(_rxi, _ryi, _rzi, indexing="ij")
+    _xlb_robot_bc = _HalfwayBounceBackBC(
+        indices=[_rgx.flatten().tolist(), _rgy.flatten().tolist(), _rgz.flatten().tolist()]
+    )
+
+    _xlb_stepper = _NSEStepper(
+        grid=_xlb_grid,
+        boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
+        collision_type="BGK",
+    )
+    _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask = _xlb_stepper.prepare_fields()
+
+    # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
+    _xlb_robot_bc_id = _xlb_robot_bc.id
+    _c = _xlb_vel_set.c
     try:
-        from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
-        from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
-        from xlb.grid import grid_factory as _xlb_grid_factory
-        from xlb.operator.boundary_condition import (
-            ZouHeBC as _ZouHeBC,
-            HalfwayBounceBackBC as _HalfwayBounceBackBC,
-            ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
-        )
-        from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
-        from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
-
-        _xlb_backend = _XLBComputeBackend.WARP
-        _xlb_precision = _XLBPrecisionPolicy.FP32FP32
-        _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
-        xlb.init(_xlb_vel_set, _xlb_backend, _xlb_precision)
-
-        _xlb_grid = _xlb_grid_factory((_XLB_NX, _XLB_NY, _XLB_NZ), compute_backend=_xlb_backend)
-
-        # Build non-overlapping boundary index sets.
-        _box = _xlb_grid.bounding_box_indices()
-        _box_no_e = _xlb_grid.bounding_box_indices(remove_edges=True)
-
-        _xlb_inlet_idx = _box_no_e["back"]  # y_max face  –  incoming flow (-y direction)
-        _xlb_outlet_idx = _box_no_e["front"]  # y_min face  –  outflow
-        _xlb_wall_idx = [
-            _box["bottom"][i] + _box["top"][i] + _box["left"][i] + _box["right"][i] for i in range(_xlb_vel_set.d)
-        ]
-        _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
-
-        # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
-        # (the normal component) to define the intended inflow direction.
-        _xlb_inlet_bc = _ZouHeBC(
-            bc_type="velocity",
-            prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
-            indices=_xlb_inlet_idx,
-        )
-        _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
-        _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
-
-        # Build the robot obstacle BC at a representative initial base-body position.
-        # The BC is added to the stepper once and never removed; bc_mask and
-        # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
-        _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
-            np.array([0.0, 0.0, 0.62]),
-            _XLB_DOMAIN_MIN,
-            _XLB_DOMAIN_MAX,
-            (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X,
-            _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE,
-            _XLB_ROBOT_ABOVE_BASE,
-        )
-        if _robot_init_gc_min is None:
-            # Fallback: if the initial position is outside the domain, use a single interior cell
-            # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
-            # correctly on the very first simulation frame.
-            _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
-            _robot_init_gc_max = _robot_init_gc_min.copy()
-        _rxi = np.arange(_robot_init_gc_min[0], _robot_init_gc_max[0] + 1)
-        _ryi = np.arange(_robot_init_gc_min[1], _robot_init_gc_max[1] + 1)
-        _rzi = np.arange(_robot_init_gc_min[2], _robot_init_gc_max[2] + 1)
-        _rgx, _rgy, _rgz = np.meshgrid(_rxi, _ryi, _rzi, indexing="ij")
-        _xlb_robot_bc = _HalfwayBounceBackBC(
-            indices=[_rgx.flatten().tolist(), _rgy.flatten().tolist(), _rgz.flatten().tolist()]
+        _c_arr = np.asarray(_c.numpy() if hasattr(_c, "numpy") else _c, dtype=np.int32)
+        if _c_arr.ndim != 2:
+            raise ValueError(f"vel_set.c has unexpected ndim={_c_arr.ndim}")
+        # vel_set.c is stored as (d, q) = (3, 19); transpose to (q, d) = (19, 3).
+        _xlb_vel_c_np = _c_arr.T if _c_arr.shape[0] == _xlb_vel_set.d else _c_arr
+        if _xlb_vel_c_np.shape != (_xlb_vel_set.q, _xlb_vel_set.d):
+            raise ValueError(f"Unexpected vel_c shape after transpose: {_xlb_vel_c_np.shape}")
+    except (AttributeError, ValueError, AssertionError):
+        # Hardcoded fallback: standard D3Q19 velocity ordering.
+        _xlb_vel_c_np = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+                [1, 1, 0],
+                [-1, -1, 0],
+                [1, -1, 0],
+                [-1, 1, 0],
+                [1, 0, 1],
+                [-1, 0, -1],
+                [1, 0, -1],
+                [-1, 0, 1],
+                [0, 1, 1],
+                [0, -1, -1],
+                [0, 1, -1],
+                [0, -1, 1],
+            ],
+            dtype=np.int32,
         )
 
-        _xlb_stepper = _NSEStepper(
-            grid=_xlb_grid,
-            boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
-            collision_type="BGK",
-        )
-        _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask = _xlb_stepper.prepare_fields()
+    # Upload the velocity stencil to device once as a Warp array so that
+    # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
+    _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
 
-        # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
-        _xlb_robot_bc_id = _xlb_robot_bc.id
-        _c = _xlb_vel_set.c
-        try:
-            _c_arr = np.asarray(_c.numpy() if hasattr(_c, "numpy") else _c, dtype=np.int32)
-            if _c_arr.ndim != 2:
-                raise ValueError(f"vel_set.c has unexpected ndim={_c_arr.ndim}")
-            # vel_set.c is stored as (d, q) = (3, 19); transpose to (q, d) = (19, 3).
-            _xlb_vel_c_np = _c_arr.T if _c_arr.shape[0] == _xlb_vel_set.d else _c_arr
-            if _xlb_vel_c_np.shape != (_xlb_vel_set.q, _xlb_vel_set.d):
-                raise ValueError(f"Unexpected vel_c shape after transpose: {_xlb_vel_c_np.shape}")
-        except (AttributeError, ValueError, AssertionError):
-            # Hardcoded fallback: standard D3Q19 velocity ordering.
-            _xlb_vel_c_np = np.array(
-                [
-                    [0, 0, 0],
-                    [1, 0, 0],
-                    [-1, 0, 0],
-                    [0, 1, 0],
-                    [0, -1, 0],
-                    [0, 0, 1],
-                    [0, 0, -1],
-                    [1, 1, 0],
-                    [-1, -1, 0],
-                    [1, -1, 0],
-                    [-1, 1, 0],
-                    [1, 0, 1],
-                    [-1, 0, -1],
-                    [1, 0, -1],
-                    [-1, 0, 1],
-                    [0, 1, 1],
-                    [0, -1, -1],
-                    [0, 1, -1],
-                    [0, -1, 1],
-                ],
-                dtype=np.int32,
-            )
+    # Record the initial robot box position.  The GPU kernels do not need CPU
+    # base-mask copies: interior cells (guaranteed by _world_to_grid_idx) always
+    # have a fluid base value of 0 / False, so clearing = writing those defaults.
+    _xlb_robot_gc_min = _robot_init_gc_min
+    _xlb_robot_gc_max = _robot_init_gc_max
 
-        # Upload the velocity stencil to device once as a Warp array so that
-        # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
-        _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
+    _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
+    _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
+    _xlb_u_field = _xlb_grid.create_field(cardinality=3, dtype=_XLBPrecision.FP32)
 
-        # Record the initial robot box position.  The GPU kernels do not need CPU
-        # base-mask copies: interior cells (guaranteed by _world_to_grid_idx) always
-        # have a fluid base value of 0 / False, so clearing = writing those defaults.
-        _xlb_robot_gc_min = _robot_init_gc_min
-        _xlb_robot_gc_max = _robot_init_gc_max
+    # Warm-up: advance the LBM toward an initial near-steady state with the
+    # robot obstacle already in place at its initial position.
+    print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
+    for _ws in range(_XLB_WARMUP_STEPS):
+        # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
+        _xlb_f0, _xlb_f1 = _xlb_stepper(_xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep)
+        _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
+        _xlb_timestep += 1
 
-        _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
-        _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
-        _xlb_u_field = _xlb_grid.create_field(cardinality=3, dtype=_XLBPrecision.FP32)
+    # Extract macro state; XLB stores fields as (Q/D, NX, NY, NZ) — transpose
+    # to (NX, NY, NZ, 3) for the streamline helper.
+    _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
+    _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
 
-        # Warm-up: advance the LBM toward an initial near-steady state with the
-        # robot obstacle already in place at its initial position.
-        print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
-        for _ws in range(_XLB_WARMUP_STEPS):
-            # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
-            _xlb_f0, _xlb_f1 = _xlb_stepper(
-                _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
-            )
-            _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
-            _xlb_timestep += 1
-
-        # Extract macro state; XLB stores fields as (Q/D, NX, NY, NZ) — transpose
-        # to (NX, NY, NZ, 3) for the streamline helper.
-        _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
-        _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
-
-        xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
-        print(
-            f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
-            f"(robot BC id={_xlb_robot_bc_id}, "
-            f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
-        )
-    except Exception as exc:
-        print(f"[XLB] Could not set up XLB simulation ({exc}) — disabling XLB.\n")
-        _xlb_stepper = None
-        xlb_simulation = None
+    xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
+    print(
+        f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
+        f"(robot BC id={_xlb_robot_bc_id}, "
+        f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
+    )
+except Exception as exc:
+    mophi.fatal(
+        f"Failed to set up XLB simulation: {exc}\n"
+        "Ensure compatible XLB dependencies are installed and the environment supports the selected backend."
+    )
 
 
 # ─── XLB flow-field visualisation helpers ─────────────────────────────────────
@@ -523,7 +501,7 @@ if _vis_available:
     )
     print(f"[Viewer] XLB flow streamlines registered ({len(_xlb_streamline_pts)} point(s)).\n")
 
-# ─── Build the DEME placeholder solver (if DEME is available) ─────────────
+# ─── Build the DEME solver ────────────────────────────────────────────────
 # Representative radius types [m] for a simple polydisperse particle set.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
 
@@ -562,36 +540,35 @@ shank_trackers = []
 particles_tracker = None
 _FIXED_FAM = 10
 
-if _deme_available:
-    print("[DEME] Creating placeholder deme.DEMSolver ...")
-    deme_solver = DEME.DEMSolver()
-    wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
-    deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
-    deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
-    deme_solver.SetErrorOutAvgContacts(500)
-    # Load the shank
-    ad_hoc_pos = [0.0, 0.0, 0.0]
-    for i in range(len(foot_tip_sphere_radii)):
-        template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[0], wall_mat)
-        shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
-        shank.SetFamily(_FIXED_FAM)
-        shank_trackers.append(deme_solver.Track(shank))
-    # Fix shanks physics for DEME
-    deme_solver.SetFamilyFixed(_FIXED_FAM)
-    # Load particles
-    particle_templates = []
-    for i in range(len(_DEM_RADIUS_TYPES)):
-        particle_templates.append(deme_solver.LoadSphereType(1.0, _DEM_RADIUS_TYPES[i], wall_mat))
-    used_types = []
-    for i in range(_NUM_DEM_SPHERES):
-        used_types.append(particle_templates[_radius_indices[i]])
-    particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
-    # Init vel
-    particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
-    particles_tracker = deme_solver.Track(particles)
-    # Init
-    deme_solver.SetInitTimeStep(SIM_DT)
-    deme_solver.Initialize()
+print("[DEME] Creating deme.DEMSolver ...")
+deme_solver = DEME.DEMSolver()
+wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
+deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
+deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
+deme_solver.SetErrorOutAvgContacts(500)
+# Load the shank
+ad_hoc_pos = [0.0, 0.0, 0.0]
+for i in range(len(foot_tip_sphere_radii)):
+    template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[0], wall_mat)
+    shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
+    shank.SetFamily(_FIXED_FAM)
+    shank_trackers.append(deme_solver.Track(shank))
+# Fix shanks physics for DEME
+deme_solver.SetFamilyFixed(_FIXED_FAM)
+# Load particles
+particle_templates = []
+for i in range(len(_DEM_RADIUS_TYPES)):
+    particle_templates.append(deme_solver.LoadSphereType(1.0, _DEM_RADIUS_TYPES[i], wall_mat))
+used_types = []
+for i in range(_NUM_DEM_SPHERES):
+    used_types.append(particle_templates[_radius_indices[i]])
+particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
+# Init vel
+particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
+particles_tracker = deme_solver.Track(particles)
+# Init
+deme_solver.SetInitTimeStep(SIM_DT)
+deme_solver.Initialize()
 
 # ─── Initialize the coupler ───────────────────────────────────────────────
 coupler = mophi.NewtonXLBDEMCoupler()
@@ -645,23 +622,20 @@ sim_time = 0.0
 # ─── Movie recording settings ────────────────────────────────────────────
 # Set SAVE_MOVIE = True to record the rendered simulation frames to a video file.
 # Requires: pip install imageio imageio-ffmpeg
+# When SAVE_MOVIE=True and imageio is missing, this demo exits with an
+# actionable install message instead of silently disabling recording.
 SAVE_MOVIE = True
 MOVIE_OUTPUT_PATH = "demo_newton_xlb_dem.mp4"
 MOVIE_FPS = 50  # frames per second for the output video
 
 _movie_writer = None
 if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
-    try:
-        import imageio
+    if find_spec("imageio") is None:
+        mophi.fatal("imageio is required when SAVE_MOVIE=True.\n" "Install with:  pip install imageio imageio-ffmpeg")
+    import imageio
 
-        _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
-        print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
-    except ImportError:
-        print(
-            "WARNING: imageio is not installed — movie recording disabled.\n"
-            "         Install with:  pip install imageio imageio-ffmpeg"
-        )
-        SAVE_MOVIE = False
+    _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+    print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
 
 print(
     f"Running up to {NUM_FRAMES} policy frame(s) "
@@ -729,7 +703,7 @@ for frame in range(NUM_FRAMES):
     foot_tip_positions, foot_tip_rotations = demo_utils.compute_foot_tip_poses(body_q_np, foot_tip_descriptors)
 
     # Feed the info to DEME
-    if _deme_available and foot_tip_positions:
+    if foot_tip_positions:
         for i in range(len(foot_tip_positions)):
             shank_trackers[i].SetPos(foot_tip_positions[i])
             shank_trackers[i].SetOriQ(foot_tip_rotations[i])
@@ -815,8 +789,7 @@ for frame in range(NUM_FRAMES):
 
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
-        # Render DEM placeholder spheres moving towards the robot.
-        # Future work will replace these with live DEME particle positions.
+        # Render live DEME particle positions.
         vis.log_points(
             "dem_particles",
             _dem_sphere_pos_wp,
@@ -873,10 +846,7 @@ print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 print("Demo completed successfully.")
 print(f"  Newton version : {newton.__version__}")
 print(f"  Warp   version : {wp.__version__}")
-if _xlb_available:
-    print(f"  XLB    version : {xlb.__version__}")
-else:
-    print("  XLB            : not installed (placeholder skipped)")
+print(f"  XLB    version : {xlb.__version__}")
 print(
     "\nSpatial representation summary:\n"
     "  Each frame produced a list of body transforms "

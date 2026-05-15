@@ -18,6 +18,12 @@
 # Load the registry (must happen after MoPhiExternalUtils is included).
 include(${CMAKE_CURRENT_SOURCE_DIR}/ExternalProjects.cmake)
 
+# Required dependency constraints for Newton-based MoPhi components.
+set(_mophi_newton_required_version "${MOPHI_REQUIRED_NEWTON_VERSION}")
+set(_mophi_warp_required_version "${MOPHI_REQUIRED_WARP_VERSION}")
+set(_mophi_mujoco_required_version "${MOPHI_REQUIRED_MUJOCO_VERSION}")
+set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
+
 # ── DEM-Engine ────────────────────────────────────────────────────────────────
 if(MOPHI_FETCH_DEMENGINE)
     mophi_fetch_external(DEMEngine)
@@ -28,20 +34,25 @@ if(MOPHI_FETCH_FERIS)
     mophi_fetch_external(FERIS)
 endif()
 
-# ── Newton (Python package) ───────────────────────────────────────────────────
-# Newton is a pure Python physics engine — it has no CMake build system and
-# cannot be handled with mophi_fetch_external / ExternalProject_Add.  When
-# MOPHI_FETCH_NEWTON=ON, MoPhi installs Newton via pip at configure time so
-# that it is immediately importable in the Python demo and any user scripts.
+# ── Newton + Warp + MuJoCo (Python packages) ──────────────────────────────────
+# Newton is a pure Python physics engine built on NVIDIA Warp.  It has no CMake
+# build system and cannot be handled with mophi_fetch_external / ExternalProject_Add.
+# When MOPHI_FETCH_NEWTON=ON, MoPhi enforces required package constraints:
+#   newton==${_mophi_newton_required_version}, warp-lang==${_mophi_warp_required_version},
+#   and mujoco==${_mophi_mujoco_required_version}
+# so that couplers and demos stay stable across environments.
 #
 # Note: this pip install uses whatever Python interpreter CMake finds first
 # (the same one that will build the pybind11 extension module).  Users running
 # inside a virtual environment should activate it before invoking CMake.
 if(MOPHI_FETCH_NEWTON)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    message(STATUS "MoPhi: Installing Newton Python package via pip ...")
+    message(STATUS
+        "MoPhi: Installing required Newton/Warp/MuJoCo Python packages via pip "
+        "(newton==${_mophi_newton_required_version}, warp-lang==${_mophi_warp_required_version}, "
+        "mujoco==${_mophi_mujoco_required_version}) ...")
     execute_process(
-        COMMAND           ${Python3_EXECUTABLE} -m pip install newton
+        COMMAND           ${Python3_EXECUTABLE} -m pip install --upgrade newton==${_mophi_newton_required_version} warp-lang==${_mophi_warp_required_version} mujoco==${_mophi_mujoco_required_version}
         RESULT_VARIABLE   _newton_install_result
         OUTPUT_VARIABLE   _newton_install_output
         ERROR_VARIABLE    _newton_install_error
@@ -49,23 +60,33 @@ if(MOPHI_FETCH_NEWTON)
         ERROR_STRIP_TRAILING_WHITESPACE
     )
     if(_newton_install_result EQUAL 0)
-        message(STATUS "MoPhi: Newton Python package installed successfully")
+        message(STATUS "MoPhi: Required Newton/Warp/MuJoCo Python packages installed successfully")
         set(MOPHI_EXTERNAL_Newton_AVAILABLE TRUE
             CACHE INTERNAL "Newton Python package available")
     else()
         message(WARNING
-            "MoPhi: pip install newton failed (exit code ${_newton_install_result}):\n"
+            "MoPhi: pip install newton==${_mophi_newton_required_version} warp-lang==${_mophi_warp_required_version} mujoco==${_mophi_mujoco_required_version} failed "
+            "(exit code ${_newton_install_result}):\n"
             "${_newton_install_error}\n"
-            "Newton will not be available for the demo.  "
-            "Install it manually with:  pip install newton")
+            "Required Newton/Warp/MuJoCo packages will not be available for couplers that require them.\n"
+            "Install them manually with:\n"
+            "  pip install --upgrade newton==${_mophi_newton_required_version} "
+            "warp-lang==${_mophi_warp_required_version} "
+            "mujoco==${_mophi_mujoco_required_version}")
     endif()
 else()
-    # Even without MOPHI_FETCH_NEWTON, detect a pre-installed Newton so the
-    # summary line below reports the correct status.
+    # Even without MOPHI_FETCH_NEWTON, detect whether the required
+    # Newton/Warp/MuJoCo packages are already installed so the summary line below
+    # reports the correct status.
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
         execute_process(
-            COMMAND         ${Python3_EXECUTABLE} -c "import newton"
+            COMMAND         ${Python3_EXECUTABLE}
+                            "${_mophi_version_check_script}"
+                            --newton-version "${_mophi_newton_required_version}"
+                            --warp-version "${_mophi_warp_required_version}"
+                            --mujoco-version "${_mophi_mujoco_required_version}"
+                            --quiet
             RESULT_VARIABLE _newton_check_result
             OUTPUT_QUIET
             ERROR_QUIET
@@ -83,12 +104,12 @@ endif()
 # ── XLB (Python package) ──────────────────────────────────────────────────────
 # XLB (jax-Lattice-Boltzmann) is a pure Python LBM solver — it has no CMake
 # build system and cannot be handled with mophi_fetch_external.  When
-# MOPHI_FETCH_XLB=ON, MoPhi installs XLB via pip at configure time.
+# MOPHI_FETCH_XLB=ON, MoPhi installs the CUDA-enabled XLB package via pip at configure time.
 if(MOPHI_FETCH_XLB)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    message(STATUS "MoPhi: Installing XLB Python package via pip ...")
+    message(STATUS "MoPhi: Installing XLB Python package via pip (xlb[cuda]) ...")
     execute_process(
-        COMMAND           ${Python3_EXECUTABLE} -m pip install xlb
+        COMMAND           ${Python3_EXECUTABLE} -m pip install "xlb[cuda]"
         RESULT_VARIABLE   _xlb_install_result
         OUTPUT_VARIABLE   _xlb_install_output
         ERROR_VARIABLE    _xlb_install_error
@@ -101,10 +122,10 @@ if(MOPHI_FETCH_XLB)
             CACHE INTERNAL "XLB Python package available")
     else()
         message(WARNING
-            "MoPhi: pip install xlb failed (exit code ${_xlb_install_result}):\n"
+            "MoPhi: pip install xlb[cuda] failed (exit code ${_xlb_install_result}):\n"
             "${_xlb_install_error}\n"
             "XLB will not be available for the demo.  "
-            "Install it manually with:  pip install xlb")
+            "Install it manually with:  pip install \"xlb[cuda]\"")
     endif()
 else()
     # Even without MOPHI_FETCH_XLB, detect a pre-installed XLB so the

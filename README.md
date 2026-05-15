@@ -109,11 +109,11 @@ coupler.finalize()
 | `get_feris_node_positions()` | FERIS → Newton | Deformed FEA node positions forwarded to Newton geometry |
 | `set_feris_node_forces(forces)` | Newton → FERIS | Contact/body forces from Newton applied as FERIS external loads |
 
-Newton is installed by MoPhi via pip at configure time when
+Newton (with required Warp and MuJoCo) is installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_NEWTON=ON`.  You can also install it manually beforehand:
 
 ```bash
-pip install newton
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 ```
 
 ### Newton + XLB + DEME (three-way coupling)
@@ -139,12 +139,11 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/demo_claw_newton.py
   position-based dynamics (XPBD).  The robot's spatial representation (body
   position + orientation quaternion per body) is extracted at every step via
   `get_robot_body_transforms()`.
-- **XLB** (placeholder) — a JAX-based LBM fluid solver is instantiated but not
-  yet seriously advanced.  Future work will feed the robot's geometry as a
-  moving boundary condition.
-- **DEME** (placeholder) — a Python discrete-element solver (pip install deme)
-  is instantiated but not yet advanced.  Future work will introduce
-  particle–robot coupling.
+- **XLB** — a JAX-based LBM fluid solver that advances each frame.  The robot is
+  represented as a prescribed moving obstacle whose boundary-condition masks are
+  updated directly on the GPU.
+- **DEME** — a Python discrete-element solver (pip install deme) that advances a
+  live particle simulation alongside the robot.
 
 ```python
 import mophi, newton, warp as wp, math
@@ -178,7 +177,7 @@ XLB is optionally installed by MoPhi via pip at configure time when
 `-DMOPHI_FETCH_XLB=ON`.  You can also install it manually:
 
 ```bash
-pip install xlb
+pip install "xlb[cuda]"
 ```
 
 If you try to enable the co-simulation solver without first fetching the
@@ -242,8 +241,8 @@ following options:
 |--------|---------|--------|
 | `-DMOPHI_FETCH_FERIS=ON` | OFF | Download FERIS FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
-| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install Newton Python package (`pip install newton`) |
-| `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install xlb`) |
+| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) |
+| `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install "xlb[cuda]"`) |
 | `-DMOPHI_FETCH_DEME=ON` | OFF | Install DEME Python package (`pip install deme`) |
 
 ### Adding a new external solver
@@ -318,6 +317,9 @@ Two backends are provided out of the box:
 Demos switch backends by changing a single constructor call; the rest of the
 simulation loop is identical for both.
 
+If you are using WSL and the OpenGL window does not appear, verify that WSLg GUI
+support is installed and working in your environment before debugging MoPhi itself.
+
 See [`src/visualization/README.md`](src/visualization/README.md) for the full
 design philosophy, the public API contract, and instructions for adding new
 backends.
@@ -330,8 +332,8 @@ backends.
 |--------|---------|--------|
 | `MOPHI_FETCH_FERIS` | OFF | Download FERIS into `external/FERIS/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
-| `MOPHI_FETCH_NEWTON` | OFF | Install Newton Python package (`pip install newton`) |
-| `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install xlb`) |
+| `MOPHI_FETCH_NEWTON` | OFF | Install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) |
+| `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install "xlb[cuda]"`) |
 | `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`pip install deme`) |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
