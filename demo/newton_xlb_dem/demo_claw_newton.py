@@ -773,6 +773,7 @@ for frame in range(NUM_FRAMES):
         # pairs to one net world-space [Fx, Fy, Fz] vector for Newton injection.
         if ENABLE_DEME_FORCE_FEEDBACK:
             _contact_force_data = _plow_deme_tracker.GetContactForces()
+            # DEME returns [points, forces] for this owner; we use the force list.
             if len(_contact_force_data) >= 2:
                 _pair_forces_np = np.asarray(_contact_force_data[1], dtype=np.float32)
             else:
