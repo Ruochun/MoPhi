@@ -707,13 +707,14 @@ _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 # all other entries stay zero.  The DEME force from the previous substep is kept in
 # _deme_contact_force_np and re-used as the injection for the current substep (one
 # substep lag — acceptable for this co-simulation cadence).
-if ENABLE_DEME_FORCE_FEEDBACK:
-    _ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
-    _deme_contact_force_np = np.zeros(3, dtype=np.float32)  # world-space [Fx, Fy, Fz]
-    # Force feedback uses a one-Newton-substep lag: the DEME contact force queried
-    # at the end of substep N is injected into Newton at substep N+1.  At
-    # NEWTON_DT = 2 ms this lag is at most one substep (2 ms), well within the
-    # coupling bandwidth of the position-controlled arm at RENDER_FPS = 50 Hz.
+_ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
+_deme_contact_force_np = np.zeros(3, dtype=np.float32)  # world-space [Fx, Fy, Fz]
+# These arrays are only consumed inside ENABLE_DEME_FORCE_FEEDBACK branches.
+# Keeping them always initialized avoids conditional local-name coupling.
+# Force feedback uses a one-Newton-substep lag when enabled: the DEME contact
+# force queried at the end of substep N is injected into Newton at substep N+1.
+# At NEWTON_DT = 2 ms this lag is at most one substep (2 ms), well within the
+# coupling bandwidth of the position-controlled arm at RENDER_FPS = 50 Hz.
 
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
@@ -778,7 +779,7 @@ for frame in range(NUM_FRAMES):
                 _pair_forces_np = np.asarray(_contact_force_data[1], dtype=np.float32)
             else:
                 _pair_forces_np = np.empty((0, 3), dtype=np.float32)
-            if _pair_forces_np.size == 0:
+            if _pair_forces_np.shape[0] == 0:
                 _deme_contact_force_np[:] = 0.0
             else:
                 _deme_contact_force_np[:] = np.sum(_pair_forces_np, axis=0, dtype=np.float32)
