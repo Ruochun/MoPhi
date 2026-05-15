@@ -125,7 +125,7 @@ void register_newton_xlb_dem(py::module_& m) {
              "forces together.  Pass None to disable force injection.\n\n"
              "Typical use — feed DEME granular contact forces back to the robot arm:\n\n"
              "    forces_np = np.zeros((model.body_count, 6), dtype=np.float32)\n"
-             "    forces_np[ee_link_idx, :3] = np.sum(np.asarray(plow_tracker.GetContactForces()[1]), axis=0)\n"
+             "    forces_np[ee_link_idx, :3] = plow_tracker.Mass() * np.asarray(plow_tracker.ContactAcc())\n"
              "    coupler.set_newton_body_forces(\n"
              "        wp.array(forces_np, dtype=wp.spatial_vector))")
         .def_readwrite("newton_control", &PyNewtonXLBDEMCoupler::newton_control,

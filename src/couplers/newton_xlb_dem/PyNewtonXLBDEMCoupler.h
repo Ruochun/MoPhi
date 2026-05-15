@@ -209,7 +209,7 @@ struct PyNewtonXLBDEMCoupler {
     /// Typical usage (once per Newton substep):
     /// @code
     ///   forces_np = np.zeros((model.body_count, 6), dtype=np.float32)
-    ///   forces_np[ee_link_body_idx, :3] = np.sum(np.asarray(deme_tracker.GetContactForces()[1]), axis=0)
+    ///   forces_np[ee_link_body_idx, :3] = deme_tracker.Mass() * np.asarray(deme_tracker.ContactAcc())
     ///   coupler.set_newton_body_forces(wp.array(forces_np, dtype=wp.spatial_vector))
     /// @endcode
     void SetNewtonBodyForces(pybind11::object ext_forces_wp);

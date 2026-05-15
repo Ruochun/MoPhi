@@ -98,6 +98,14 @@ def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_lin
     return _ee_pos
 
 
+def _rotate_vector_by_quat_xyzw(quat_xyzw: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Rotate a 3D vector by a quaternion in [x, y, z, w] convention."""
+    q_xyz = quat_xyzw[:3]
+    q_w = quat_xyzw[3]
+    t = 2.0 * np.cross(q_xyz, vec)
+    return vec + q_w * t + np.cross(q_xyz, t)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Simulation configuration
 # All user-tunable constants are defined here.  Change values in this section;
@@ -709,12 +717,16 @@ _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 # substep lag — acceptable for this co-simulation cadence).
 _ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
 _deme_contact_force_np = np.zeros(3, dtype=np.float32)  # net world-space [Fx, Fy, Fz]
+_deme_contact_torque_np = np.zeros(3, dtype=np.float32)  # net world-space [Tx, Ty, Tz]
 # These arrays are only consumed inside ENABLE_DEME_FORCE_FEEDBACK branches.
 # Keeping them always initialized avoids conditional local-name coupling.
 # Force feedback uses a one-Newton-substep lag when enabled: the DEME contact
 # force queried at the end of substep N is injected into Newton at substep N+1.
 # At NEWTON_DT = 2 ms this lag is at most one substep (2 ms), well within the
 # coupling bandwidth of the position-controlled arm at RENDER_FPS = 50 Hz.
+if ENABLE_DEME_FORCE_FEEDBACK:
+    _plow_mass = float(_plow_deme_tracker.Mass())
+    _plow_moi_local_np = np.asarray(_plow_deme_tracker.MOI(), dtype=np.float32)
 
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
@@ -752,6 +764,7 @@ for frame in range(NUM_FRAMES):
         # integrator sees the granular resistance alongside joint-actuator torques.
         if ENABLE_DEME_FORCE_FEEDBACK:
             _ext_forces_np[ee_link_body_idx, :3] = _deme_contact_force_np
+            _ext_forces_np[ee_link_body_idx, 3:6] = _deme_contact_torque_np
             coupler.set_newton_body_forces(wp.array(_ext_forces_np, dtype=wp.spatial_vector))
 
         # Advance Newton one substep with the current joint targets.
@@ -768,21 +781,19 @@ for frame in range(NUM_FRAMES):
         for _ in range(DEME_SUBSTEPS):
             coupler.step_deme()
 
-        # Query the net contact force on the plow after DEME micro-steps complete.
-        # DEME Tracker.GetContactForces() returns per-contact-pair data, where
-        # entry 0 is contact points and entry 1 is force vectors; reduce all force
-        # pairs to one net world-space [Fx, Fy, Fz] vector for Newton injection.
+        # Query contact-induced acceleration on the tracked plow owner after DEME
+        # micro-steps complete, then convert to equivalent net wrench:
+        #   force_world = mass * ContactAcc()
+        #   torque_local_principal = MOI_principal * ContactAngAccLocal()
+        #   torque_world = rotate(local_principal_torque, OriQ()).
         if ENABLE_DEME_FORCE_FEEDBACK:
-            _contact_force_data = _plow_deme_tracker.GetContactForces()
-            # DEME returns [points, forces] for this owner; we use the force list.
-            if len(_contact_force_data) >= 2:
-                _pair_forces_np = np.asarray(_contact_force_data[1], dtype=np.float32)
-            else:
-                _pair_forces_np = np.empty((0, 3), dtype=np.float32)
-            if _pair_forces_np.shape[0] == 0:
-                _deme_contact_force_np[:] = 0.0
-            else:
-                _deme_contact_force_np[:] = np.sum(_pair_forces_np, axis=0, dtype=np.float32)
+            _contact_acc_world_np = np.asarray(_plow_deme_tracker.ContactAcc(), dtype=np.float32)
+            _deme_contact_force_np[:] = _plow_mass * _contact_acc_world_np
+
+            _contact_ang_acc_local_np = np.asarray(_plow_deme_tracker.ContactAngAccLocal(), dtype=np.float32)
+            _contact_torque_local_np = _plow_moi_local_np * _contact_ang_acc_local_np
+            _plow_ori_q_np = np.asarray(_plow_deme_tracker.OriQ(), dtype=np.float32)
+            _deme_contact_torque_np[:] = _rotate_vector_by_quat_xyzw(_plow_ori_q_np, _contact_torque_local_np)
 
     sim_time += FRAME_DT
 
