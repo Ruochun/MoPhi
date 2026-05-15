@@ -708,7 +708,7 @@ _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 # _deme_contact_force_np and re-used as the injection for the current substep (one
 # substep lag — acceptable for this co-simulation cadence).
 _ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
-_deme_contact_force_np = np.zeros(3, dtype=np.float32)  # world-space [Fx, Fy, Fz]
+_deme_contact_force_np = np.zeros(3, dtype=np.float32)  # net world-space [Fx, Fy, Fz]
 # These arrays are only consumed inside ENABLE_DEME_FORCE_FEEDBACK branches.
 # Keeping them always initialized avoids conditional local-name coupling.
 # Force feedback uses a one-Newton-substep lag when enabled: the DEME contact
