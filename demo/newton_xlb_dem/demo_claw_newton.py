@@ -45,7 +45,7 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
-  • pip install newton warp-lang   (Newton rigid-body physics + Warp GPU runtime)
+  • pip install --upgrade newton warp-lang mujoco==3.6.0
   • pip install deme               (DEME discrete-element solver — required)
 
 Running
@@ -69,19 +69,23 @@ import numpy as np
 import mophi
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
-    mophi.fatal(
-        "mophi.NewtonXLBDEMCoupler is not available.\n"
-        "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
-    )
+    mophi.fatal("mophi.NewtonXLBDEMCoupler is not available.\n" "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON.")
 
-# Required: pip install newton warp-lang
+# Required: pip install --upgrade newton warp-lang mujoco==3.6.0
 import newton
 import warp as wp
+import mujoco
 from newton import JointTargetMode
 from newton.selection import ArticulationView
 
 # Required: pip install deme
 import DEME
+
+mophi.check_newton_warp_mujoco_versions(
+    mophi.REQUIRED_NEWTON_VERSION,
+    mophi.REQUIRED_WARP_VERSION,
+    mophi.REQUIRED_MUJOCO_VERSION,
+)
 
 
 def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
@@ -345,8 +349,7 @@ if USE_OMNIVERSE_VISUALIZATION:
     vis = mophi.OmniverseVisualizer(output_path="demo_claw_newton.usdc", fps=float(SIM_FPS))
     if not vis.pxr_available:
         mophi.fatal(
-            "pxr (OpenUSD) is not installed — Omniverse USD export unavailable.\n"
-            "Install with:  pip install usd-core"
+            "pxr (OpenUSD) is not installed — Omniverse USD export unavailable.\n" "Install with:  pip install usd-core"
         )
     print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
 else:

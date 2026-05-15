@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Required Python dependency constraints for Newton-based couplers/demos.
+set(MOPHI_REQUIRED_NEWTON_VERSION "1.0.0" CACHE INTERNAL "Required Newton Python package version")
+set(MOPHI_REQUIRED_WARP_VERSION "1.12.1" CACHE INTERNAL "Required Warp Python package version")
+set(MOPHI_REQUIRED_MUJOCO_VERSION "3.6.0" CACHE INTERNAL "Required MuJoCo Python package version")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: external project fetching
 #
@@ -15,8 +20,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ─────────────────────────────────────────────────────────────────────────────
 option(MOPHI_FETCH_FERIS     "Download/update the FERIS external project"     OFF)
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
-option(MOPHI_FETCH_NEWTON    "Install the Newton Python package (pip install newton)" OFF)
-option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install xlb)"       OFF)
+option(MOPHI_FETCH_NEWTON    "Install required Newton + Warp + MuJoCo Python packages (newton==${MOPHI_REQUIRED_NEWTON_VERSION}, warp-lang==${MOPHI_REQUIRED_WARP_VERSION}, mujoco==${MOPHI_REQUIRED_MUJOCO_VERSION})" OFF)
+option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install \"xlb[cuda]\")"       OFF)
 option(MOPHI_FETCH_DEME      "Install the DEME Python package (pip install deme)"     OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────

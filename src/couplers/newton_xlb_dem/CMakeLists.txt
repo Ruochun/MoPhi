@@ -12,8 +12,11 @@
 # link requirements to mophi_core.
 #
 # Newton, XLB, and DEME are all pure Python packages — no C++ externals or
-# CUDA Toolkit are required for this coupler.  Install them via pip:
-#   pip install newton xlb deme
+# CUDA Toolkit are required for this coupler.  Newton-based couplers require
+# specific package constraints:
+#   pip install --upgrade newton warp-lang mujoco==3.6.0
+# plus XLB/DEME as needed:
+#   pip install "xlb[cuda]" deme
 # or enable -DMOPHI_FETCH_NEWTON=ON / -DMOPHI_FETCH_XLB=ON /
 # -DMOPHI_FETCH_DEME=ON at CMake configure time to have MoPhi install them
 # automatically.

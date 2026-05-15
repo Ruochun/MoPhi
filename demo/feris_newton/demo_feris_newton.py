@@ -16,7 +16,8 @@ Prerequisites
 -------------
   • Build MoPhi with -DMOPHI_BUILD_FERIS_NEWTON=ON (fetches and builds FERIS,
     compiles FERISNewtonCoupler, and builds the mophi_core Python extension).
-  • pip install newton  (or configure with -DMOPHI_FETCH_NEWTON=ON)
+  • pip install --upgrade newton warp-lang mujoco==3.6.0
+    (or configure with -DMOPHI_FETCH_NEWTON=ON)
 
 Running
 -------
@@ -52,14 +53,21 @@ if not hasattr(mophi, "FERISNewtonCoupler"):
 try:
     import newton
     import warp as wp
+    import mujoco
 
+    mophi.check_newton_warp_mujoco_versions(
+        mophi.REQUIRED_NEWTON_VERSION,
+        mophi.REQUIRED_WARP_VERSION,
+        mophi.REQUIRED_MUJOCO_VERSION,
+    )
     _newton_available = True
 except ImportError:
     _newton_available = False
     print(
-        "WARNING: Newton (or warp) is not installed.  "
-        "The FERIS side will still be demonstrated;\n"
-        "         install Newton with:  pip install newton"
+        "WARNING: Newton, Warp, or MuJoCo is not installed.  "
+        "The FERIS side will still be demonstrated.\n"
+        "         Install with:\n"
+        "           pip install --upgrade newton warp-lang mujoco==3.6.0"
     )
 
 # ─── 3. Build the Newton scene (if Newton is available) ───────────────────────
