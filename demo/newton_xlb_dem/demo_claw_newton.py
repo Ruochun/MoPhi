@@ -768,10 +768,19 @@ for frame in range(NUM_FRAMES):
             coupler.step_deme()
 
         # Query the net contact force on the plow after DEME micro-steps complete.
-        # This value will be injected into Newton at the start of the next substep.
+        # DEME Tracker.GetContactForces() returns per-contact-pair data, where
+        # entry 0 is contact points and entry 1 is force vectors; reduce all force
+        # pairs to one net world-space [Fx, Fy, Fz] vector for Newton injection.
         if ENABLE_DEME_FORCE_FEEDBACK:
-            print(np.array(_plow_deme_tracker.GetContactForces(), dtype=np.float32))
-            _deme_contact_force_np[:] = np.array(_plow_deme_tracker.GetContactForces(), dtype=np.float32)
+            _contact_force_data = _plow_deme_tracker.GetContactForces()
+            if len(_contact_force_data) >= 2:
+                _pair_forces_np = np.asarray(_contact_force_data[1], dtype=np.float32)
+            else:
+                _pair_forces_np = np.empty((0, 3), dtype=np.float32)
+            if _pair_forces_np.size == 0:
+                _deme_contact_force_np[:] = 0.0
+            else:
+                _deme_contact_force_np[:] = np.sum(_pair_forces_np, axis=0, dtype=np.float32)
 
     sim_time += FRAME_DT
 
