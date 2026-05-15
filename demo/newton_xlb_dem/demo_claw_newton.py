@@ -770,7 +770,8 @@ for frame in range(NUM_FRAMES):
         # Query the net contact force on the plow after DEME micro-steps complete.
         # This value will be injected into Newton at the start of the next substep.
         if ENABLE_DEME_FORCE_FEEDBACK:
-            _deme_contact_force_np[:] = np.array(_plow_deme_tracker.ContactForces(), dtype=np.float32)
+            print(np.array(_plow_deme_tracker.GetContactForces(), dtype=np.float32))
+            _deme_contact_force_np[:] = np.array(_plow_deme_tracker.GetContactForces(), dtype=np.float32)
 
     sim_time += FRAME_DT
 
