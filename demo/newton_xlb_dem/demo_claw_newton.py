@@ -69,10 +69,7 @@ import numpy as np
 import mophi
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
-    mophi.fatal(
-        "mophi.NewtonXLBDEMCoupler is not available.\n"
-        "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON."
-    )
+    mophi.fatal("mophi.NewtonXLBDEMCoupler is not available.\n" "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON.")
 
 # Required: pip install --upgrade newton warp-lang mujoco==3.6.0
 import newton
@@ -352,8 +349,7 @@ if USE_OMNIVERSE_VISUALIZATION:
     vis = mophi.OmniverseVisualizer(output_path="demo_claw_newton.usdc", fps=float(SIM_FPS))
     if not vis.pxr_available:
         mophi.fatal(
-            "pxr (OpenUSD) is not installed — Omniverse USD export unavailable.\n"
-            "Install with:  pip install usd-core"
+            "pxr (OpenUSD) is not installed — Omniverse USD export unavailable.\n" "Install with:  pip install usd-core"
         )
     print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
 else:

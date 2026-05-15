@@ -97,7 +97,7 @@ import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
 # ─── Import XLB + DEME (required for this three-way demo) ──────────────────
 if find_spec("xlb") is None:
-    mophi.fatal("XLB is required for this demo.\nInstall with:  pip install \"xlb[cuda]\"")
+    mophi.fatal('XLB is required for this demo.\nInstall with:  pip install "xlb[cuda]"')
 if find_spec("DEME") is None:
     mophi.fatal("DEME is required for this demo.\nInstall with:  pip install deme")
 import xlb
@@ -332,142 +332,140 @@ from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
 # Guard against XLB-internal runtime/setup failures with a clear fatal message.
 # This demo requires XLB; setup errors must terminate rather than silently degrade.
 try:
-        _xlb_backend = _XLBComputeBackend.WARP
-        _xlb_precision = _XLBPrecisionPolicy.FP32FP32
-        _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
-        xlb.init(_xlb_vel_set, _xlb_backend, _xlb_precision)
+    _xlb_backend = _XLBComputeBackend.WARP
+    _xlb_precision = _XLBPrecisionPolicy.FP32FP32
+    _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
+    xlb.init(_xlb_vel_set, _xlb_backend, _xlb_precision)
 
-        _xlb_grid = _xlb_grid_factory((_XLB_NX, _XLB_NY, _XLB_NZ), compute_backend=_xlb_backend)
+    _xlb_grid = _xlb_grid_factory((_XLB_NX, _XLB_NY, _XLB_NZ), compute_backend=_xlb_backend)
 
-        # Build non-overlapping boundary index sets.
-        _box = _xlb_grid.bounding_box_indices()
-        _box_no_e = _xlb_grid.bounding_box_indices(remove_edges=True)
+    # Build non-overlapping boundary index sets.
+    _box = _xlb_grid.bounding_box_indices()
+    _box_no_e = _xlb_grid.bounding_box_indices(remove_edges=True)
 
-        _xlb_inlet_idx = _box_no_e["back"]  # y_max face  –  incoming flow (-y direction)
-        _xlb_outlet_idx = _box_no_e["front"]  # y_min face  –  outflow
-        _xlb_wall_idx = [
-            _box["bottom"][i] + _box["top"][i] + _box["left"][i] + _box["right"][i] for i in range(_xlb_vel_set.d)
-        ]
-        _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
+    _xlb_inlet_idx = _box_no_e["back"]  # y_max face  –  incoming flow (-y direction)
+    _xlb_outlet_idx = _box_no_e["front"]  # y_min face  –  outflow
+    _xlb_wall_idx = [
+        _box["bottom"][i] + _box["top"][i] + _box["left"][i] + _box["right"][i] for i in range(_xlb_vel_set.d)
+    ]
+    _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
 
-        # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
-        # (the normal component) to define the intended inflow direction.
-        _xlb_inlet_bc = _ZouHeBC(
-            bc_type="velocity",
-            prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
-            indices=_xlb_inlet_idx,
+    # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
+    # (the normal component) to define the intended inflow direction.
+    _xlb_inlet_bc = _ZouHeBC(
+        bc_type="velocity",
+        prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
+        indices=_xlb_inlet_idx,
+    )
+    _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
+    _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
+
+    # Build the robot obstacle BC at a representative initial base-body position.
+    # The BC is added to the stepper once and never removed; bc_mask and
+    # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
+    _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
+        np.array([0.0, 0.0, 0.62]),
+        _XLB_DOMAIN_MIN,
+        _XLB_DOMAIN_MAX,
+        (_XLB_NX, _XLB_NY, _XLB_NZ),
+        _XLB_ROBOT_HALF_EXT_X,
+        _XLB_ROBOT_HALF_EXT_Y,
+        _XLB_ROBOT_BELOW_BASE,
+        _XLB_ROBOT_ABOVE_BASE,
+    )
+    if _robot_init_gc_min is None:
+        # Fallback: if the initial position is outside the domain, use a single interior cell
+        # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
+        # correctly on the very first simulation frame.
+        _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
+        _robot_init_gc_max = _robot_init_gc_min.copy()
+    _rxi = np.arange(_robot_init_gc_min[0], _robot_init_gc_max[0] + 1)
+    _ryi = np.arange(_robot_init_gc_min[1], _robot_init_gc_max[1] + 1)
+    _rzi = np.arange(_robot_init_gc_min[2], _robot_init_gc_max[2] + 1)
+    _rgx, _rgy, _rgz = np.meshgrid(_rxi, _ryi, _rzi, indexing="ij")
+    _xlb_robot_bc = _HalfwayBounceBackBC(
+        indices=[_rgx.flatten().tolist(), _rgy.flatten().tolist(), _rgz.flatten().tolist()]
+    )
+
+    _xlb_stepper = _NSEStepper(
+        grid=_xlb_grid,
+        boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
+        collision_type="BGK",
+    )
+    _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask = _xlb_stepper.prepare_fields()
+
+    # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
+    _xlb_robot_bc_id = _xlb_robot_bc.id
+    _c = _xlb_vel_set.c
+    try:
+        _c_arr = np.asarray(_c.numpy() if hasattr(_c, "numpy") else _c, dtype=np.int32)
+        if _c_arr.ndim != 2:
+            raise ValueError(f"vel_set.c has unexpected ndim={_c_arr.ndim}")
+        # vel_set.c is stored as (d, q) = (3, 19); transpose to (q, d) = (19, 3).
+        _xlb_vel_c_np = _c_arr.T if _c_arr.shape[0] == _xlb_vel_set.d else _c_arr
+        if _xlb_vel_c_np.shape != (_xlb_vel_set.q, _xlb_vel_set.d):
+            raise ValueError(f"Unexpected vel_c shape after transpose: {_xlb_vel_c_np.shape}")
+    except (AttributeError, ValueError, AssertionError):
+        # Hardcoded fallback: standard D3Q19 velocity ordering.
+        _xlb_vel_c_np = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+                [1, 1, 0],
+                [-1, -1, 0],
+                [1, -1, 0],
+                [-1, 1, 0],
+                [1, 0, 1],
+                [-1, 0, -1],
+                [1, 0, -1],
+                [-1, 0, 1],
+                [0, 1, 1],
+                [0, -1, -1],
+                [0, 1, -1],
+                [0, -1, 1],
+            ],
+            dtype=np.int32,
         )
-        _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
-        _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
 
-        # Build the robot obstacle BC at a representative initial base-body position.
-        # The BC is added to the stepper once and never removed; bc_mask and
-        # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
-        _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
-            np.array([0.0, 0.0, 0.62]),
-            _XLB_DOMAIN_MIN,
-            _XLB_DOMAIN_MAX,
-            (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X,
-            _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE,
-            _XLB_ROBOT_ABOVE_BASE,
-        )
-        if _robot_init_gc_min is None:
-            # Fallback: if the initial position is outside the domain, use a single interior cell
-            # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
-            # correctly on the very first simulation frame.
-            _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
-            _robot_init_gc_max = _robot_init_gc_min.copy()
-        _rxi = np.arange(_robot_init_gc_min[0], _robot_init_gc_max[0] + 1)
-        _ryi = np.arange(_robot_init_gc_min[1], _robot_init_gc_max[1] + 1)
-        _rzi = np.arange(_robot_init_gc_min[2], _robot_init_gc_max[2] + 1)
-        _rgx, _rgy, _rgz = np.meshgrid(_rxi, _ryi, _rzi, indexing="ij")
-        _xlb_robot_bc = _HalfwayBounceBackBC(
-            indices=[_rgx.flatten().tolist(), _rgy.flatten().tolist(), _rgz.flatten().tolist()]
-        )
+    # Upload the velocity stencil to device once as a Warp array so that
+    # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
+    _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
 
-        _xlb_stepper = _NSEStepper(
-            grid=_xlb_grid,
-            boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
-            collision_type="BGK",
-        )
-        _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask = _xlb_stepper.prepare_fields()
+    # Record the initial robot box position.  The GPU kernels do not need CPU
+    # base-mask copies: interior cells (guaranteed by _world_to_grid_idx) always
+    # have a fluid base value of 0 / False, so clearing = writing those defaults.
+    _xlb_robot_gc_min = _robot_init_gc_min
+    _xlb_robot_gc_max = _robot_init_gc_max
 
-        # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
-        _xlb_robot_bc_id = _xlb_robot_bc.id
-        _c = _xlb_vel_set.c
-        try:
-            _c_arr = np.asarray(_c.numpy() if hasattr(_c, "numpy") else _c, dtype=np.int32)
-            if _c_arr.ndim != 2:
-                raise ValueError(f"vel_set.c has unexpected ndim={_c_arr.ndim}")
-            # vel_set.c is stored as (d, q) = (3, 19); transpose to (q, d) = (19, 3).
-            _xlb_vel_c_np = _c_arr.T if _c_arr.shape[0] == _xlb_vel_set.d else _c_arr
-            if _xlb_vel_c_np.shape != (_xlb_vel_set.q, _xlb_vel_set.d):
-                raise ValueError(f"Unexpected vel_c shape after transpose: {_xlb_vel_c_np.shape}")
-        except (AttributeError, ValueError, AssertionError):
-            # Hardcoded fallback: standard D3Q19 velocity ordering.
-            _xlb_vel_c_np = np.array(
-                [
-                    [0, 0, 0],
-                    [1, 0, 0],
-                    [-1, 0, 0],
-                    [0, 1, 0],
-                    [0, -1, 0],
-                    [0, 0, 1],
-                    [0, 0, -1],
-                    [1, 1, 0],
-                    [-1, -1, 0],
-                    [1, -1, 0],
-                    [-1, 1, 0],
-                    [1, 0, 1],
-                    [-1, 0, -1],
-                    [1, 0, -1],
-                    [-1, 0, 1],
-                    [0, 1, 1],
-                    [0, -1, -1],
-                    [0, 1, -1],
-                    [0, -1, 1],
-                ],
-                dtype=np.int32,
-            )
+    _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
+    _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
+    _xlb_u_field = _xlb_grid.create_field(cardinality=3, dtype=_XLBPrecision.FP32)
 
-        # Upload the velocity stencil to device once as a Warp array so that
-        # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
-        _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
+    # Warm-up: advance the LBM toward an initial near-steady state with the
+    # robot obstacle already in place at its initial position.
+    print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
+    for _ws in range(_XLB_WARMUP_STEPS):
+        # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
+        _xlb_f0, _xlb_f1 = _xlb_stepper(_xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep)
+        _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
+        _xlb_timestep += 1
 
-        # Record the initial robot box position.  The GPU kernels do not need CPU
-        # base-mask copies: interior cells (guaranteed by _world_to_grid_idx) always
-        # have a fluid base value of 0 / False, so clearing = writing those defaults.
-        _xlb_robot_gc_min = _robot_init_gc_min
-        _xlb_robot_gc_max = _robot_init_gc_max
+    # Extract macro state; XLB stores fields as (Q/D, NX, NY, NZ) — transpose
+    # to (NX, NY, NZ, 3) for the streamline helper.
+    _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
+    _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
 
-        _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
-        _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
-        _xlb_u_field = _xlb_grid.create_field(cardinality=3, dtype=_XLBPrecision.FP32)
-
-        # Warm-up: advance the LBM toward an initial near-steady state with the
-        # robot obstacle already in place at its initial position.
-        print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
-        for _ws in range(_XLB_WARMUP_STEPS):
-            # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
-            _xlb_f0, _xlb_f1 = _xlb_stepper(
-                _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
-            )
-            _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
-            _xlb_timestep += 1
-
-        # Extract macro state; XLB stores fields as (Q/D, NX, NY, NZ) — transpose
-        # to (NX, NY, NZ, 3) for the streamline helper.
-        _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
-        _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
-
-        xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
-        print(
-            f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
-            f"(robot BC id={_xlb_robot_bc_id}, "
-            f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
-        )
+    xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
+    print(
+        f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
+        f"(robot BC id={_xlb_robot_bc_id}, "
+        f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
+    )
 except Exception as exc:
     mophi.fatal(
         f"Failed to set up XLB simulation: {exc}\n"
@@ -633,10 +631,7 @@ MOVIE_FPS = 50  # frames per second for the output video
 _movie_writer = None
 if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
     if find_spec("imageio") is None:
-        mophi.fatal(
-            "imageio is required when SAVE_MOVIE=True.\n"
-            "Install with:  pip install imageio imageio-ffmpeg"
-        )
+        mophi.fatal("imageio is required when SAVE_MOVIE=True.\n" "Install with:  pip install imageio imageio-ffmpeg")
     import imageio
 
     _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)

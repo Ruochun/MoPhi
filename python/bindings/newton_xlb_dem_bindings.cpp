@@ -34,9 +34,9 @@ void register_newton_xlb_dem(py::module_& m) {
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "
                                       "physics), XLB (lattice-Boltzmann fluid solver), and DEME (Python "
                                       "discrete-element solver, pip install deme).\n\n"
-                                       "Newton drives a walking robot and produces a spatial representation "
-                                       "(body transforms) at every step.  XLB advances fluid physics in "
-                                       "Python, and DEME advances live discrete-element physics.\n\n"
+                                      "Newton drives a walking robot and produces a spatial representation "
+                                      "(body transforms) at every step.  XLB advances fluid physics in "
+                                      "Python, and DEME advances live discrete-element physics.\n\n"
                                       "Usage::\n\n"
                                       "    import mophi, newton, warp as wp, deme\n"
                                       "    wp.init()\n"
@@ -53,7 +53,7 @@ void register_newton_xlb_dem(py::module_& m) {
                                       "        # optionally update coupler.newton_control before each step\n"
                                       "        coupler.step_newton()  # advance Newton one substep\n"
                                       "        coupler.step_deme()    # advance DEME one substep\n"
-                                       "        # coupler.step_xlb()  # reserved hook; demo advances XLB directly\n"
+                                      "        # coupler.step_xlb()  # reserved hook; demo advances XLB directly\n"
                                       "        transforms = coupler.get_robot_body_transforms()\n"
                                       "    coupler.finalize()")
         .def(py::init<>())

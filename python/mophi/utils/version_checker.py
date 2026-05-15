@@ -41,9 +41,7 @@ def check_python_package_versions(
         found_version = getattr(module, "__version__", None)
         found_text = found_version if found_version is not None else "unknown"
         if found_version != required_version:
-            mismatches.append(
-                f"{install_name}: found {found_text} (required {required_version})"
-            )
+            mismatches.append(f"{install_name}: found {found_text} (required {required_version})")
 
     if not mismatches:
         return True
