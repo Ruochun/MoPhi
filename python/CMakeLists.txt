@@ -66,14 +66,24 @@ if(MOPHI_BUILD_NEWTON_XLB_DEM)
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_NEWTON_XLB_DEM_COUPLER)
 endif()
 
-# Place the compiled .so next to the Python package so the package __init__.py
-# can import it with `from .mophi_core import ...`.
+if(MOPHI_PYTHON_PACKAGING_BUILD)
+    set(_mophi_python_module_output_dir "${CMAKE_CURRENT_BINARY_DIR}/mophi")
+else()
+    set(_mophi_python_module_output_dir "${CMAKE_CURRENT_SOURCE_DIR}/mophi")
+endif()
+
+# Developer builds place the compiled .so next to the source-tree package so
+# `PYTHONPATH=python` works immediately.  Packaging builds keep artefacts in the
+# build tree and rely on the install step for the final wheel layout.
 set_target_properties(mophi_core PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/mophi"
+    LIBRARY_OUTPUT_DIRECTORY "${_mophi_python_module_output_dir}"
 )
 
 # ── Installation ──────────────────────────────────────────────────────────────
 # Install the Python package tree and the extension module together.
-install(TARGETS mophi_core DESTINATION python/mophi)
-install(DIRECTORY mophi/ DESTINATION python/mophi
+install(TARGETS mophi_core
+        LIBRARY DESTINATION mophi
+        RUNTIME DESTINATION mophi
+        ARCHIVE DESTINATION mophi)
+install(DIRECTORY mophi/ DESTINATION mophi
         FILES_MATCHING PATTERN "*.py")

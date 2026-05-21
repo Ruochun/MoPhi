@@ -40,7 +40,7 @@ MoPhi/
 |------|----------------|
 | CMake | 3.18 |
 | C++ compiler | C++17 (GCC 9 / Clang 10 / MSVC 2019) |
-| Python (optional) | 3.8 — for Python bindings |
+| Python (optional) | 3.11 — for the packaged Linux wheel path |
 | Git | any recent version — for fetching externals |
 
 ---
@@ -64,6 +64,50 @@ cmake --build build
 
 # 3. Run a demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
+```
+
+### Linux Python 3.11 wheel (Newton + XLB + DEME, no FERIS)
+
+MoPhi now has a standard PEP 517 packaging entry point in `pyproject.toml`
+using `scikit-build-core`. The supported packaged distribution path currently
+targets **Linux + Python 3.11** and enables:
+
+- Python bindings: **ON**
+- Newton + XLB + DEME coupler: **ON**
+- FERIS coupler: **OFF**
+- demos: **OFF**
+
+The wheel metadata declares the runtime Python dependencies needed for the
+supported distributed install experience:
+
+- `newton==1.0.0`
+- `warp-lang==1.12.1`
+- `mujoco==3.6.0`
+- `deme`
+- `xlb[cuda]`
+
+Build a wheel from a checkout with submodules initialized:
+
+```bash
+git clone --recurse-submodules https://github.com/Ruochun/MoPhi.git
+cd MoPhi
+python3.11 -m pip install --upgrade build
+python3.11 -m build --wheel
+```
+
+For Linux release distribution, repair the wheel after the build so bundled
+native dependencies satisfy manylinux policy:
+
+```bash
+python3.11 -m pip install --upgrade auditwheel
+auditwheel repair dist/mophi-*.whl -w dist/
+```
+
+Then install the wheel with pip; its metadata will pull in Newton, Warp,
+MuJoCo, XLB, and DEME automatically:
+
+```bash
+python3.11 -m pip install dist/mophi-*.whl
 ```
 
 ### FERIS + Newton (Python-based GPU physics)
@@ -119,11 +163,11 @@ pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 ### Newton + XLB + DEME (three-way coupling)
 
 ```bash
-# Configure: install Newton, XLB, and DEME via pip, and build the coupler
+# Install the required Python solver packages first
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme
+
+# Configure and build the coupler
 cmake -B build \
-      -DMOPHI_FETCH_NEWTON=ON \
-      -DMOPHI_FETCH_XLB=ON \
-      -DMOPHI_FETCH_DEME=ON \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
 cmake --build build
 
@@ -173,11 +217,20 @@ for step in range(steps):
 coupler.finalize()
 ```
 
-XLB is optionally installed by MoPhi via pip at configure time when
-`-DMOPHI_FETCH_XLB=ON`.  You can also install it manually:
+XLB is part of the supported distributed install path for the Newton + XLB +
+DEME workflow. The packaged wheel declares `xlb[cuda]` as a runtime
+dependency. For source-tree developer builds, you can install it manually or
+use the developer-convenience CMake fetch option:
 
 ```bash
 pip install "xlb[cuda]"
+```
+
+Likewise, the packaged wheel declares `deme` as a runtime dependency. For
+source-tree developer builds, you can install it manually:
+
+```bash
+pip install deme
 ```
 
 If you try to enable the co-simulation solver without first fetching the
@@ -233,17 +286,18 @@ solver is fully configured.
 
 External C++ solvers (FERIS, DEM-Engine) are downloaded and built in isolation via
 CMake's `ExternalProject_Add` (through the `mophi_fetch_external` macro) into
-`${CMAKE_BINARY_DIR}/external/<Name>/`.  Pure-Python solvers (Newton, XLB, DEME) are
-installed as pip packages at configure time.  Control which ones are fetched with the
-following options:
+`${CMAKE_BINARY_DIR}/external/<Name>/`. Pure-Python solvers (Newton, XLB,
+DEME) can still be installed at configure time for local developer
+convenience, but wheel builds use `pyproject.toml` dependency metadata
+instead. Control which ones are fetched with the following options:
 
 | Option | Default | Effect |
 |--------|---------|--------|
 | `-DMOPHI_FETCH_FERIS=ON` | OFF | Download FERIS FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
-| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) |
-| `-DMOPHI_FETCH_XLB=ON` | OFF | Install XLB Python package (`pip install "xlb[cuda]"`) |
-| `-DMOPHI_FETCH_DEME=ON` | OFF | Install DEME Python package (`pip install deme`) |
+| `-DMOPHI_FETCH_NEWTON=ON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
+| `-DMOPHI_FETCH_XLB=ON` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
+| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install DEME Python package (`pip install deme`) during CMake configure |
 
 ### Adding a new external solver
 
@@ -270,7 +324,7 @@ following options:
 | Option | Default | Required externals | Effect |
 |--------|---------|-------------------|--------|
 | `-DMOPHI_BUILD_FERIS_NEWTON=ON` | OFF | FERIS + Newton (pip) + CUDA Toolkit | Build FERIS + Newton coupler |
-| `-DMOPHI_BUILD_NEWTON_XLB_DEM=ON` | OFF | Newton (pip) + XLB (pip, optional) + DEME (pip, optional) | Build Newton + XLB + DEME three-way coupler |
+| `-DMOPHI_BUILD_NEWTON_XLB_DEM=ON` | OFF | Newton (pip) + XLB (pip) + DEME (pip) | Build Newton + XLB + DEME three-way coupler |
 
 If a required external is not fetched, CMake emits a `FATAL_ERROR` at
 configure time with instructions on how to resolve the problem.
@@ -332,12 +386,13 @@ backends.
 |--------|---------|--------|
 | `MOPHI_FETCH_FERIS` | OFF | Download FERIS into `external/FERIS/` |
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
-| `MOPHI_FETCH_NEWTON` | OFF | Install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) |
-| `MOPHI_FETCH_XLB` | OFF | Install XLB Python package (`pip install "xlb[cuda]"`) |
-| `MOPHI_FETCH_DEME` | OFF | Install DEME Python package (`pip install deme`) |
+| `MOPHI_FETCH_NEWTON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
+| `MOPHI_FETCH_XLB` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
+| `MOPHI_FETCH_DEME` | OFF | Developer convenience: install DEME Python package (`pip install deme`) during CMake configure |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
+| `MOPHI_PYTHON_PACKAGING_BUILD` | OFF | Configure the Linux Python wheel path (Python bindings ON, Newton+XLB+DEME ON, FERIS OFF, demos OFF, no configure-time pip installs) |
 
 ---
 

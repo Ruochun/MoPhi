@@ -1,3 +1,42 @@
+[build-system]
+requires = ["scikit-build-core>=0.11"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mophi"
+version = "0.1.0"
+description = "Modular multi-physics co-simulation framework"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "newton==1.0.0",
+    "warp-lang==1.12.1",
+    "mujoco==3.6.0",
+    "deme",
+    "xlb[cuda]",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Homepage = "https://github.com/Ruochun/MoPhi"
+Repository = "https://github.com/Ruochun/MoPhi"
+Issues = "https://github.com/Ruochun/MoPhi/issues"
+
+[tool.scikit-build]
+cmake.version = ">=3.18"
+cmake.define.MOPHI_PYTHON_PACKAGING_BUILD = "ON"
+sdist.include = ["external/MoPhiEssentials/**"]
+
 [tool.black]
 line-length = 120
 target-version = ["py310"]
