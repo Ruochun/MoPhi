@@ -4,6 +4,35 @@ This guide collects the user-facing build and run workflows for MoPhi.
 
 ---
 
+## Demo-only Python packages
+
+The packaged MoPhi wheel covers the supported Newton + XLB + DEME runtime path,
+but some demos and visualization/movie-recording workflows may also require
+extra Python packages. Install the demo bundle with:
+
+```bash
+python3.11 -m pip install "mophi[demos]"
+```
+
+The current demo extra includes:
+
+- `torch`
+- `GitPython`
+- `pycollada`
+- `mujoco_warp==3.6.0`
+- `pyglet`
+- `imageio`
+- `imageio-ffmpeg`
+
+Notes:
+
+- `demo/newton_xlb_dem/demo_newton_xlb_dem.py` directly requires `torch`.
+- Movie recording paths require `imageio` and `imageio-ffmpeg`.
+- The PR feedback mentioned `mageio`, but no published PyPI package with that
+  name was found during validation, so it is not included in the extra.
+
+---
+
 ## Quick start
 
 ```bash
@@ -69,6 +98,20 @@ Warp, MuJoCo, XLB, and DEME automatically:
 
 ```bash
 python3.11 -m pip install dist/mophi-*.whl
+```
+
+Installing from the wheel does **not** build MoPhi from source locally, but the
+wheel is **not** a fully self-contained offline installer. `pip` still needs to
+resolve the wheel's declared runtime dependencies (`newton`, `warp-lang`,
+`mujoco`, `deme`, and `xlb[cuda]`) from either the internet or a local
+wheelhouse. The same applies to the optional `mophi[demos]` extra.
+
+For an offline installation, pre-download the MoPhi wheel plus all required
+dependency wheels, then install from a local wheelhouse:
+
+```bash
+python3.11 -m pip install --no-index --find-links /path/to/wheelhouse mophi
+python3.11 -m pip install --no-index --find-links /path/to/wheelhouse "mophi[demos]"
 ```
 
 ---

@@ -32,6 +32,17 @@ Homepage = "https://github.com/Ruochun/MoPhi"
 Repository = "https://github.com/Ruochun/MoPhi"
 Issues = "https://github.com/Ruochun/MoPhi/issues"
 
+[project.optional-dependencies]
+demos = [
+    "torch",
+    "GitPython",
+    "pycollada",
+    "mujoco_warp==3.6.0",
+    "pyglet",
+    "imageio",
+    "imageio-ffmpeg",
+]
+
 [tool.scikit-build]
 cmake.version = ">=3.18"
 cmake.define.MOPHI_PYTHON_PACKAGING_BUILD = "ON"
