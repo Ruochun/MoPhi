@@ -24,6 +24,10 @@ set(_mophi_warp_required_version "${MOPHI_REQUIRED_WARP_VERSION}")
 set(_mophi_mujoco_required_version "${MOPHI_REQUIRED_MUJOCO_VERSION}")
 set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
 
+if(MOPHI_PYTHON_PACKAGING_BUILD)
+    message(STATUS "MoPhi: Python packaging build enabled — runtime Python dependencies are provided via wheel metadata, not CMake pip installs")
+endif()
+
 # ── DEM-Engine ────────────────────────────────────────────────────────────────
 if(MOPHI_FETCH_DEMENGINE)
     mophi_fetch_external(DEMEngine)
@@ -45,7 +49,7 @@ endif()
 # Note: this pip install uses whatever Python interpreter CMake finds first
 # (the same one that will build the pybind11 extension module).  Users running
 # inside a virtual environment should activate it before invoking CMake.
-if(MOPHI_FETCH_NEWTON)
+if(MOPHI_FETCH_NEWTON AND NOT MOPHI_PYTHON_PACKAGING_BUILD)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     message(STATUS
         "MoPhi: Installing required Newton/Warp/MuJoCo Python packages via pip "
@@ -75,6 +79,9 @@ if(MOPHI_FETCH_NEWTON)
             "mujoco==${_mophi_mujoco_required_version}")
     endif()
 else()
+    if(MOPHI_FETCH_NEWTON AND MOPHI_PYTHON_PACKAGING_BUILD)
+        message(STATUS "MoPhi: Ignoring MOPHI_FETCH_NEWTON during Python packaging build")
+    endif()
     # Even without MOPHI_FETCH_NEWTON, detect whether the required
     # Newton/Warp/MuJoCo packages are already installed so the summary line below
     # reports the correct status.
@@ -105,7 +112,7 @@ endif()
 # XLB (jax-Lattice-Boltzmann) is a pure Python LBM solver — it has no CMake
 # build system and cannot be handled with mophi_fetch_external.  When
 # MOPHI_FETCH_XLB=ON, MoPhi installs the CUDA-enabled XLB package via pip at configure time.
-if(MOPHI_FETCH_XLB)
+if(MOPHI_FETCH_XLB AND NOT MOPHI_PYTHON_PACKAGING_BUILD)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     message(STATUS "MoPhi: Installing XLB Python package via pip (xlb[cuda]) ...")
     execute_process(
@@ -128,6 +135,9 @@ if(MOPHI_FETCH_XLB)
             "Install it manually with:  pip install \"xlb[cuda]\"")
     endif()
 else()
+    if(MOPHI_FETCH_XLB AND MOPHI_PYTHON_PACKAGING_BUILD)
+        message(STATUS "MoPhi: Ignoring MOPHI_FETCH_XLB during Python packaging build")
+    endif()
     # Even without MOPHI_FETCH_XLB, detect a pre-installed XLB so the
     # summary line below reports the correct status.
     find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -153,7 +163,7 @@ endif()
 # and cannot be handled with mophi_fetch_external.  When MOPHI_FETCH_DEME=ON,
 # MoPhi installs DEME via pip at configure time so that it is immediately
 # importable in the Python coupler.
-if(MOPHI_FETCH_DEME)
+if(MOPHI_FETCH_DEME AND NOT MOPHI_PYTHON_PACKAGING_BUILD)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     message(STATUS "MoPhi: Installing DEME Python package via pip ...")
     execute_process(
@@ -176,6 +186,9 @@ if(MOPHI_FETCH_DEME)
             "Install it manually with:  pip install deme")
     endif()
 else()
+    if(MOPHI_FETCH_DEME AND MOPHI_PYTHON_PACKAGING_BUILD)
+        message(STATUS "MoPhi: Ignoring MOPHI_FETCH_DEME during Python packaging build")
+    endif()
     # Even without MOPHI_FETCH_DEME, detect a pre-installed DEME so the
     # summary line below reports the correct status.
     find_package(Python3 COMPONENTS Interpreter QUIET)

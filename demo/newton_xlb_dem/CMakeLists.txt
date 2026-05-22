@@ -13,7 +13,7 @@
 #                                        mophi_core Python extension module.
 #   • pip install --upgrade newton warp-lang mujoco==3.6.0
 #                                      — or -DMOPHI_FETCH_NEWTON=ON
-#   • pip install "xlb[cuda]"          — or -DMOPHI_FETCH_XLB=ON  (optional)
+#   • pip install "xlb[cuda]"          — or -DMOPHI_FETCH_XLB=ON
 # ─────────────────────────────────────────────────────────────────────────────
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

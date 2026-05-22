@@ -27,22 +27,26 @@ target_link_libraries(mophi_couplers INTERFACE mophi_essentials)
 # FERISNewtonCoupler and NewtonXLBDEMCoupler both require compatible Python
 # dependencies to avoid API/runtime breakage from upstream releases.
 if(MOPHI_BUILD_FERIS_NEWTON OR MOPHI_BUILD_NEWTON_XLB_DEM)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
-    execute_process(
-        COMMAND ${Python3_EXECUTABLE}
-                "${_mophi_version_check_script}"
-                --newton-version "${MOPHI_REQUIRED_NEWTON_VERSION}"
-                --warp-version "${MOPHI_REQUIRED_WARP_VERSION}"
-                --mujoco-version "${MOPHI_REQUIRED_MUJOCO_VERSION}"
-        RESULT_VARIABLE _mophi_newton_warp_version_check_result
-        OUTPUT_QUIET
-        ERROR_VARIABLE _mophi_newton_warp_version_check_error
-        ERROR_STRIP_TRAILING_WHITESPACE
-    )
-    if(NOT _mophi_newton_warp_version_check_result EQUAL 0)
-        message(FATAL_ERROR
-            "${_mophi_newton_warp_version_check_error}")
+    if(MOPHI_PYTHON_PACKAGING_BUILD)
+        message(STATUS "MoPhi: Skipping configure-time Newton/Warp/MuJoCo version check during Python packaging build; wheel metadata supplies the runtime requirements")
+    else()
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        set(_mophi_version_check_script "${CMAKE_SOURCE_DIR}/cmake/check_newton_warp_versions.py")
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE}
+                    "${_mophi_version_check_script}"
+                    --newton-version "${MOPHI_REQUIRED_NEWTON_VERSION}"
+                    --warp-version "${MOPHI_REQUIRED_WARP_VERSION}"
+                    --mujoco-version "${MOPHI_REQUIRED_MUJOCO_VERSION}"
+            RESULT_VARIABLE _mophi_newton_warp_version_check_result
+            OUTPUT_QUIET
+            ERROR_VARIABLE _mophi_newton_warp_version_check_error
+            ERROR_STRIP_TRAILING_WHITESPACE
+        )
+        if(NOT _mophi_newton_warp_version_check_result EQUAL 0)
+            message(FATAL_ERROR
+                "${_mophi_newton_warp_version_check_error}")
+        endif()
     endif()
 endif()
 
