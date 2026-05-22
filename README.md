@@ -4,6 +4,12 @@
 glue between independent single-physics solvers, letting them exchange data and
 march forward together as a tightly-coupled simulation.
 
+MoPhi is aimed at users who want to build cross-solver workflows without
+rewriting the participating solvers into one monolithic codebase. Its
+coupler-first design is meant to make multi-physics experiments, reusable data
+exchange paths, and extensible simulation pipelines easier to assemble as the
+project grows.
+
 ---
 
 ## Repository structure

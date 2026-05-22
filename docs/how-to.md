@@ -4,17 +4,11 @@ This guide collects the user-facing build and run workflows for MoPhi.
 
 ---
 
-## Demo-only Python packages
+## Python packages used by MoPhi workflows
 
-The packaged MoPhi wheel covers the supported Newton + XLB + DEME runtime path,
-but some demos and visualization/movie-recording workflows may also require
-extra Python packages. Install the demo bundle with:
-
-```bash
-python3.11 -m pip install "mophi[demos]"
-```
-
-The current demo extra includes:
+The packaged MoPhi wheel declares the following Python packages as regular
+runtime dependencies, because they are used across MoPhi's current Python-side
+workflows, demos, and visualization/movie-recording paths:
 
 - `torch`
 - `GitPython`
@@ -28,8 +22,8 @@ Notes:
 
 - `demo/newton_xlb_dem/demo_newton_xlb_dem.py` directly requires `torch`.
 - Movie recording paths require `imageio` and `imageio-ffmpeg`.
-- The PR feedback mentioned `mageio`, but no published PyPI package with that
-  name was found during validation, so it is not included in the extra.
+- When installing from a source checkout instead of a built wheel, install these
+  packages alongside the solver packages that your workflow needs.
 
 ---
 
@@ -75,6 +69,13 @@ supported distributed install experience:
 - `mujoco==3.6.0`
 - `deme`
 - `xlb[cuda]`
+- `torch`
+- `GitPython`
+- `pycollada`
+- `mujoco_warp==3.6.0`
+- `pyglet`
+- `imageio`
+- `imageio-ffmpeg`
 
 Build a wheel from a checkout with submodules initialized:
 
@@ -94,7 +95,8 @@ auditwheel repair dist/mophi-*.whl -w dist/
 ```
 
 Then install the repaired wheel with pip; its metadata will pull in Newton,
-Warp, MuJoCo, XLB, and DEME automatically:
+Warp, MuJoCo, XLB, DEME, and the current MoPhi Python workflow dependencies
+automatically:
 
 ```bash
 python3.11 -m pip install dist/mophi-*.whl
@@ -103,15 +105,15 @@ python3.11 -m pip install dist/mophi-*.whl
 Installing from the wheel does **not** build MoPhi from source locally, but the
 wheel is **not** a fully self-contained offline installer. `pip` still needs to
 resolve the wheel's declared runtime dependencies (`newton`, `warp-lang`,
-`mujoco`, `deme`, and `xlb[cuda]`) from either the internet or a local
-wheelhouse. The same applies to the optional `mophi[demos]` extra.
+`mujoco`, `deme`, `xlb[cuda]`, `torch`, `GitPython`, `pycollada`,
+`mujoco_warp`, `pyglet`, `imageio`, and `imageio-ffmpeg`) from either the
+internet or a local wheelhouse.
 
 For an offline installation, pre-download the MoPhi wheel plus all required
 dependency wheels, then install from a local wheelhouse:
 
 ```bash
 python3.11 -m pip install --no-index --find-links /path/to/wheelhouse mophi
-python3.11 -m pip install --no-index --find-links /path/to/wheelhouse "mophi[demos]"
 ```
 
 ---
@@ -153,8 +155,9 @@ pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 ## Newton + XLB + DEME (three-way coupling)
 
 ```bash
-# Install the required Python solver packages first
-pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme
+# Install the required Python packages first
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme \
+    torch GitPython pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
 
 # Configure and build the coupler
 cmake -B build \
