@@ -620,6 +620,12 @@ Update `README.md` to document:
 - The new external solvers in the "External solvers" table
 - Any new prerequisites in the "Prerequisites" table
 
+If a session makes a significant user-facing change to what MoPhi enables or
+how users are expected to use it, update the short high-level value-summary
+paragraph near the top of `README.md` as part of that same session. Keep that
+paragraph concise and qualitative; detailed change lists should live in the
+linked documentation files instead.
+
 If the new coupler introduces a new visualization backend, update
 `src/visualization/README.md` instead of adding visualization detail to the
 main README.

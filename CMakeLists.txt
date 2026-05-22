@@ -46,6 +46,23 @@ option(MOPHI_BUILD_PYTHON_BINDINGS "Build Python bindings via pybind11" ON)
 option(MOPHI_BUILD_DEMOS "Build demonstration programs" ON)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Options: Python packaging
+# ─────────────────────────────────────────────────────────────────────────────
+option(MOPHI_PYTHON_PACKAGING_BUILD "Configure the supported Python packaging build (Linux wheel, Python bindings ON, Newton+XLB+DEME ON, FERIS OFF, demos OFF)" OFF)
+
+if(MOPHI_PYTHON_PACKAGING_BUILD)
+    set(MOPHI_FETCH_FERIS OFF CACHE BOOL "Download/update the FERIS external project" FORCE)
+    set(MOPHI_FETCH_DEMENGINE OFF CACHE BOOL "Download/update the DEM-Engine external project" FORCE)
+    set(MOPHI_FETCH_NEWTON OFF CACHE BOOL "Install required Newton + Warp + MuJoCo Python packages (newton==${MOPHI_REQUIRED_NEWTON_VERSION}, warp-lang==${MOPHI_REQUIRED_WARP_VERSION}, mujoco==${MOPHI_REQUIRED_MUJOCO_VERSION})" FORCE)
+    set(MOPHI_FETCH_XLB OFF CACHE BOOL "Install the XLB Python package (pip install \"xlb[cuda]\")" FORCE)
+    set(MOPHI_FETCH_DEME OFF CACHE BOOL "Install the DEME Python package (pip install deme)" FORCE)
+    set(MOPHI_BUILD_FERIS_NEWTON OFF CACHE BOOL "Build the FERIS + Newton co-simulation coupler" FORCE)
+    set(MOPHI_BUILD_NEWTON_XLB_DEM ON CACHE BOOL "Build the Newton + XLB + DEM-Engine three-way co-simulation coupler" FORCE)
+    set(MOPHI_BUILD_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings via pybind11" FORCE)
+    set(MOPHI_BUILD_DEMOS OFF CACHE BOOL "Build demonstration programs" FORCE)
+endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CUDA Toolkit
 #
 # Searched once here so the result is available to all sub-directories.
