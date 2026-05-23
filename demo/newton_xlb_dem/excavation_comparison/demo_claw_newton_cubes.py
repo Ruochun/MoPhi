@@ -81,6 +81,12 @@ _CUBE_GRID_Y = (0.66, 1.02, 1.38, 1.74)
 _CUBE_GRID_Z = (0.12, 0.33)
 _CUBE_MASS = 3.0
 
+# Dense rigid-cube interactions can exceed default MuJoCo contact budgets.
+# Reserve larger buffers and route contacts through Newton's contact path.
+_NEWTON_NJMAX = 512
+_NEWTON_NCONMAX = 512
+_NEWTON_NACONMAX = 512
+
 # ── Setup ───────────────────────────────────────────────────────────────────
 print("=== MoPhi UR10 claw demo (Newton coarse-cube comparison) ===\n")
 wp.init()
@@ -161,6 +167,13 @@ newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
     newton_model,
     disable_contacts=False,
+    use_mujoco_contacts=False,
+    solver="newton",
+    ls_parallel=False,
+    ls_iterations=50,
+    njmax=_NEWTON_NJMAX,
+    nconmax=_NEWTON_NCONMAX,
+    naconmax=_NEWTON_NACONMAX,
 )
 
 print(f"[Newton] Model built: {newton_model.body_count} bodies, {newton_model.joint_count} joints.")
