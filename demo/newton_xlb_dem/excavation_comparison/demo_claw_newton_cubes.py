@@ -78,8 +78,10 @@ _MIN_DURATION_EPSILON = 1.0e-12
 _CUBE_HALF = 0.09
 _CUBE_SAMPLE_MIN = np.array([-0.54, 0.66, 0.12], dtype=np.float32)
 _CUBE_SAMPLE_MAX = np.array([0.54, 1.74, 0.96], dtype=np.float32)
-_CUBE_SAMPLE_CELL = np.array([0.36, 0.36, 0.21], dtype=np.float32)
+_CUBE_SAMPLE_CELL = 0.21
 _CUBE_MASS = 3.0
+_CONTACT_KE = 5.0e6
+_CONTACT_KD = 5.0e3
 
 # Dense rigid-cube interactions can exceed default MuJoCo contact budgets.
 # Reserve larger buffers and route contacts through Newton's contact path.
@@ -88,30 +90,57 @@ _NEWTON_NCONMAX = 5120
 # _NEWTON_NACONMAX = 512
 
 
-def _sample_cube_centers(sample_min: np.ndarray, sample_max: np.ndarray, sample_cell: np.ndarray) -> list[tuple[float, float, float]]:
-    """Generate a regular grid of cube centers inside the requested sample domain."""
-    if np.any(sample_cell <= 0.0):
-        raise ValueError(f"Cube sample cell must be positive along every axis. Got {sample_cell}.")
+def _set_shape_contact_stiffness(builder: newton.ModelBuilder, shape_idx: int, ke: float, kd: float) -> None:
+    """Set contact stiffness/damping for one shape when those fields are available."""
+    if hasattr(builder, "shape_ke"):
+        builder.shape_ke[shape_idx] = float(ke)
+    if hasattr(builder, "shape_kd"):
+        builder.shape_kd[shape_idx] = float(kd)
+
+
+def _sample_cube_centers_hcp(sample_min: np.ndarray, sample_max: np.ndarray, sample_cell: float) -> list[tuple[float, float, float]]:
+    """Generate HCP cube centers inside the requested sample domain."""
+    if sample_cell <= 0.0:
+        raise ValueError(f"Cube sample cell must be positive. Got {sample_cell}.")
     if np.any(sample_max < sample_min):
         raise ValueError(f"Cube sample max must be >= min along every axis. Got min={sample_min}, max={sample_max}.")
-
-    axis_centers = []
-    for axis in range(3):
-        axis_centers.append(
-            np.arange(
-                float(sample_min[axis]),
-                float(sample_max[axis]) + 0.5 * float(sample_cell[axis]),
-                float(sample_cell[axis]),
-                dtype=np.float32,
-            )
+    if sample_cell < 2.0 * _CUBE_HALF:
+        raise ValueError(
+            f"Cube sample cell ({sample_cell}) is smaller than cube width ({2.0 * _CUBE_HALF}); "
+            "this would create heavy initial overlap."
         )
 
-    return [
-        (float(x), float(y), float(z))
-        for z in axis_centers[2]
-        for y in axis_centers[1]
-        for x in axis_centers[0]
-    ]
+    min_x, min_y, min_z = map(float, sample_min)
+    max_x, max_y, max_z = map(float, sample_max)
+
+    dx = float(sample_cell)
+    dy = np.sqrt(3.0) * 0.5 * dx
+    dz = np.sqrt(2.0 / 3.0) * dx
+    odd_layer_offset_x = 0.5 * dx
+    odd_layer_offset_y = np.sqrt(3.0) * (1.0 / 6.0) * dx
+
+    cube_centers: list[tuple[float, float, float]] = []
+    z = min_z
+    layer_idx = 0
+    while z <= max_z + 1.0e-6:
+        layer_x_shift = odd_layer_offset_x if (layer_idx % 2 == 1) else 0.0
+        layer_y_shift = odd_layer_offset_y if (layer_idx % 2 == 1) else 0.0
+
+        y = min_y + layer_y_shift
+        row_idx = 0
+        while y <= max_y + 1.0e-6:
+            row_x_shift = 0.5 * dx if (row_idx % 2 == 1) else 0.0
+            x = min_x + layer_x_shift + row_x_shift
+            while x <= max_x + 1.0e-6:
+                cube_centers.append((x, y, z))
+                x += dx
+            y += dy
+            row_idx += 1
+
+        z += dz
+        layer_idx += 1
+
+    return cube_centers
 
 # ── Setup ───────────────────────────────────────────────────────────────────
 print("=== MoPhi UR10 claw demo (Newton coarse-cube comparison) ===\n")
@@ -161,6 +190,7 @@ ur10_sub.add_shape_mesh(
     mesh=plow_mesh,
     xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), PLOW_LOCAL_ROT),
 )
+_set_shape_contact_stiffness(ur10_sub, len(ur10_sub.shape_type) - 1, _CONTACT_KE, _CONTACT_KD)
 
 for i in range(len(ur10_sub.joint_target_ke)):
     ur10_sub.joint_target_ke[i] = 500
@@ -171,7 +201,7 @@ builder = newton.ModelBuilder()
 builder.replicate(ur10_sub, WORLD_COUNT, spacing=(2.0, 2.0, 0.0))
 builder.add_ground_plane()
 
-cube_centers = _sample_cube_centers(_CUBE_SAMPLE_MIN, _CUBE_SAMPLE_MAX, _CUBE_SAMPLE_CELL)
+cube_centers = _sample_cube_centers_hcp(_CUBE_SAMPLE_MIN, _CUBE_SAMPLE_MAX, _CUBE_SAMPLE_CELL)
 cube_count = 0
 for x, y, z in cube_centers:
     cube_body = builder.add_link(
@@ -185,6 +215,7 @@ for x, y, z in cube_centers:
         hy=_CUBE_HALF,
         hz=_CUBE_HALF,
     )
+    _set_shape_contact_stiffness(builder, len(builder.shape_type) - 1, _CONTACT_KE, _CONTACT_KD)
     builder.add_articulation([builder.add_joint_free(cube_body)], label=f"terrain_cube_{cube_count}")
     cube_count += 1
 
