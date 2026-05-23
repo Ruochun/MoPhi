@@ -1,4 +1,4 @@
-"""demo/newton_xlb_dem/demo_claw_newton.py
+"""demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 
 Newton UR10 robot arm + DEME granular terrain co-simulation demo with plowing.
 
@@ -52,11 +52,11 @@ Running
 -------
 From the MoPhi build tree (after ``cmake --build``):
 
-    python demo/newton_xlb_dem/demo_claw_newton.py
+    python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 
 Or from the repository root after installing the mophi package:
 
-    python -m demo.newton_xlb_dem.demo_claw_newton
+    python -m demo.newton_xlb_dem.excavation_comparison.demo_claw_newton
 """
 
 import os
@@ -269,7 +269,7 @@ device = wp.get_device()
 # Resolve the excavator OBJ mesh relative to the repository root so the demo
 # can be run from any working directory.
 _DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(os.path.dirname(_DEMO_DIR))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_DEMO_DIR)))
 EXCAVATOR_OBJ_PATH = os.path.join(_REPO_ROOT, "data", "mesh", "excavator.obj")
 
 # ─── Load the UR10 robot model ─────────────────────────────────────────────
