@@ -83,9 +83,9 @@ _CUBE_MASS = 3.0
 
 # Dense rigid-cube interactions can exceed default MuJoCo contact budgets.
 # Reserve larger buffers and route contacts through Newton's contact path.
-_NEWTON_NJMAX = 512
-_NEWTON_NCONMAX = 512
-_NEWTON_NACONMAX = 512
+_NEWTON_NJMAX = 5120
+_NEWTON_NCONMAX = 5120
+# _NEWTON_NACONMAX = 512
 
 # ── Setup ───────────────────────────────────────────────────────────────────
 print("=== MoPhi UR10 claw demo (Newton coarse-cube comparison) ===\n")
@@ -173,7 +173,7 @@ newton_solver = newton.solvers.SolverMuJoCo(
     ls_iterations=50,
     njmax=_NEWTON_NJMAX,
     nconmax=_NEWTON_NCONMAX,
-    naconmax=_NEWTON_NACONMAX,
+    # naconmax=_NEWTON_NACONMAX,
 )
 
 print(f"[Newton] Model built: {newton_model.body_count} bodies, {newton_model.joint_count} joints.")
@@ -201,7 +201,9 @@ articulation_view = ArticulationView(
     "*ur10*",
     exclude_joint_types=[newton.JointType.FREE, newton.JointType.DISTANCE],
 )
-assert articulation_view.count == WORLD_COUNT, f"Expected {WORLD_COUNT} articulation(s), found {articulation_view.count}"
+assert (
+    articulation_view.count == WORLD_COUNT
+), f"Expected {WORLD_COUNT} articulation(s), found {articulation_view.count}"
 
 dof_count = articulation_view.joint_dof_count
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
