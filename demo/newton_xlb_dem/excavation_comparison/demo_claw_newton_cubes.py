@@ -78,7 +78,7 @@ _MIN_DURATION_EPSILON = 1.0e-12
 _CUBE_HALF = 0.09
 _CUBE_GRID_X = (-0.54, -0.18, 0.18, 0.54)
 _CUBE_GRID_Y = (0.66, 1.02, 1.38, 1.74)
-_CUBE_GRID_Z = (0.12, 0.33)
+_CUBE_GRID_Z = (0.12, 0.33, 0.54, 0.75, 0.96)
 _CUBE_MASS = 3.0
 
 # Dense rigid-cube interactions can exceed default MuJoCo contact budgets.
@@ -224,7 +224,10 @@ def _set_arm_command_state(joint_q_cmd: np.ndarray) -> None:
     articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
     articulation_view.set_attribute("joint_qd", coupler.newton_state_0, joint_qd_target_wp)
     articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
-    newton.eval_fk(newton_model, coupler.newton_state_0.joint_q, coupler.newton_state_0.joint_qd, coupler.newton_state_0)
+    newton.eval_fk(
+        newton_model, coupler.newton_state_0.joint_q, coupler.newton_state_0.joint_qd, coupler.newton_state_0
+    )
+
 
 print(f"[Control] Warm-up: {NEWTON_WARMUP_FRAMES} frame(s) × {SIM_SUBSTEPS} substeps ...")
 for _ in range(NEWTON_WARMUP_FRAMES * SIM_SUBSTEPS):
