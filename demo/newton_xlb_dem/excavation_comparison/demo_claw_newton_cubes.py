@@ -53,9 +53,18 @@ PAUSE_AFTER_FIRST_FRAME = False
 NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250
 NEWTON_WARMUP_FRAMES = 50
 
+# ── Visualization & output ──────────────────────────────────────────────────
+# Save an mp4 so this reduced-representation run can be compared side-by-side
+# with the DEME-based baseline demo.
+SAVE_MOVIE = True
+MOVIE_OUTPUT_PATH = "demo_claw_newton_cubes.mp4"
+MOVIE_FPS = RENDER_FPS
+
 # ── Geometry and control policy ─────────────────────────────────────────────
 PEDESTAL_HEIGHT = 1.2
 OBJ_CM_TO_M = 0.01
+# Keep these motion targets identical to the DEME-based comparison demo so the
+# robot policy is unchanged between representations.
 READY_TO_PLOW_Q = np.array([0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0], dtype=np.float32)
 PLOW_TARGET_Q = np.array([0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0], dtype=np.float32)
 PLOW_DURATION = 1.6
@@ -102,7 +111,9 @@ ur10_sub.add_shape_cylinder(
     radius=0.08,
 )
 
-# Excavator plow mesh (visual mesh and collision shape attached to ee_link).
+# Excavator plow mesh attached to ee_link in Newton.
+# This mesh is the excavator geometry used for rendering and for Newton contact
+# against the coarse cube terrain, so it acts as the primary Newton contact proxy.
 PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), float(np.pi))
 ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
 _plow_surface = mophi.load_obj(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
@@ -120,7 +131,8 @@ ur10_sub.add_shape_mesh(
 )
 
 # Proxy collision box attached to the plow link to make tool–cube interaction
-# robust even for open surface mesh regions.
+# robust even for open surface mesh regions.  It is an additional Newton-side
+# contact proxy near the bucket lip, complementing the excavator mesh above.
 ur10_sub.add_shape_box(
     ee_link_body_idx,
     xform=wp.transform(wp.vec3(0.0, 0.06, -0.09), wp.quat_identity()),
@@ -209,6 +221,13 @@ print(
     f"{SIM_SUBSTEPS} Newton substeps × {NEWTON_DT * 1000:.3f} ms) ...\n"
 )
 
+_movie_writer = None
+if SAVE_MOVIE:
+    import imageio  # pip install imageio imageio-ffmpeg
+
+    _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
+    print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
+
 for frame in range(NUM_FRAMES):
     if not vis.is_running():
         print(f"\n[Viewer] Window closed by user after frame {frame}.")
@@ -241,6 +260,8 @@ for frame in range(NUM_FRAMES):
     vis.begin_frame(sim_time)
     vis.log_state(coupler.newton_state_0)
     vis.end_frame()
+    if _movie_writer is not None:
+        _movie_writer.append_data(vis.get_frame().numpy())
 
     if (frame + 1) % 50 == 0 or frame == 0:
         print(f"  frame {frame + 1:>4}/{NUM_FRAMES}  sim_time={sim_time:.3f} s")
@@ -253,6 +274,10 @@ if PAUSE_AFTER_FIRST_FRAME and vis.is_running():
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
         vis.end_frame()
+
+if _movie_writer is not None:
+    _movie_writer.close()
+    print(f"[Movie] Saved simulation recording to '{MOVIE_OUTPUT_PATH}'.\n")
 
 vis.close()
 coupler.finalize()
