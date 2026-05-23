@@ -207,14 +207,28 @@ assert (
 
 dof_count = articulation_view.joint_dof_count
 joint_q_target_np = articulation_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
+joint_qd_target_np = articulation_view.get_attribute("joint_qd", coupler.newton_state_0).numpy()
 num_ready_dofs = min(dof_count, len(READY_TO_PLOW_Q))
 joint_q_target_np[:, 0, :num_ready_dofs] = READY_TO_PLOW_Q[:num_ready_dofs]
 joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
 articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
 articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
 
+
+def _set_arm_command_state(joint_q_cmd: np.ndarray) -> None:
+    """Pin the UR10 to the scripted trajectory while preserving cube contacts."""
+    joint_q_target_np[:, 0, :num_ready_dofs] = joint_q_cmd[:num_ready_dofs]
+    joint_qd_target_np.fill(0.0)
+    joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
+    joint_qd_target_wp = wp.array(joint_qd_target_np, dtype=wp.float32, device=device)
+    articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
+    articulation_view.set_attribute("joint_qd", coupler.newton_state_0, joint_qd_target_wp)
+    articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
+    newton.eval_fk(newton_model, coupler.newton_state_0.joint_q, coupler.newton_state_0.joint_qd, coupler.newton_state_0)
+
 print(f"[Control] Warm-up: {NEWTON_WARMUP_FRAMES} frame(s) × {SIM_SUBSTEPS} substeps ...")
 for _ in range(NEWTON_WARMUP_FRAMES * SIM_SUBSTEPS):
+    _set_arm_command_state(READY_TO_PLOW_Q)
     coupler.step_newton()
 print("[Control] Warm-up complete.\n")
 
@@ -252,14 +266,8 @@ for frame in range(NUM_FRAMES):
             _WRIST_3_DOF_INDEX
         ] + _scoop_interp * _wrist_3_scoop_target
 
-    joint_q_target_np[:, 0, :num_ready_dofs] = _joint_q_cmd[:num_ready_dofs]
-    articulation_view.set_attribute(
-        "joint_target_pos",
-        coupler.newton_control,
-        wp.array(joint_q_target_np, dtype=wp.float32, device=device),
-    )
-
     for _ in range(SIM_SUBSTEPS):
+        _set_arm_command_state(_joint_q_cmd)
         coupler.step_newton()
 
     body_q_np = coupler.newton_state_0.body_q.numpy()
