@@ -78,15 +78,15 @@ _MIN_DURATION_EPSILON = 1.0e-12
 _CUBE_HALF = 0.09
 _CUBE_SAMPLE_MIN = np.array([-0.54, 0.66, 0.12], dtype=np.float32)
 _CUBE_SAMPLE_MAX = np.array([0.54, 1.74, 0.96], dtype=np.float32)
-_CUBE_SAMPLE_CELL = 0.21
+_CUBE_SAMPLE_CELL = _CUBE_HALF * 2.3
 _CUBE_MASS = 3.0
 _CONTACT_KE = 5.0e6
 _CONTACT_KD = 5.0e3
 
 # Dense rigid-cube interactions can exceed default MuJoCo contact budgets.
 # Reserve larger buffers and route contacts through Newton's contact path.
-_NEWTON_NJMAX = 5120
-_NEWTON_NCONMAX = 5120
+_NEWTON_NJMAX = 51200
+_NEWTON_NCONMAX = 51200
 # _NEWTON_NACONMAX = 512
 
 
@@ -98,7 +98,9 @@ def _set_shape_contact_stiffness(builder: newton.ModelBuilder, shape_idx: int, k
         builder.shape_kd[shape_idx] = float(kd)
 
 
-def _sample_cube_centers_hcp(sample_min: np.ndarray, sample_max: np.ndarray, sample_cell: float) -> list[tuple[float, float, float]]:
+def _sample_cube_centers_hcp(
+    sample_min: np.ndarray, sample_max: np.ndarray, sample_cell: float
+) -> list[tuple[float, float, float]]:
     """Generate HCP cube centers inside the requested sample domain."""
     if sample_cell <= 0.0:
         raise ValueError(f"Cube sample cell must be positive. Got {sample_cell}.")
@@ -141,6 +143,7 @@ def _sample_cube_centers_hcp(sample_min: np.ndarray, sample_max: np.ndarray, sam
         layer_idx += 1
 
     return cube_centers
+
 
 # ── Setup ───────────────────────────────────────────────────────────────────
 print("=== MoPhi UR10 claw demo (Newton coarse-cube comparison) ===\n")
