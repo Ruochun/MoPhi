@@ -76,9 +76,9 @@ _MIN_DURATION_EPSILON = 1.0e-12
 # Coarse approximation of the granular pile footprint/height, centered near
 # the same y-offset used by the DEME pile in demo_claw_newton.py.
 _CUBE_HALF = 0.09
-_CUBE_GRID_X = (-0.54, -0.18, 0.18, 0.54)
-_CUBE_GRID_Y = (0.66, 1.02, 1.38, 1.74)
-_CUBE_GRID_Z = (0.12, 0.33, 0.54, 0.75, 0.96)
+_CUBE_SAMPLE_MIN = np.array([-0.54, 0.66, 0.12], dtype=np.float32)
+_CUBE_SAMPLE_MAX = np.array([0.54, 1.74, 0.96], dtype=np.float32)
+_CUBE_SAMPLE_CELL = np.array([0.36, 0.36, 0.21], dtype=np.float32)
 _CUBE_MASS = 3.0
 
 # Dense rigid-cube interactions can exceed default MuJoCo contact budgets.
@@ -86,6 +86,32 @@ _CUBE_MASS = 3.0
 _NEWTON_NJMAX = 5120
 _NEWTON_NCONMAX = 5120
 # _NEWTON_NACONMAX = 512
+
+
+def _sample_cube_centers(sample_min: np.ndarray, sample_max: np.ndarray, sample_cell: np.ndarray) -> list[tuple[float, float, float]]:
+    """Generate a regular grid of cube centers inside the requested sample domain."""
+    if np.any(sample_cell <= 0.0):
+        raise ValueError(f"Cube sample cell must be positive along every axis. Got {sample_cell}.")
+    if np.any(sample_max < sample_min):
+        raise ValueError(f"Cube sample max must be >= min along every axis. Got min={sample_min}, max={sample_max}.")
+
+    axis_centers = []
+    for axis in range(3):
+        axis_centers.append(
+            np.arange(
+                float(sample_min[axis]),
+                float(sample_max[axis]) + 0.5 * float(sample_cell[axis]),
+                float(sample_cell[axis]),
+                dtype=np.float32,
+            )
+        )
+
+    return [
+        (float(x), float(y), float(z))
+        for z in axis_centers[2]
+        for y in axis_centers[1]
+        for x in axis_centers[0]
+    ]
 
 # ── Setup ───────────────────────────────────────────────────────────────────
 print("=== MoPhi UR10 claw demo (Newton coarse-cube comparison) ===\n")
@@ -145,23 +171,22 @@ builder = newton.ModelBuilder()
 builder.replicate(ur10_sub, WORLD_COUNT, spacing=(2.0, 2.0, 0.0))
 builder.add_ground_plane()
 
+cube_centers = _sample_cube_centers(_CUBE_SAMPLE_MIN, _CUBE_SAMPLE_MAX, _CUBE_SAMPLE_CELL)
 cube_count = 0
-for z in _CUBE_GRID_Z:
-    for y in _CUBE_GRID_Y:
-        for x in _CUBE_GRID_X:
-            cube_body = builder.add_link(
-                xform=wp.transform(wp.vec3(float(x), float(y), float(z)), wp.quat_identity()),
-                mass=_CUBE_MASS,
-                label=f"terrain_cube_{cube_count}",
-            )
-            builder.add_shape_box(
-                cube_body,
-                hx=_CUBE_HALF,
-                hy=_CUBE_HALF,
-                hz=_CUBE_HALF,
-            )
-            builder.add_articulation([builder.add_joint_free(cube_body)], label=f"terrain_cube_{cube_count}")
-            cube_count += 1
+for x, y, z in cube_centers:
+    cube_body = builder.add_link(
+        xform=wp.transform(wp.vec3(x, y, z), wp.quat_identity()),
+        mass=_CUBE_MASS,
+        label=f"terrain_cube_{cube_count}",
+    )
+    builder.add_shape_box(
+        cube_body,
+        hx=_CUBE_HALF,
+        hy=_CUBE_HALF,
+        hz=_CUBE_HALF,
+    )
+    builder.add_articulation([builder.add_joint_free(cube_body)], label=f"terrain_cube_{cube_count}")
+    cube_count += 1
 
 newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
@@ -217,6 +242,15 @@ articulation_view.set_attribute("joint_target_pos", coupler.newton_control, join
 
 def _set_arm_command_state(joint_q_cmd: np.ndarray) -> None:
     """Pin the UR10 to the scripted trajectory while preserving cube contacts."""
+    # The earlier version only updated joint_target_pos and then let the solver
+    # integrate toward that target. Once contact was anticipated, the solver could
+    # satisfy the target while allowing the arm configuration to stall early.
+    #
+    # Here we re-apply the commanded joint position directly into the live Newton
+    # state before every substep and zero the corresponding joint velocities. That
+    # makes the arm behave as a prescribed kinematic driver for the cube field: the
+    # plow keeps following the scripted excavation path, while the cubes still see
+    # contact impulses from the moving geometry.
     joint_q_target_np[:, 0, :num_ready_dofs] = joint_q_cmd[:num_ready_dofs]
     joint_qd_target_np.fill(0.0)
     joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
