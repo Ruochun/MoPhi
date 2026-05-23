@@ -72,6 +72,13 @@ WRIST_SCOOP_INWARD_DELTA = -1.8
 _WRIST_3_DOF_INDEX = 5
 _MIN_DURATION_EPSILON = 1.0e-12
 
+# ── Newton cube → excavator force feedback ─────────────────────────────────
+# When True (default), cube contact reaction is solved together with joint
+# actuation so the excavator receives terrain resistance.
+# When False, each Newton substep reapplies commanded joint state, restoring
+# the older "no feedback from terrain" behavior.
+ENABLE_CUBE_FORCE_FEEDBACK = True
+
 # ── Coarse Newton cube terrain (dynamic rigid bodies) ──────────────────────
 # Coarse approximation of the granular pile footprint/height, centered near
 # the same y-offset used by the DEME pile in demo_claw_newton.py.
@@ -273,14 +280,14 @@ articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_targe
 articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
 
 
-def _set_arm_joint_target(joint_q_cmd: np.ndarray) -> None:
-    """Set UR10 position targets while keeping Newton contact reaction in the loop."""
+def _set_arm_joint_target(joint_q_cmd: np.ndarray) -> wp.array:
+    """Set UR10 position targets and optionally hard-reapply state (no-feedback mode)."""
     joint_q_target_np[:, 0, :num_ready_dofs] = joint_q_cmd[:num_ready_dofs]
     joint_q_target_wp = wp.array(joint_q_target_np, dtype=wp.float32, device=device)
     articulation_view.set_attribute("joint_target_pos", coupler.newton_control, joint_q_target_wp)
-    # Unlike hard state reapplication, this leaves state integration to Newton.
-    # Cube contact impulses and joint actuation are solved together each substep,
-    # matching the force-feedback intent of the DEME comparison demo.
+    if not ENABLE_CUBE_FORCE_FEEDBACK:
+        articulation_view.set_attribute("joint_q", coupler.newton_state_0, joint_q_target_wp)
+    return joint_q_target_wp
 
 
 print(f"[Control] Warm-up: {NEWTON_WARMUP_FRAMES} frame(s) × {SIM_SUBSTEPS} substeps ...")
@@ -323,8 +330,10 @@ for frame in range(NUM_FRAMES):
             _WRIST_3_DOF_INDEX
         ] + _scoop_interp * _wrist_3_scoop_target
 
-    _set_arm_joint_target(_joint_q_cmd)
+    _joint_q_target_wp = _set_arm_joint_target(_joint_q_cmd)
     for _ in range(SIM_SUBSTEPS):
+        if not ENABLE_CUBE_FORCE_FEEDBACK:
+            articulation_view.set_attribute("joint_q", coupler.newton_state_0, _joint_q_target_wp)
         coupler.step_newton()
 
     body_q_np = coupler.newton_state_0.body_q.numpy()
@@ -353,4 +362,5 @@ print("Demo completed successfully.")
 print(f"  Newton version : {newton.__version__}")
 print(f"  Warp  version  : {wp.__version__}")
 print(f"  Terrain        : Newton coarse-cube field ({cube_count} cubes)")
+print(f"  Force feedback : {'enabled' if ENABLE_CUBE_FORCE_FEEDBACK else 'disabled'}")
 print(f"  Min ee_link z  : {_min_ee_height:.4f} m")
