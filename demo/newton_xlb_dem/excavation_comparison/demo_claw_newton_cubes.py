@@ -5,7 +5,7 @@ Newton-only comparison demo for UR10 excavator plowing with a coarse cube terrai
 This script mirrors the control policy used by ``demo_claw_newton.py`` in the same
 folder (same UR10 arm, same plow mesh, same ready-to-plow → plow trajectory), but
 replaces DEME granular material with a coarse Newton collision representation:
-an array of static cubes occupying roughly the same workspace volume.
+an array of dynamic rigid cubes occupying roughly the same workspace volume.
 
 The goal is to provide an A/B comparison where terrain representation differs while
 the robot policy stays the same.
@@ -49,8 +49,7 @@ if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
         f"Got FRAME_DT={FRAME_DT:.12g}, NEWTON_DT={NEWTON_DT:.12g}."
     )
 
-PAUSE_AFTER_FIRST_FRAME = False
-NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250
+NUM_FRAMES = 250
 NEWTON_WARMUP_FRAMES = 50
 
 # ── Visualization & output ──────────────────────────────────────────────────
@@ -73,13 +72,14 @@ WRIST_SCOOP_INWARD_DELTA = -1.8
 _WRIST_3_DOF_INDEX = 5
 _MIN_DURATION_EPSILON = 1.0e-12
 
-# ── Coarse Newton cube terrain (static obstacle field) ─────────────────────
-# Coarse approximation of the granular pile footprint/height:
-# centered near the same y-offset used by the DEME pile in demo_claw_newton.py.
+# ── Coarse Newton cube terrain (dynamic rigid bodies) ──────────────────────
+# Coarse approximation of the granular pile footprint/height, centered near
+# the same y-offset used by the DEME pile in demo_claw_newton.py.
 _CUBE_HALF = 0.09
 _CUBE_GRID_X = (-0.54, -0.18, 0.18, 0.54)
 _CUBE_GRID_Y = (0.66, 1.02, 1.38, 1.74)
 _CUBE_GRID_Z = (0.12, 0.33)
+_CUBE_MASS = 3.0
 
 # ── Setup ───────────────────────────────────────────────────────────────────
 print("=== MoPhi UR10 claw demo (Newton coarse-cube comparison) ===\n")
@@ -130,17 +130,6 @@ ur10_sub.add_shape_mesh(
     xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), PLOW_LOCAL_ROT),
 )
 
-# Proxy collision box attached to the plow link to make tool–cube interaction
-# robust even for open surface mesh regions.  It is an additional Newton-side
-# contact proxy near the bucket lip, complementing the excavator mesh above.
-ur10_sub.add_shape_box(
-    ee_link_body_idx,
-    xform=wp.transform(wp.vec3(0.0, 0.06, -0.09), wp.quat_identity()),
-    hx=0.10,
-    hy=0.07,
-    hz=0.05,
-)
-
 for i in range(len(ur10_sub.joint_target_ke)):
     ur10_sub.joint_target_ke[i] = 500
     ur10_sub.joint_target_kd[i] = 50
@@ -154,13 +143,18 @@ cube_count = 0
 for z in _CUBE_GRID_Z:
     for y in _CUBE_GRID_Y:
         for x in _CUBE_GRID_X:
-            builder.add_shape_box(
-                -1,
+            cube_body = builder.add_link(
                 xform=wp.transform(wp.vec3(float(x), float(y), float(z)), wp.quat_identity()),
+                mass=_CUBE_MASS,
+                label=f"terrain_cube_{cube_count}",
+            )
+            builder.add_shape_box(
+                cube_body,
                 hx=_CUBE_HALF,
                 hy=_CUBE_HALF,
                 hz=_CUBE_HALF,
             )
+            builder.add_articulation([builder.add_joint_free(cube_body)], label=f"terrain_cube_{cube_count}")
             cube_count += 1
 
 newton_model = builder.finalize()
@@ -170,7 +164,7 @@ newton_solver = newton.solvers.SolverMuJoCo(
 )
 
 print(f"[Newton] Model built: {newton_model.body_count} bodies, {newton_model.joint_count} joints.")
-print(f"[Terrain] Added {cube_count} coarse Newton cube obstacle(s).\n")
+print(f"[Terrain] Added {cube_count} coarse Newton dynamic cube bodies.\n")
 
 vis = mophi.OpenGLVisualizer(newton_model)
 vis.set_camera(
@@ -267,13 +261,6 @@ for frame in range(NUM_FRAMES):
         print(f"  frame {frame + 1:>4}/{NUM_FRAMES}  sim_time={sim_time:.3f} s")
 
 print()
-
-if PAUSE_AFTER_FIRST_FRAME and vis.is_running():
-    print("[Debug] First frame rendered. Close the viewer window to continue.")
-    while vis.is_running():
-        vis.begin_frame(sim_time)
-        vis.log_state(coupler.newton_state_0)
-        vis.end_frame()
 
 if _movie_writer is not None:
     _movie_writer.close()
