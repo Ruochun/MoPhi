@@ -64,7 +64,7 @@ PEDESTAL_HEIGHT = 1.2
 OBJ_CM_TO_M = 0.01
 # Keep these motion targets identical to the DEME-based comparison demo so the
 # robot policy is unchanged between representations.
-READY_TO_PLOW_Q = np.array([0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0], dtype=np.float32)
+READY_TO_PLOW_Q = np.array([0.5 * np.pi, -1.35, 1.20, -1.60, -1.0 * np.pi, -1.0], dtype=np.float32)
 PLOW_TARGET_Q = np.array([0.5 * np.pi, -0.45, 0.65, -0.45, -1.0 * np.pi, -1.0], dtype=np.float32)
 PLOW_DURATION = 1.6
 WRIST_SCOOP_START_FRACTION = 0.75
@@ -78,7 +78,7 @@ _MIN_DURATION_EPSILON = 1.0e-12
 _CUBE_HALF = 0.09
 _CUBE_SAMPLE_MIN = np.array([-0.54, 0.66, 0.12], dtype=np.float32)
 _CUBE_SAMPLE_MAX = np.array([0.54, 1.74, 0.96], dtype=np.float32)
-_CUBE_SAMPLE_CELL = _CUBE_HALF * 2.3
+_CUBE_SAMPLE_CELL = _CUBE_HALF * 2.6
 _CUBE_MASS = 3.0
 _CONTACT_KE = 5.0e6
 _CONTACT_KD = 5.0e3
