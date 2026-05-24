@@ -139,7 +139,7 @@ OBJ_CM_TO_M = 0.01
 # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
 # These two arrays are closely coupled: always update them together.
 READY_TO_PLOW_Q = np.array(
-    [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
+    [0.5 * np.pi, -1.35, 1.20, -0.60, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 PLOW_TARGET_Q = np.array(
@@ -156,7 +156,7 @@ NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
 
 # Time for the granular terrain to settle under gravity before plow contact
 # is activated.  Increase if particles are still visibly moving at plow activation.
-DEME_SETTLE_TIME = 1.0  # [s]
+DEME_SETTLE_TIME = 1.2  # [s]
 
 # Wall-clock (simulation) time over which to linearly interpolate from
 # READY_TO_PLOW_Q to PLOW_TARGET_Q.  Longer → slower, gentler plowing.
@@ -436,6 +436,9 @@ deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
 deme_solver.SetInitTimeStep(DEME_DT)
 print(f"[DEME] Running at step size {DEME_DT}.\n")
 deme_solver.SetErrorOutAvgContacts(100)
+
+# pyDEME (older version) may have weird bin size adaptation mechanism, disable it
+deme_solver.DisableAdaptiveBinSize()
 
 # ── Excavator plow mesh: contact proxy for the plowing phase ──────────
 # The same OBJ used by Newton for visualisation is loaded into DEME as a
