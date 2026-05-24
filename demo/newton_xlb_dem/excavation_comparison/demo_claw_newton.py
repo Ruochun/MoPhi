@@ -1,4 +1,4 @@
-"""demo/newton_xlb_dem/demo_claw_newton.py
+"""demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 
 Newton UR10 robot arm + DEME granular terrain co-simulation demo with plowing.
 
@@ -52,11 +52,11 @@ Running
 -------
 From the MoPhi build tree (after ``cmake --build``):
 
-    python demo/newton_xlb_dem/demo_claw_newton.py
+    python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 
 Or from the repository root after installing the mophi package:
 
-    python -m demo.newton_xlb_dem.demo_claw_newton
+    python -m demo.newton_xlb_dem.excavation_comparison.demo_claw_newton
 """
 
 import os
@@ -98,6 +98,14 @@ def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_lin
     return _ee_pos
 
 
+def _rotate_vector_by_quat_xyzw(quat_xyzw: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Rotate a 3D vector by a quaternion in [x, y, z, w] convention."""
+    q_xyz = quat_xyzw[:3]
+    q_w = quat_xyzw[3]
+    t = 2.0 * np.cross(q_xyz, vec)
+    return vec + q_w * t + np.cross(q_xyz, t)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Simulation configuration
 # All user-tunable constants are defined here.  Change values in this section;
@@ -131,7 +139,7 @@ OBJ_CM_TO_M = 0.01
 # UR10 joint order: shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
 # These two arrays are closely coupled: always update them together.
 READY_TO_PLOW_Q = np.array(
-    [0.5 * np.pi, -1.35, 1.20, -0.20, -1.0 * np.pi, -1.0],
+    [0.5 * np.pi, -1.35, 1.20, -0.60, -1.0 * np.pi, -1.0],
     dtype=np.float32,
 )
 PLOW_TARGET_Q = np.array(
@@ -148,7 +156,7 @@ NEWTON_WARMUP_FRAMES = 50  # ≈ 1 s at RENDER_FPS
 
 # Time for the granular terrain to settle under gravity before plow contact
 # is activated.  Increase if particles are still visibly moving at plow activation.
-DEME_SETTLE_TIME = 1.0  # [s]
+DEME_SETTLE_TIME = 1.2  # [s]
 
 # Wall-clock (simulation) time over which to linearly interpolate from
 # READY_TO_PLOW_Q to PLOW_TARGET_Q.  Longer → slower, gentler plowing.
@@ -163,6 +171,15 @@ RENDER_SETTLING_PHASE = True
 WRIST_SCOOP_START_FRACTION = 0.75
 WRIST_SCOOP_INWARD_DELTA = -1.8  # inward wrist_3 delta added to PLOW_TARGET_Q[wrist_3] [rad]
 _WRIST_3_DOF_INDEX = 5  # UR10 joint order: wrist_3 is the last (0-based index 5)
+
+# ── DEME → Newton force feedback ─────────────────────────────────────────
+# When True, the net contact force reported by DEME for the plow mesh is fed
+# back into Newton as an external body force on the ee_link each substep.
+# Newton's position controller must then generate additional joint torques to
+# maintain tracking under the granular load, so the arm's dynamics realistically
+# reflect the resistance of the terrain.  The initial and final joint targets are
+# unchanged; only the effort required to reach them is affected.
+ENABLE_DEME_FORCE_FEEDBACK = True
 
 # ── Visualization & output ────────────────────────────────────────────────
 # Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD file
@@ -252,7 +269,7 @@ device = wp.get_device()
 # Resolve the excavator OBJ mesh relative to the repository root so the demo
 # can be run from any working directory.
 _DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(os.path.dirname(_DEMO_DIR))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_DEMO_DIR)))
 EXCAVATOR_OBJ_PATH = os.path.join(_REPO_ROOT, "data", "mesh", "excavator.obj")
 
 # ─── Load the UR10 robot model ─────────────────────────────────────────────
@@ -419,6 +436,9 @@ deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
 deme_solver.SetInitTimeStep(DEME_DT)
 print(f"[DEME] Running at step size {DEME_DT}.\n")
 deme_solver.SetErrorOutAvgContacts(100)
+
+# pyDEME (older version) may have weird bin size adaptation mechanism, disable it
+deme_solver.DisableAdaptiveBinSize()
 
 # ── Excavator plow mesh: contact proxy for the plowing phase ──────────
 # The same OBJ used by Newton for visualisation is loaded into DEME as a
@@ -611,9 +631,11 @@ if SAVE_MOVIE and not USE_OMNIVERSE_VISUALIZATION:
 # Each frame:
 #   1. Ramp Newton joint targets from ready-to-plow toward PLOW_TARGET_Q.
 #   2. For each Newton substep:
-#        a. Advance Newton one substep.
-#        b. Sync DEME plow pose from Newton's ee_link world transform.
-#        c. Advance DEME (DEME_SUBSTEPS micro-steps per Newton substep).
+#        a. Pass the DEME contact force from the previous substep to Newton (if enabled).
+#        b. Advance Newton one substep.
+#        c. Sync DEME plow pose from Newton's ee_link world transform.
+#        d. Advance DEME (DEME_SUBSTEPS micro-steps per Newton substep).
+#        e. Query the updated DEME contact force for use in the next substep.
 #   3. Visualize Newton arm state and DEME terrain particles.
 print(
     f"Running up to {NUM_FRAMES} frame(s) "
@@ -690,6 +712,25 @@ _sim_duration = max(NUM_FRAMES * FRAME_DT, _MIN_DURATION_EPSILON)
 _scoop_start_time = max(WRIST_SCOOP_START_FRACTION * _sim_duration, PLOW_DURATION)
 _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 
+# ─── DEME → Newton force feedback setup ───────────────────────────────────────
+# A reusable (body_count, 6) float32 scratch buffer for building the external-force
+# wp.array passed to the coupler each substep.  Only the ee_link entry is written;
+# all other entries stay zero.  The DEME force from the previous substep is kept in
+# _deme_contact_force_np and re-used as the injection for the current substep (one
+# substep lag — acceptable for this co-simulation cadence).
+_ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
+_deme_contact_force_np = np.zeros(3, dtype=np.float32)  # net world-space [Fx, Fy, Fz]
+_deme_contact_torque_np = np.zeros(3, dtype=np.float32)  # net world-space [Tx, Ty, Tz]
+# These arrays are only consumed inside ENABLE_DEME_FORCE_FEEDBACK branches.
+# Keeping them always initialized avoids conditional local-name coupling.
+# Force feedback uses a one-Newton-substep lag when enabled: the DEME contact
+# force queried at the end of substep N is injected into Newton at substep N+1.
+# At NEWTON_DT = 2 ms this lag is at most one substep (2 ms), well within the
+# coupling bandwidth of the position-controlled arm at RENDER_FPS = 50 Hz.
+if ENABLE_DEME_FORCE_FEEDBACK:
+    _plow_mass = float(_plow_deme_tracker.Mass())
+    _plow_moi_local_np = np.asarray(_plow_deme_tracker.MOI(), dtype=np.float32)
+
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
     # For OmniverseVisualizer, vis.is_running() always returns True.
@@ -721,6 +762,14 @@ for frame in range(NUM_FRAMES):
 
     # ── Collaboration loop: counts are derived from explicit dt constants ──
     for _ in range(SIM_SUBSTEPS):
+        # If force feedback is enabled, inject the DEME contact force (from the
+        # previous DEME micro-step cycle) into Newton before this substep so the
+        # integrator sees the granular resistance alongside joint-actuator torques.
+        if ENABLE_DEME_FORCE_FEEDBACK:
+            _ext_forces_np[ee_link_body_idx, :3] = _deme_contact_force_np
+            _ext_forces_np[ee_link_body_idx, 3:6] = _deme_contact_torque_np
+            coupler.set_newton_body_forces(wp.array(_ext_forces_np, dtype=wp.spatial_vector))
+
         # Advance Newton one substep with the current joint targets.
         coupler.step_newton()
 
@@ -734,6 +783,20 @@ for frame in range(NUM_FRAMES):
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
         for _ in range(DEME_SUBSTEPS):
             coupler.step_deme()
+
+        # Query contact-induced acceleration on the tracked plow owner after DEME
+        # micro-steps complete, then convert to equivalent net wrench:
+        #   force_world = mass * ContactAcc()
+        #   torque_local_principal = MOI_principal * ContactAngAccLocal()
+        #   torque_world = rotate(local_principal_torque, OriQ()).
+        if ENABLE_DEME_FORCE_FEEDBACK:
+            _contact_acc_world_np = np.asarray(_plow_deme_tracker.ContactAcc(), dtype=np.float32)
+            _deme_contact_force_np[:] = _plow_mass * _contact_acc_world_np
+
+            _contact_ang_acc_local_np = np.asarray(_plow_deme_tracker.ContactAngAccLocal(), dtype=np.float32)
+            _contact_torque_local_np = _plow_moi_local_np * _contact_ang_acc_local_np
+            _plow_ori_q_np = np.asarray(_plow_deme_tracker.OriQ(), dtype=np.float32)
+            _deme_contact_torque_np[:] = _rotate_vector_by_quat_xyzw(_plow_ori_q_np, _contact_torque_local_np)
 
     sim_time += FRAME_DT
 

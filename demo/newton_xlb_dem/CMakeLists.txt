@@ -6,7 +6,8 @@
 # the MoPhi Python package so that it can be run directly:
 #
 #   python demo/newton_xlb_dem/demo_newton_xlb_dem.py
-#   python demo/newton_xlb_dem/demo_claw_newton.py
+#   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
+#   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 #
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
@@ -33,9 +34,19 @@ add_custom_target(demo_newton_xlb_dem
 # Adds a `demo_claw_newton` build target.  Run with:
 #   cmake --build <build-dir> --target demo_claw_newton
 add_custom_target(demo_claw_newton
-    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/demo_claw_newton.py"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/excavation_comparison/demo_claw_newton.py"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Running UR10 claw arm Newton co-simulation demo (claw plowing groundwork phase)"
+    VERBATIM
+)
+
+# ── Custom target: UR10 claw arm Newton coarse-cube comparison demo ───────────
+# Adds a `demo_claw_newton_cubes` build target.  Run with:
+#   cmake --build <build-dir> --target demo_claw_newton_cubes
+add_custom_target(demo_claw_newton_cubes
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/excavation_comparison/demo_claw_newton_cubes.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running UR10 claw arm Newton coarse-cube comparison demo"
     VERBATIM
 )
 
@@ -47,6 +58,12 @@ install(
     FILES
         demo_newton_xlb_dem.py
         newton_xlb_dem_utils.py
-        demo_claw_newton.py
     DESTINATION demo/newton_xlb_dem
+)
+
+install(
+    FILES
+        excavation_comparison/demo_claw_newton.py
+        excavation_comparison/demo_claw_newton_cubes.py
+    DESTINATION demo/newton_xlb_dem/excavation_comparison
 )

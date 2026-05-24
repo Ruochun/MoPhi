@@ -18,7 +18,8 @@ PyNewtonXLBDEMCoupler::PyNewtonXLBDEMCoupler()
       newton_contacts(pybind11::none()),
       xlb_simulation(pybind11::none()),
       xlb_bc_mask(pybind11::none()),
-      xlb_missing_mask(pybind11::none()) {
+      xlb_missing_mask(pybind11::none()),
+      newton_ext_body_forces(pybind11::none()) {
     MOPHI_INFO("PyNewtonXLBDEMCoupler: created");
 }
 
@@ -101,6 +102,34 @@ void PyNewtonXLBDEMCoupler::StepNewton() {
 
     newton_state_0.attr("clear_forces")();
     newton_model.attr("collide")(newton_state_0, newton_contacts);
+
+    // Apply external body forces registered by the caller (e.g. DEME contact forces)
+    // after the internal force clear so they are visible to the integrator.
+    if (!newton_ext_body_forces.is_none()) {
+        namespace py = pybind11;
+        py::module_ np = py::module_::import("numpy");
+        py::module_ wp = py::module_::import("warp");
+
+        // body_f is a wp.array of shape (body_count,) dtype=wp.spatial_vector.
+        // numpy() returns a (body_count, 6) float32 ndarray (force + torque per body).
+        py::object body_f = newton_state_0.attr("body_f");
+        py::object body_f_np = body_f.attr("numpy")();
+        py::object ext_np = newton_ext_body_forces.attr("numpy")();
+
+        // Accumulate: body_f += ext_forces.
+        // The GPU→CPU→GPU round-trip is intentional: Warp does not yet expose an
+        // in-place scatter-add kernel through pybind11, and the body_count for a
+        // single UR10 arm (~20 bodies) is small enough that the copy cost is
+        // negligible compared with the DEME micro-steps executed per Newton substep.
+        py::object summed_np = np.attr("add")(body_f_np, ext_np);
+
+        // Write the summed array back into the device-resident wp.array.
+        py::object device = body_f.attr("device");
+        py::object new_body_f =
+            wp.attr("array")(summed_np, py::arg("dtype") = wp.attr("spatial_vector"), py::arg("device") = device);
+        wp.attr("copy")(body_f, new_body_f);
+    }
+
     newton_solver.attr("step")(newton_state_0, newton_state_1, newton_control, newton_contacts,
                                pybind11::float_(sim_dt));
     // state_1 now holds the new Newton state; swap buffers for next iteration.
@@ -161,6 +190,9 @@ void PyNewtonXLBDEMCoupler::Finalize() {
     // the XLB stepper; releasing here just drops the Python reference count).
     xlb_bc_mask = pybind11::none();
     xlb_missing_mask = pybind11::none();
+
+    // Release pending external body forces reference.
+    newton_ext_body_forces = pybind11::none();
 
     step_count = 0;
 
@@ -241,4 +273,12 @@ pybind11::object PyNewtonXLBDEMCoupler::GetXLBBCMaskArray() const {
 
 pybind11::object PyNewtonXLBDEMCoupler::GetXLBMissingMaskArray() const {
     return xlb_missing_mask;
+}
+
+// ── DEME → Newton force feedback ────────────────────────────────────────────
+
+void PyNewtonXLBDEMCoupler::SetNewtonBodyForces(pybind11::object ext_forces_wp) {
+    // Accept a wp.array of shape (body_count,) dtype=wp.spatial_vector, or None
+    // to disable force injection.  Validation is left to the caller for performance.
+    newton_ext_body_forces = ext_forces_wp;
 }

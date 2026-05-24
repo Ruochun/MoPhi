@@ -166,8 +166,10 @@ cmake --build build
 
 # Run the Python demo (walking robot + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
-# Run another demo (robotic arm with excavator + XLB + DEME)
-PYTHONPATH=python python3 demo/newton_xlb_dem/demo_claw_newton.py
+# Run the DEME excavator demo (robotic arm with excavator + DEME force feedback)
+PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
+# Run the Newton coarse-cube comparison demo (same arm policy, coarse rigid terrain)
+PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 ```
 
 `NewtonXLBDEMCoupler` is a three-way co-simulation coupler:
