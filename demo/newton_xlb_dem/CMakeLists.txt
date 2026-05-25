@@ -6,6 +6,7 @@
 # the MoPhi Python package so that it can be run directly:
 #
 #   python demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
+#   python demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_newton_baseline.py
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 #
@@ -18,6 +19,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+# ── Custom target: ANYmal Newton-only baseline demo ───────────────────────────
+# Adds a `demo_anymal_robot_newton_baseline` build target.  Run with:
+#   cmake --build <build-dir> --target demo_anymal_robot_newton_baseline
+add_custom_target(demo_anymal_robot_newton_baseline
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/anymal_robot_multiphysics/demo_anymal_robot_newton_baseline.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running ANYmal Newton-only walking baseline demo"
+    VERBATIM
+)
 
 # ── Custom target: ANYmal multiphysics demo ───────────────────────────────────
 # Adds a `demo_anymal_robot_multiphysics` build target.  Run with:
@@ -63,6 +74,7 @@ install(
 install(
     FILES
         anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
+        anymal_robot_multiphysics/demo_anymal_robot_newton_baseline.py
     DESTINATION demo/newton_xlb_dem/anymal_robot_multiphysics
 )
 
