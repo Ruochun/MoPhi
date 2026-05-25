@@ -83,6 +83,8 @@ LATERAL_COMMAND = 0.0
 YAW_COMMAND = 0.0
 
 # ── Newton contact boxes ──────────────────────────────────────────────────
+# Toggle dynamic obstacle cubes and their contacts with the robot.
+ENABLE_DYNAMIC_CONTACT_BOXES = True
 # Boxes are intentionally light so the robot can hit them without losing gait.
 BOX_HALF_EXTENTS = np.array([0.08, 0.08, 0.12], dtype=np.float32)
 BOX_MASS = 0.25
@@ -117,6 +119,7 @@ if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
 # [HAA, HFE, KFE] ("lab" convention), while MuJoCo/Newton uses a different
 # internal ordering. These index arrays reorder the 12 joint outputs so they
 # apply to the correct actuators.
+NUM_POLICY_JOINTS = 12
 lab_to_mujoco = [0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11]
 mujoco_to_lab = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
 
@@ -201,21 +204,22 @@ for i in range(len(builder.joint_target_ke)):
     builder.joint_target_ke[i] = 150
     builder.joint_target_kd[i] = 5
 
-# Add a few light dynamic boxes along the forward path so the robot can bump them aside.
-for i, (x, y, z) in enumerate(BOX_POSES):
-    box_body = builder.add_link(
-        xform=wp.transform(wp.vec3(x, y, z), wp.quat_identity()),
-        mass=BOX_MASS,
-        label=f"walking_box_{i}",
-    )
-    builder.add_shape_box(
-        box_body,
-        hx=float(BOX_HALF_EXTENTS[0]),
-        hy=float(BOX_HALF_EXTENTS[1]),
-        hz=float(BOX_HALF_EXTENTS[2]),
-    )
-    _set_shape_contact_stiffness(builder, len(builder.shape_type) - 1, BOX_CONTACT_KE, BOX_CONTACT_KD)
-    builder.add_articulation([builder.add_joint_free(box_body)], label=f"walking_box_{i}")
+# Add optional light dynamic boxes along the forward path so the robot can bump them aside.
+if ENABLE_DYNAMIC_CONTACT_BOXES:
+    for i, (x, y, z) in enumerate(BOX_POSES):
+        box_body = builder.add_link(
+            xform=wp.transform(wp.vec3(x, y, z), wp.quat_identity()),
+            mass=BOX_MASS,
+            label=f"walking_box_{i}",
+        )
+        builder.add_shape_box(
+            box_body,
+            hx=float(BOX_HALF_EXTENTS[0]),
+            hy=float(BOX_HALF_EXTENTS[1]),
+            hz=float(BOX_HALF_EXTENTS[2]),
+        )
+        _set_shape_contact_stiffness(builder, len(builder.shape_type) - 1, BOX_CONTACT_KE, BOX_CONTACT_KD)
+        builder.add_articulation([builder.add_joint_free(box_body)], label=f"walking_box_{i}")
 
 newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
@@ -229,7 +233,10 @@ newton_solver = newton.solvers.SolverMuJoCo(
     nconmax=4096,
 )
 print(f"[Newton] ANYmal baseline model built: {newton_model.body_count} bodies, {newton_model.joint_count} joints.")
-print(f"[Scene] Added {len(BOX_POSES)} dynamic Newton box obstacle(s).\n")
+if ENABLE_DYNAMIC_CONTACT_BOXES:
+    print(f"[Scene] Added {len(BOX_POSES)} dynamic Newton box obstacle(s).\n")
+else:
+    print("[Scene] Dynamic Newton box obstacles disabled (vanilla flat-ground walking).\n")
 
 # ─── Initialize Newton state, control, and contacts ──────────────────────
 newton_state_0 = newton_model.state()
@@ -269,8 +276,10 @@ if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 # ─── Load the ANYmal C walking policy ────────────────────────────────────
 print("[Policy] Loading ANYmal C walking policy ...")
 policy = torch.jit.load(policy_path, map_location=torch_device)
-joint_pos_initial = wp.to_torch(newton_state_0.joint_q)[7:].to(dtype=torch.float32).unsqueeze(0).clone()
-act = torch.zeros(1, 12, device=torch_device, dtype=torch.float32)
+joint_pos_initial = (
+    wp.to_torch(newton_state_0.joint_q)[7 : 7 + NUM_POLICY_JOINTS].to(dtype=torch.float32).unsqueeze(0).clone()
+)
+act = torch.zeros(1, NUM_POLICY_JOINTS, device=torch_device, dtype=torch.float32)
 lab_to_mujoco_indices = torch.tensor(lab_to_mujoco, device=torch_device)
 mujoco_to_lab_indices = torch.tensor(mujoco_to_lab, device=torch_device)
 gravity_vec = torch.tensor([[0.0, 0.0, -1.0]], device=torch_device, dtype=torch.float32)
@@ -304,10 +313,12 @@ for frame in range(NUM_FRAMES):
 
     joint_q_t = wp.to_torch(newton_state_0.joint_q)
     joint_qd_t = wp.to_torch(newton_state_0.joint_qd)
+    policy_joint_q_t = torch.cat([joint_q_t[:7], joint_q_t[7 : 7 + NUM_POLICY_JOINTS]])
+    policy_joint_qd_t = torch.cat([joint_qd_t[:6], joint_qd_t[6 : 6 + NUM_POLICY_JOINTS]])
     obs = demo_utils.compute_obs(
         act,
-        joint_q_t,
-        joint_qd_t,
+        policy_joint_q_t,
+        policy_joint_qd_t,
         joint_pos_initial,
         lab_to_mujoco_indices,
         gravity_vec,
