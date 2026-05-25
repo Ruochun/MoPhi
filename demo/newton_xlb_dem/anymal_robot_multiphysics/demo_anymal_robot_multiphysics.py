@@ -113,6 +113,7 @@ def _rotate_vector_by_quat_xyzw(quat_xyzw: np.ndarray, vec: np.ndarray) -> np.nd
     t = 2.0 * np.cross(q_xyz, vec)
     return vec + q_w * t + np.cross(q_xyz, t)
 
+
 # ─── Joint-index remapping ─────────────────────────────────────────────────
 # The ANYmal C RL policy was trained with legs ordered [LF, RF, LH, RH] × [HAA, HFE, KFE]
 # ("lab" convention), while MuJoCo/Newton uses a different internal ordering.
@@ -583,6 +584,8 @@ particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
 # Init vel
 particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
 particles_tracker = deme_solver.Track(particles)
+# pyDEME (older version) may have weird bin size adaptation mechanism, disable it
+deme_solver.DisableAdaptiveBinSize()
 # Init
 deme_solver.SetInitTimeStep(SIM_DT)
 deme_solver.Initialize()
