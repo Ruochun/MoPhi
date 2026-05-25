@@ -91,11 +91,11 @@ BOX_MASS = 0.25
 BOX_CONTACT_KE = 5.0e4
 BOX_CONTACT_KD = 5.0e2
 BOX_POSES = [
-    (1.05, 0.00, float(BOX_HALF_EXTENTS[2])),
-    (1.55, -0.10, float(BOX_HALF_EXTENTS[2])),
-    (2.05, 0.12, float(BOX_HALF_EXTENTS[2])),
-    (2.55, -0.04, float(BOX_HALF_EXTENTS[2])),
-    (3.05, 0.08, float(BOX_HALF_EXTENTS[2])),
+    (0.00, 1.05, float(BOX_HALF_EXTENTS[2])),
+    (-0.10, 1.55, float(BOX_HALF_EXTENTS[2])),
+    (0.12, 2.05, float(BOX_HALF_EXTENTS[2])),
+    (-0.04, 2.55, float(BOX_HALF_EXTENTS[2])),
+    (0.08, 3.05, float(BOX_HALF_EXTENTS[2])),
 ]
 
 # ── Visualization & output ────────────────────────────────────────────────
@@ -329,8 +329,13 @@ for frame in range(NUM_FRAMES):
         rearranged_act = torch.gather(act, 1, mujoco_to_lab_indices.unsqueeze(0))
         target_joint_q = joint_pos_initial + 0.5 * rearranged_act
         target_with_zeros = torch.cat([free_joint_zeros, target_joint_q.squeeze(0)])
-        target_wp = wp.from_torch(target_with_zeros, dtype=wp.float32, requires_grad=False)
-        wp.copy(newton_control.joint_target_pos, target_wp)
+        control_joint_target_pos_t = wp.to_torch(newton_control.joint_target_pos)
+        if control_joint_target_pos_t.numel() < target_with_zeros.numel():
+            raise RuntimeError(
+                "newton_control.joint_target_pos is smaller than robot target vector "
+                f"({control_joint_target_pos_t.numel()} < {target_with_zeros.numel()})."
+            )
+        control_joint_target_pos_t[: target_with_zeros.numel()] = target_with_zeros
 
     for _ in range(SIM_SUBSTEPS):
         newton_solver.step(newton_state_0, newton_state_1, newton_control, newton_contacts, NEWTON_DT)
