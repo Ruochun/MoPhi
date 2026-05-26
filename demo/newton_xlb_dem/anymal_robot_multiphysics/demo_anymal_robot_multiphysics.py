@@ -1,4 +1,4 @@
-"""demo/newton_xlb_dem/demo_newton_xlb_dem.py
+"""demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
 
 Three-way co-simulation demo: Newton (ANYmal C walking robot) + XLB (LBM fluid) + DEME (particles).
 
@@ -41,11 +41,11 @@ Running
 -------
 From the MoPhi build tree (after ``cmake --build``):
 
-    python demo/newton_xlb_dem/demo_newton_xlb_dem.py
+    python demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
 
 Or from the repository root after installing the mophi package:
 
-    python -m demo.newton_xlb_dem.demo_newton_xlb_dem
+    python -m demo.newton_xlb_dem.anymal_robot_multiphysics.demo_anymal_robot_multiphysics
 """
 
 import os
@@ -89,10 +89,10 @@ mophi.check_newton_warp_mujoco_versions(
 )
 
 # ─── Import demo-specific utilities ──────────────────────────────────────────
-# newton_xlb_dem_utils.py lives in the same directory as this script.
-# Prepend the script's own directory so the module can be found whether the
+# newton_xlb_dem_utils.py lives in demo/newton_xlb_dem (parent directory of this script).
+# Prepend that parent directory so the module can be found whether the
 # demo is run directly (python demo/...) or via -m.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
 # ─── Import XLB + DEME (required for this three-way demo) ──────────────────
@@ -104,6 +104,15 @@ import xlb
 import DEME
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
+
+
+def _rotate_vector_by_quat_xyzw(quat_xyzw: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Rotate a 3D vector by a quaternion in [x, y, z, w] convention."""
+    q_xyz = quat_xyzw[:3]
+    q_w = quat_xyzw[3]
+    t = 2.0 * np.cross(q_xyz, vec)
+    return vec + q_w * t + np.cross(q_xyz, t)
+
 
 # ─── Joint-index remapping ─────────────────────────────────────────────────
 # The ANYmal C RL policy was trained with legs ordered [LF, RF, LH, RH] × [HAA, HFE, KFE]
@@ -220,6 +229,7 @@ FOOT_SHANK_NAMES = ["LF_SHANK", "RF_SHANK", "LH_SHANK", "RH_SHANK"]
 foot_tip_descriptors, foot_tip_sphere_radii = demo_utils.build_foot_tip_descriptors(
     builder_body_name_to_idx, builder_foot_spheres, FOOT_SHANK_NAMES
 )
+foot_tip_body_indices = [int(d["body_idx"]) for d in foot_tip_descriptors]
 
 # Visual meshes are nice, but for the production code we don't print them
 # demo_utils.print_foot_tip_descriptors(foot_tip_descriptors)
@@ -238,7 +248,7 @@ vis = None
 _vis_available = False
 
 if USE_OMNIVERSE_VISUALIZATION:
-    vis = mophi.OmniverseVisualizer(output_path="demo_newton_xlb_dem.usdc", fps=50.0)
+    vis = mophi.OmniverseVisualizer(output_path="demo_anymal_robot_multiphysics.usdc", fps=50.0)
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
@@ -524,6 +534,14 @@ _DEM_SPHERE_COLOR = [0.8, 0.4, 0.1]  # orange — DEM particle colour
 # Explicit Newton simulation step for this demo.
 SIM_DT = 1.0 / 200.0
 
+# ── DEME → Newton force feedback ─────────────────────────────────────────
+# Toggle whether DEME contact feedback affects Newton robot motion.
+# Off reproduces legacy behavior (DEME particles do not push back on the robot).
+ENABLE_DEME_FORCE_FEEDBACK = True
+# Scale applied to DEME-derived contact wrench before injecting into Newton.
+# Values >1 amplify interaction so stepping on rolling particles can destabilize gait.
+DEME_FORCE_FEEDBACK_SCALE = 10.0
+
 if _vis_available:
     # Radii and colours are constant throughout the simulation; allocate once.
     # The position array (_dem_sphere_pos_wp) is rebuilt from _dem_sphere_positions_np
@@ -549,7 +567,7 @@ deme_solver.SetErrorOutAvgContacts(500)
 # Load the shank
 ad_hoc_pos = [0.0, 0.0, 0.0]
 for i in range(len(foot_tip_sphere_radii)):
-    template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[0], wall_mat)
+    template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[i], wall_mat)
     shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
     shank.SetFamily(_FIXED_FAM)
     shank_trackers.append(deme_solver.Track(shank))
@@ -566,6 +584,8 @@ particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
 # Init vel
 particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
 particles_tracker = deme_solver.Track(particles)
+# pyDEME (older version) may have weird bin size adaptation mechanism, disable it
+deme_solver.DisableAdaptiveBinSize()
 # Init
 deme_solver.SetInitTimeStep(SIM_DT)
 deme_solver.Initialize()
@@ -611,6 +631,19 @@ command[0, 0] = 1.0  # walk forward (x-direction)
 
 print("[Policy] ANYmal C walking policy loaded.\n")
 
+# ─── DEME → Newton force feedback setup ────────────────────────────────────
+_ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
+_deme_contact_force_np = np.zeros((len(shank_trackers), 3), dtype=np.float32)
+_deme_contact_torque_np = np.zeros((len(shank_trackers), 3), dtype=np.float32)
+if ENABLE_DEME_FORCE_FEEDBACK:
+    _shank_mass_np = np.asarray([float(tracker.Mass()) for tracker in shank_trackers], dtype=np.float32)
+    _shank_moi_local_np = np.asarray(
+        [np.asarray(tracker.MOI(), dtype=np.float32) for tracker in shank_trackers], dtype=np.float32
+    )
+    print(f"[Coupling] DEME force feedback enabled (scale={DEME_FORCE_FEEDBACK_SCALE:.1f}).\n")
+else:
+    print("[Coupling] DEME force feedback disabled.\n")
+
 # ─── Co-simulation loop ───────────────────────────────────────────────────
 # The ANYmal C walking policy runs once per frame.
 # Each frame advances SIM_SUBSTEPS × SIM_DT seconds of physics.
@@ -625,7 +658,7 @@ sim_time = 0.0
 # When SAVE_MOVIE=True and imageio is missing, this demo exits with an
 # actionable install message instead of silently disabling recording.
 SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_newton_xlb_dem.mp4"
+MOVIE_OUTPUT_PATH = "demo_anymal_robot_multiphysics.mp4"
 MOVIE_FPS = 50  # frames per second for the output video
 
 _movie_writer = None
@@ -710,8 +743,27 @@ for frame in range(NUM_FRAMES):
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
+        if ENABLE_DEME_FORCE_FEEDBACK:
+            _ext_forces_np.fill(0.0)
+            for i, body_idx in enumerate(foot_tip_body_indices):
+                _ext_forces_np[body_idx, :3] += _deme_contact_force_np[i]
+                _ext_forces_np[body_idx, 3:6] += _deme_contact_torque_np[i]
+            coupler.set_newton_body_forces(wp.array(_ext_forces_np, dtype=wp.spatial_vector))
+
         coupler.step_newton()
         coupler.step_deme()
+
+        if ENABLE_DEME_FORCE_FEEDBACK:
+            for i, tracker in enumerate(shank_trackers):
+                _contact_acc_world_np = np.asarray(tracker.ContactAcc(), dtype=np.float32)
+                _deme_contact_force_np[i, :] = DEME_FORCE_FEEDBACK_SCALE * _shank_mass_np[i] * _contact_acc_world_np
+
+                _contact_ang_acc_local_np = np.asarray(tracker.ContactAngAccLocal(), dtype=np.float32)
+                _contact_torque_local_np = _shank_moi_local_np[i] * _contact_ang_acc_local_np
+                _shank_ori_q_np = np.asarray(tracker.OriQ(), dtype=np.float32)
+                _deme_contact_torque_np[i, :] = DEME_FORCE_FEEDBACK_SCALE * _rotate_vector_by_quat_xyzw(
+                    _shank_ori_q_np, _contact_torque_local_np
+                )
 
     sim_time += FRAME_DT
 

@@ -20,7 +20,7 @@ workflows, demos, and visualization/movie-recording paths:
 
 Notes:
 
-- `demo/newton_xlb_dem/demo_newton_xlb_dem.py` directly requires `torch`.
+- `demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py` directly requires `torch`.
 - Movie recording paths require `imageio` and `imageio-ffmpeg`.
 - When installing from a source checkout instead of a built wheel, install these
   packages alongside the solver packages that your workflow needs.
@@ -165,12 +165,19 @@ cmake -B build \
 cmake --build build
 
 # Run the Python demo (walking robot + XLB + DEME)
-PYTHONPATH=python python3 demo/newton_xlb_dem/demo_newton_xlb_dem.py
+PYTHONPATH=python python3 demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
+# Run the Newton-only walking baseline demo (flat ground + light dynamic boxes)
+PYTHONPATH=python python3 demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_newton_baseline.py
 # Run the DEME excavator demo (robotic arm with excavator + DEME force feedback)
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 # Run the Newton coarse-cube comparison demo (same arm policy, coarse rigid terrain)
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 ```
+
+The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
+runtime; it keeps the walking-policy setup on flat ground and adds only a few
+light Newton-managed contact boxes for baseline comparison against the
+multiphysics case.
 
 `NewtonXLBDEMCoupler` is a three-way co-simulation coupler:
 
