@@ -329,15 +329,14 @@ for frame in range(NUM_FRAMES):
         rearranged_act = torch.gather(act, 1, mujoco_to_lab_indices.unsqueeze(0))
         target_joint_q = joint_pos_initial + 0.5 * rearranged_act
         target_with_zeros = torch.cat([free_joint_zeros, target_joint_q.squeeze(0)])
-        control_joint_target_pos_t = wp.to_torch(newton_control.joint_target_pos)
-        if control_joint_target_pos_t.numel() < target_with_zeros.numel():
-            raise RuntimeError(
-                "newton_control.joint_target_pos is smaller than robot target vector "
-                f"({control_joint_target_pos_t.numel()} < {target_with_zeros.numel()})."
-            )
-        control_joint_target_pos_t[: target_with_zeros.numel()] = target_with_zeros
+        target_wp = wp.from_torch(target_with_zeros, dtype=wp.float32, requires_grad=False)
+        wp.copy(newton_control.joint_target_pos, target_wp)
 
     for _ in range(SIM_SUBSTEPS):
+        # Mirror the coupler's StepNewton() sequence: clear accumulated forces,
+        # run collision detection to generate ground/contact constraints, then step.
+        newton_state_0.clear_forces()
+        newton_model.collide(newton_state_0, newton_contacts)
         newton_solver.step(newton_state_0, newton_state_1, newton_control, newton_contacts, NEWTON_DT)
         newton_state_0, newton_state_1 = newton_state_1, newton_state_0
 
