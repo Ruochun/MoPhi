@@ -540,7 +540,7 @@ SIM_DT = 1.0 / 200.0
 ENABLE_DEME_FORCE_FEEDBACK = True
 # Scale applied to DEME-derived contact wrench before injecting into Newton.
 # Values >1 amplify interaction so stepping on rolling particles can destabilize gait.
-DEME_FORCE_FEEDBACK_SCALE = 22.0
+DEME_FORCE_FEEDBACK_SCALE = 10.0
 
 if _vis_available:
     # Radii and colours are constant throughout the simulation; allocate once.

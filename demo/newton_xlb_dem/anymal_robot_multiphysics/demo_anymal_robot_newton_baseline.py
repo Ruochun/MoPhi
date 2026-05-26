@@ -84,18 +84,16 @@ YAW_COMMAND = 0.0
 
 # ── Newton contact boxes ──────────────────────────────────────────────────
 # Toggle dynamic obstacle cubes and their contacts with the robot.
-ENABLE_DYNAMIC_CONTACT_BOXES = True
+ENABLE_DYNAMIC_CONTACT_BOXES = False
 # Boxes are intentionally light so the robot can hit them without losing gait.
-BOX_HALF_EXTENTS = np.array([0.08, 0.08, 0.12], dtype=np.float32)
+BOX_HALF_EXTENTS = np.array([0.08, 0.08, 0.04], dtype=np.float32)
 BOX_MASS = 0.25
 BOX_CONTACT_KE = 5.0e4
 BOX_CONTACT_KD = 5.0e2
 # Place cubes on a grid spanning the forward walking region (+y) with lateral spread in x.
 BOX_GRID_X_OFFSETS = (-0.35, 0.0, 0.35)
 BOX_GRID_Y_POSITIONS = (1.05, 1.55, 2.05, 2.55, 3.05)
-BOX_POSES = [
-    (float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_Y_POSITIONS for x in BOX_GRID_X_OFFSETS
-]
+BOX_POSES = [(float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_Y_POSITIONS for x in BOX_GRID_X_OFFSETS]
 
 # ── Visualization & output ────────────────────────────────────────────────
 USE_OMNIVERSE_VISUALIZATION = False
@@ -290,10 +288,7 @@ print("[Policy] ANYmal C walking policy loaded.\n")
 _movie_writer = None
 if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
     if find_spec("imageio") is None:
-        mophi.fatal(
-            "imageio is required when SAVE_MOVIE=True.\n"
-            "Install with:  pip install imageio imageio-ffmpeg"
-        )
+        mophi.fatal("imageio is required when SAVE_MOVIE=True.\n" "Install with:  pip install imageio imageio-ffmpeg")
     import imageio
 
     _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
