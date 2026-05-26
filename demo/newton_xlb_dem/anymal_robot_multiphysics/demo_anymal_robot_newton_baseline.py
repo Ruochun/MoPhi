@@ -90,12 +90,11 @@ BOX_HALF_EXTENTS = np.array([0.08, 0.08, 0.12], dtype=np.float32)
 BOX_MASS = 0.25
 BOX_CONTACT_KE = 5.0e4
 BOX_CONTACT_KD = 5.0e2
+# Place cubes on a grid spanning the forward walking region (+y) with lateral spread in x.
+BOX_GRID_X_OFFSETS = (-0.35, 0.0, 0.35)
+BOX_GRID_Y_POSITIONS = (1.05, 1.55, 2.05, 2.55, 3.05)
 BOX_POSES = [
-    (0.00, 1.05, float(BOX_HALF_EXTENTS[2])),
-    (-0.10, 1.55, float(BOX_HALF_EXTENTS[2])),
-    (0.12, 2.05, float(BOX_HALF_EXTENTS[2])),
-    (-0.04, 2.55, float(BOX_HALF_EXTENTS[2])),
-    (0.08, 3.05, float(BOX_HALF_EXTENTS[2])),
+    (float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_Y_POSITIONS for x in BOX_GRID_X_OFFSETS
 ]
 
 # ── Visualization & output ────────────────────────────────────────────────
@@ -204,7 +203,7 @@ for i in range(len(builder.joint_target_ke)):
     builder.joint_target_ke[i] = 150
     builder.joint_target_kd[i] = 5
 
-# Add optional light dynamic boxes along the forward path so the robot can bump them aside.
+# Add optional light dynamic boxes on a front-plane grid so the robot can bump some aside while walking forward.
 if ENABLE_DYNAMIC_CONTACT_BOXES:
     for i, (x, y, z) in enumerate(BOX_POSES):
         box_body = builder.add_link(
