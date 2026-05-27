@@ -257,10 +257,10 @@ if USE_OMNIVERSE_VISUALIZATION:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
         # Register visual mesh geometry so the USD scene shows the full robot shape
         # instead of only body-origin markers.
-        vis.set_robot_meshes(body_part_visual_descriptors)
+        vis.set_mesh_shapes(body_part_visual_descriptors)
         # Register box geometry so dynamic contact boxes appear in the USD scene.
         if _box_shape_descriptors:
-            vis.set_box_shapes(_box_shape_descriptors)
+            vis.set_cube_shapes(_box_shape_descriptors)
     else:
         print(
             "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"

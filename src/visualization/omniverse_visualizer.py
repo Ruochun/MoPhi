@@ -10,7 +10,7 @@ real-time OpenGL rendering and offline USD export by changing a single flag:
 
     if USE_OMNIVERSE_VISUALIZATION:
         vis = mophi.OmniverseVisualizer(output_path="scene.usdc", fps=50.0)
-        vis.set_robot_meshes(body_part_visual_descriptors)  # optional: full mesh geometry
+        vis.set_mesh_shapes(mesh_descriptors)  # optional: static UsdGeom.Mesh geometry
     else:
         vis = mophi.OpenGLVisualizer(newton_model)
 
@@ -31,7 +31,7 @@ real-time OpenGL rendering and offline USD export by changing a single flag:
 | Newton     | ``state.body_q[i]`` = 7 floats           | ``UsdGeom.Xform`` per body        |
 |            | ``[px,py,pz, qx,qy,qz,qw]`` (xyzw quat) | ``TranslateOp`` + ``OrientOp``    |
 |            | Visual mesh descriptors (optional, via   | ``UsdGeom.Mesh`` child prims      |
-|            | :meth:`set_robot_meshes`)                | under each body xform             |
+|            | :meth:`set_mesh_shapes`)                | under each body xform             |
 +------------+------------------------------------------+-----------------------------------+
 | Any solver | Named point cloud: positions + radii     | ``UsdGeom.PointInstancer`` per    |
 |            | (e.g. DEM particles, XLB streamlines)   | cloud name; unit-sphere prototype |
@@ -110,7 +110,7 @@ class OmniverseVisualizer:
         # name → last known point count (used to detect count changes between frames)
         self._instancer_sizes: dict = {}
         # visual mesh descriptors waiting to be baked into the stage
-        self._pending_robot_meshes: list = []
+        self._pending_mesh_shapes: list = []
 
         try:
             from pxr import Gf, Usd, UsdGeom, Vt  # noqa: F401
@@ -214,8 +214,8 @@ class OmniverseVisualizer:
             self._robot_translate_ops[i].Set(Gf.Vec3d(px, py, pz), time_code)
             self._robot_orient_ops[i].Set(Gf.Quatf(qw, qx, qy, qz), time_code)
 
-    def set_robot_meshes(self, visual_descriptors) -> None:
-        """Register visual mesh geometry for the robot bodies in the USD scene.
+    def set_mesh_shapes(self, mesh_descriptors) -> None:
+        """Register static ``UsdGeom.Mesh`` geometry for body xforms in the USD scene.
 
         Creates one ``UsdGeom.Mesh`` child prim per visual shape descriptor
         under the corresponding ``/World/Robot/Body_NNN`` xform.  Because the
@@ -233,8 +233,7 @@ class OmniverseVisualizer:
         skipped.
 
         Args:
-            visual_descriptors: List of dicts as returned by
-                ``demo_utils.collect_visual_body_part_descriptors()``.
+            mesh_descriptors: List of dicts describing mesh shapes.
                 Each dict must contain:
 
                 * ``"body_idx"``   – ``int`` row index into ``body_q``
@@ -244,11 +243,11 @@ class OmniverseVisualizer:
                 * ``"scale"``      – ``[sx, sy, sz]`` scale factors
                 * ``"body_name"``  – short link label (used only for debugging)
         """
-        self._pending_robot_meshes = list(visual_descriptors)
+        self._pending_mesh_shapes = list(mesh_descriptors)
         # If xforms already exist (log_state was already called), apply immediately.
         # Otherwise they will be applied inside _ensure_robot_xforms().
         if self._robot_translate_ops:
-            self._apply_robot_meshes()
+            self._apply_mesh_shapes()
 
     def log_points(self, name: str, positions, *, radii=None, colors=None) -> None:
         """Record a named point cloud as a USD ``UsdGeom.PointInstancer``.
@@ -548,13 +547,13 @@ class OmniverseVisualizer:
             xf = UsdGeom.Xform.Define(self._stage, f"/World/Robot/Body_{i:03d}")
             self._robot_translate_ops.append(xf.AddTranslateOp())
             self._robot_orient_ops.append(xf.AddOrientOp())
-        # Apply any mesh geometry that was registered via set_robot_meshes()
+        # Apply any mesh geometry that was registered via set_mesh_shapes()
         # before the first log_state() call.
-        if self._pending_robot_meshes:
-            self._apply_robot_meshes()
+        if self._pending_mesh_shapes:
+            self._apply_mesh_shapes()
 
-    def _apply_robot_meshes(self) -> None:
-        """Bake static ``UsdGeom.Mesh`` prims from ``_pending_robot_meshes`` into the stage.
+    def _apply_mesh_shapes(self) -> None:
+        """Bake static ``UsdGeom.Mesh`` prims from ``_pending_mesh_shapes`` into the stage.
 
         One child mesh prim is created per visual descriptor under its
         corresponding ``/World/Robot/Body_NNN`` xform.  The local shape
@@ -565,8 +564,8 @@ class OmniverseVisualizer:
         Vertices and triangle indices are set as static (time-independent)
         attributes; only the parent body xforms carry time-sampled data.
 
-        After baking, ``_pending_robot_meshes`` is cleared so meshes are
-        not re-created if :meth:`set_robot_meshes` is accidentally called twice.
+        After baking, ``_pending_mesh_shapes`` is cleared so meshes are
+        not re-created if :meth:`set_mesh_shapes` is accidentally called twice.
         """
         UsdGeom = self._UsdGeom
         Gf = self._Gf
@@ -576,7 +575,7 @@ class OmniverseVisualizer:
         # that each gets a unique, stable prim name (Mesh_00, Mesh_01, …).
         mesh_count_per_body: dict = {}
 
-        for d in self._pending_robot_meshes:
+        for d in self._pending_mesh_shapes:
             mesh = d.get("mesh")
             if mesh is None:
                 continue
@@ -627,4 +626,4 @@ class OmniverseVisualizer:
             # ── Display colour (muted steel-blue distinguishes robot from ground)
             usd_mesh.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.60, 0.63, 0.70)]))
 
-        self._pending_robot_meshes = []
+        self._pending_mesh_shapes = []
