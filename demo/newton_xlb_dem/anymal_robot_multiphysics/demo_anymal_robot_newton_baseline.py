@@ -172,6 +172,9 @@ builder.add_urdf(
 # Enlarge foot collision spheres for stable walking on the flat ground plane.
 demo_utils.scan_and_enlarge_foot_spheres(builder)
 
+# Collect visual mesh shapes for USD export before the builder is finalized.
+body_part_visual_descriptors = demo_utils.collect_visual_body_part_descriptors(builder)
+
 # Flat ground plane only — matching the walking policy's nominal environment.
 builder.add_ground_plane()
 
@@ -250,6 +253,9 @@ if USE_OMNIVERSE_VISUALIZATION:
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
+        # Register visual mesh geometry so the USD scene shows the full robot shape
+        # instead of only body-origin markers.
+        vis.set_robot_meshes(body_part_visual_descriptors)
     else:
         print(
             "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"
