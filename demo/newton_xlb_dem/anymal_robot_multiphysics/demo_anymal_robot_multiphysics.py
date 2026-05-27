@@ -252,6 +252,10 @@ if USE_OMNIVERSE_VISUALIZATION:
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
+        # Register visual mesh geometry so the USD scene shows the full robot shape
+        # (body, legs, etc.) instead of only body-origin markers.  The mesh prims are
+        # static children of the animated body xforms, so no per-frame cost is incurred.
+        vis.set_mesh_shapes(body_part_visual_descriptors)
     else:
         print(
             "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"

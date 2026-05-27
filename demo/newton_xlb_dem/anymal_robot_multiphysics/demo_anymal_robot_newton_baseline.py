@@ -172,6 +172,9 @@ builder.add_urdf(
 # Enlarge foot collision spheres for stable walking on the flat ground plane.
 demo_utils.scan_and_enlarge_foot_spheres(builder)
 
+# Collect visual mesh shapes for USD export before the builder is finalized.
+body_part_visual_descriptors = demo_utils.collect_visual_body_part_descriptors(builder)
+
 # Flat ground plane only — matching the walking policy's nominal environment.
 builder.add_ground_plane()
 
@@ -202,6 +205,7 @@ for i in range(len(builder.joint_target_ke)):
     builder.joint_target_kd[i] = 5
 
 # Add optional light dynamic boxes on a front-plane grid so the robot can bump some aside while walking forward.
+_box_shape_descriptors = []
 if ENABLE_DYNAMIC_CONTACT_BOXES:
     for i, (x, y, z) in enumerate(BOX_POSES):
         box_body = builder.add_link(
@@ -217,6 +221,7 @@ if ENABLE_DYNAMIC_CONTACT_BOXES:
         )
         _set_shape_contact_stiffness(builder, len(builder.shape_type) - 1, BOX_CONTACT_KE, BOX_CONTACT_KD)
         builder.add_articulation([builder.add_joint_free(box_body)], label=f"walking_box_{i}")
+        _box_shape_descriptors.append({"body_idx": box_body, "half_extents": list(BOX_HALF_EXTENTS)})
 
 newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
@@ -250,6 +255,12 @@ if USE_OMNIVERSE_VISUALIZATION:
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
+        # Register visual mesh geometry so the USD scene shows the full robot shape
+        # instead of only body-origin markers.
+        vis.set_mesh_shapes(body_part_visual_descriptors)
+        # Register box geometry so dynamic contact boxes appear in the USD scene.
+        if _box_shape_descriptors:
+            vis.set_cube_shapes(_box_shape_descriptors)
     else:
         print(
             "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"

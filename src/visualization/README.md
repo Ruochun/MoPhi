@@ -85,6 +85,7 @@ Every visualizer backend must implement the following methods:
 |--------|-----------|-------|
 | `is_running` | `() → bool` | `False` when the user closes the window (OpenGL) or `close()` is called (USD) |
 | `set_camera` | `(pos, pitch, yaw)` | No-op is acceptable if the backend has no interactive camera |
+| `set_mesh_shapes` | `(mesh_descriptors)` | Register static mesh-shape descriptors; bakes `UsdGeom.Mesh` prims under body xforms; no-op if `pxr` not available |
 | `begin_frame` | `(sim_time: float)` | Called once per simulation step before any `log_*` calls |
 | `log_state` | `(state)` | Render/record the rigid-body state from a physics solver |
 | `log_points` | `(name, positions, *, radii, colors)` | Render/record a named point cloud (spheres) |
