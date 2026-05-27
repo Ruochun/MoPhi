@@ -32,6 +32,8 @@ real-time OpenGL rendering and offline USD export by changing a single flag:
 |            | ``[px,py,pz, qx,qy,qz,qw]`` (xyzw quat) | ``TranslateOp`` + ``OrientOp``    |
 |            | Visual mesh descriptors (optional, via   | ``UsdGeom.Mesh`` child prims      |
 |            | :meth:`set_robot_meshes`)                | under each body xform             |
+|            | Box shape descriptors (optional, via     | ``UsdGeom.Cube`` child prims      |
+|            | :meth:`set_box_shapes`)                  | under each body xform             |
 +------------+------------------------------------------+-----------------------------------+
 | Any solver | Named point cloud: positions + radii     | ``UsdGeom.PointInstancer`` per    |
 |            | (e.g. DEM particles, XLB streamlines)   | cloud name; unit-sphere prototype |
@@ -111,6 +113,9 @@ class OmniverseVisualizer:
         self._instancer_sizes: dict = {}
         # visual mesh descriptors waiting to be baked into the stage
         self._pending_robot_meshes: list = []
+
+        # box shape descriptors waiting to be baked into the stage
+        self._pending_box_shapes: list = []
 
         try:
             from pxr import Gf, Usd, UsdGeom, Vt  # noqa: F401
@@ -249,6 +254,36 @@ class OmniverseVisualizer:
         # Otherwise they will be applied inside _ensure_robot_xforms().
         if self._robot_translate_ops:
             self._apply_robot_meshes()
+
+    def set_box_shapes(self, box_descriptors) -> None:
+        """Register box collision shapes for Newton bodies in the USD scene.
+
+        Creates one ``UsdGeom.Cube`` child prim per descriptor under the
+        corresponding ``/World/Robot/Body_NNN`` xform.  Because the body xforms
+        are animated every frame by :meth:`log_state`, the cube prims
+        automatically follow their parent body's motion without any per-frame
+        work.
+
+        This method may be called at any time before or after the simulation
+        loop starts.  Descriptors registered before the first :meth:`log_state`
+        call are stored and applied when :meth:`_ensure_robot_xforms` builds the
+        body-xform hierarchy.  Descriptors registered after xforms already exist
+        are applied immediately.
+
+        Args:
+            box_descriptors: List of dicts, one per box shape.  Each dict must
+                contain:
+
+                * ``"body_idx"``    – ``int`` row index into ``body_q``
+                * ``"half_extents"``– ``[hx, hy, hz]`` half-sizes in metres
+                * ``"local_xform"`` – ``wp.transform`` shape pose in body frame
+                  (optional; identity used if absent)
+        """
+        self._pending_box_shapes = list(box_descriptors)
+        # If xforms already exist (log_state was already called), apply immediately.
+        # Otherwise they will be applied inside _ensure_robot_xforms().
+        if self._robot_translate_ops:
+            self._apply_box_shapes()
 
     def log_points(self, name: str, positions, *, radii=None, colors=None) -> None:
         """Record a named point cloud as a USD ``UsdGeom.PointInstancer``.
@@ -552,6 +587,10 @@ class OmniverseVisualizer:
         # before the first log_state() call.
         if self._pending_robot_meshes:
             self._apply_robot_meshes()
+        # Apply any box shapes that were registered via set_box_shapes()
+        # before the first log_state() call.
+        if self._pending_box_shapes:
+            self._apply_box_shapes()
 
     def _apply_robot_meshes(self) -> None:
         """Bake static ``UsdGeom.Mesh`` prims from ``_pending_robot_meshes`` into the stage.
@@ -628,3 +667,53 @@ class OmniverseVisualizer:
             usd_mesh.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.60, 0.63, 0.70)]))
 
         self._pending_robot_meshes = []
+
+    def _apply_box_shapes(self) -> None:
+        """Bake static ``UsdGeom.Cube`` prims from ``_pending_box_shapes`` into the stage.
+
+        One child cube prim is created per box descriptor under its corresponding
+        ``/World/Robot/Body_NNN`` xform.  The cube's size is set to 1 and then
+        scaled by ``[2*hx, 2*hy, 2*hz]`` to match the box half-extents.  The
+        optional local transform is encoded as xformOps so the body xform remains
+        a pure animated translate+orient.
+
+        After baking, ``_pending_box_shapes`` is cleared so cubes are not
+        re-created if :meth:`set_box_shapes` is accidentally called twice.
+        """
+        UsdGeom = self._UsdGeom
+        Gf = self._Gf
+        Vt = self._Vt
+
+        # Track how many Cube prims have already been added under each body.
+        cube_count_per_body: dict = {}
+
+        for d in self._pending_box_shapes:
+            b_idx = d["body_idx"]
+            half_extents = d["half_extents"]
+            k = cube_count_per_body.get(b_idx, 0)
+            cube_count_per_body[b_idx] = k + 1
+
+            body_path = f"/World/Robot/Body_{b_idx:03d}"
+            cube_path = f"{body_path}/Box_{k:02d}"
+
+            usd_cube = UsdGeom.Cube.Define(self._stage, cube_path)
+            # Size=1 so the visual dimensions are fully controlled by the scale op below.
+            usd_cube.GetSizeAttr().Set(1.0)
+
+            # ── Local transform: T * R * S (translate outermost, scale innermost)
+            local_xform = d.get("local_xform")
+            xformable = UsdGeom.Xformable(usd_cube.GetPrim())
+            if local_xform is not None:
+                p = local_xform.p
+                q = local_xform.q
+                xformable.AddTranslateOp().Set(Gf.Vec3d(float(p[0]), float(p[1]), float(p[2])))
+                # Newton xyzw → USD w-first Quatf.
+                xformable.AddOrientOp().Set(Gf.Quatf(float(q[3]), float(q[0]), float(q[1]), float(q[2])))
+            # Scale a unit cube to match the box full extents (2 × half-extents).
+            hx, hy, hz = float(half_extents[0]), float(half_extents[1]), float(half_extents[2])
+            xformable.AddScaleOp().Set(Gf.Vec3f(2.0 * hx, 2.0 * hy, 2.0 * hz))
+
+            # ── Display colour (warm orange distinguishes boxes from the robot)
+            usd_cube.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(0.85, 0.55, 0.20)]))
+
+        self._pending_box_shapes = []

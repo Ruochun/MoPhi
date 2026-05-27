@@ -205,6 +205,7 @@ for i in range(len(builder.joint_target_ke)):
     builder.joint_target_kd[i] = 5
 
 # Add optional light dynamic boxes on a front-plane grid so the robot can bump some aside while walking forward.
+_box_shape_descriptors = []
 if ENABLE_DYNAMIC_CONTACT_BOXES:
     for i, (x, y, z) in enumerate(BOX_POSES):
         box_body = builder.add_link(
@@ -220,6 +221,7 @@ if ENABLE_DYNAMIC_CONTACT_BOXES:
         )
         _set_shape_contact_stiffness(builder, len(builder.shape_type) - 1, BOX_CONTACT_KE, BOX_CONTACT_KD)
         builder.add_articulation([builder.add_joint_free(box_body)], label=f"walking_box_{i}")
+        _box_shape_descriptors.append({"body_idx": box_body, "half_extents": list(BOX_HALF_EXTENTS)})
 
 newton_model = builder.finalize()
 newton_solver = newton.solvers.SolverMuJoCo(
@@ -256,6 +258,9 @@ if USE_OMNIVERSE_VISUALIZATION:
         # Register visual mesh geometry so the USD scene shows the full robot shape
         # instead of only body-origin markers.
         vis.set_robot_meshes(body_part_visual_descriptors)
+        # Register box geometry so dynamic contact boxes appear in the USD scene.
+        if _box_shape_descriptors:
+            vis.set_box_shapes(_box_shape_descriptors)
     else:
         print(
             "[USD] pxr (OpenUSD) is not installed — Omniverse export disabled.\n"
