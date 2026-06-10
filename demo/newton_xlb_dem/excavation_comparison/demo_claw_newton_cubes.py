@@ -17,6 +17,7 @@ or:
 """
 
 import os
+from pathlib import Path
 
 import numpy as np
 
@@ -56,7 +57,9 @@ NEWTON_WARMUP_FRAMES = 50
 # Save an mp4 so this reduced-representation run can be compared side-by-side
 # with the DEME-based baseline demo.
 SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_claw_newton_cubes.mp4"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
+MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_claw_newton_cubes.mp4"
 MOVIE_FPS = RENDER_FPS
 
 # ── Geometry and control policy ─────────────────────────────────────────────
@@ -312,6 +315,7 @@ _movie_writer = None
 if SAVE_MOVIE:
     import imageio  # pip install imageio imageio-ffmpeg
 
+    OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
     _movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
     print(f"[Movie] Recording simulation to '{MOVIE_OUTPUT_PATH}' at {MOVIE_FPS} fps.\n")
 

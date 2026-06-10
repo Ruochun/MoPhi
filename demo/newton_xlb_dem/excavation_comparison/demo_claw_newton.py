@@ -61,6 +61,7 @@ Or from the repository root after installing the mophi package:
 
 import os
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -190,8 +191,11 @@ USE_OMNIVERSE_VISUALIZATION = False
 # Set SAVE_MOVIE = True to record the rendered simulation to a video file
 # (requires: pip install imageio imageio-ffmpeg).
 SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_claw_newton.mp4"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
+MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_claw_newton.mp4"
 MOVIE_FPS = RENDER_FPS
+OMNIVERSE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_claw_newton.usdc"
 
 # ── Derived timing constants ──────────────────────────────────────────────
 FRAME_DT = 1.0 / RENDER_FPS
@@ -362,8 +366,9 @@ print(f"[Newton] UR10 model built: {newton_model.body_count} bodies, {newton_mod
 # USE_OMNIVERSE_VISUALIZATION is defined in the configuration block above.
 # The simulation loop body (begin_frame / log_state / end_frame)
 # is identical for both backends; only the constructor and close() differ.
+OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
 if USE_OMNIVERSE_VISUALIZATION:
-    vis = mophi.OmniverseVisualizer(output_path="demo_claw_newton.usdc", fps=float(SIM_FPS))
+    vis = mophi.OmniverseVisualizer(output_path=str(OMNIVERSE_OUTPUT_PATH), fps=float(SIM_FPS))
     if not vis.pxr_available:
         mophi.fatal(
             "pxr (OpenUSD) is not installed — Omniverse USD export unavailable.\n" "Install with:  pip install usd-core"

@@ -2,6 +2,11 @@
 
 This guide collects the user-facing build and run workflows for MoPhi.
 
+All demos write generated files by default under
+`<repository-root>/output/<demo-name>/`. The repository-level `output/`
+directory is git-ignored so movies, USD scenes, state snapshots, and other
+generated artifacts do not appear in normal staging operations.
+
 ---
 
 ## Python packages used by MoPhi workflows
@@ -12,6 +17,7 @@ workflows, demos, and visualization/movie-recording paths:
 
 - `torch`
 - `GitPython`
+- `PyYAML`
 - `pycollada`
 - `mujoco_warp==3.6.0`
 - `pyglet`
@@ -71,6 +77,7 @@ supported distributed install experience:
 - `xlb[cuda]`
 - `torch`
 - `GitPython`
+- `PyYAML`
 - `pycollada`
 - `mujoco_warp==3.6.0`
 - `pyglet`
@@ -105,7 +112,7 @@ python3.11 -m pip install dist/mophi-*.whl
 Installing from the wheel does **not** build MoPhi from source locally, but the
 wheel is **not** a fully self-contained offline installer. `pip` still needs to
 resolve the wheel's declared runtime dependencies (`newton`, `warp-lang`,
-`mujoco`, `deme`, `xlb[cuda]`, `torch`, `GitPython`, `pycollada`,
+`mujoco`, `deme`, `xlb[cuda]`, `torch`, `GitPython`, `PyYAML`, `pycollada`,
 `mujoco_warp`, `pyglet`, `imageio`, and `imageio-ffmpeg`) from either the
 internet or a local wheelhouse.
 
@@ -157,7 +164,7 @@ pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 ```bash
 # Install the required Python packages first
 pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme \
-    torch GitPython pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
+    torch GitPython PyYAML pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
 
 # Configure and build the coupler
 cmake -B build \
@@ -172,12 +179,48 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/anymal_robot_multiphysics/demo_any
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 # Run the Newton coarse-cube comparison demo (same arm policy, coarse rigid terrain)
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
+# Run the interactive Newton humanoid walking baseline
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 ```
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
 runtime; it keeps the walking-policy setup on flat ground and adds only a few
 light Newton-managed contact boxes for baseline comparison against the
 multiphysics case.
+
+The humanoid complex-environment demo starts from Newton 1.0.0's public
+keyboard-controlled Unitree G1 walking-policy example. On first run, Newton
+downloads the G1 model, policy, and YAML configuration from the public
+`newton-assets` repository; no manual asset placement is required. This first
+stage adds MoPhi-style configuration, movie output, run metadata, and a
+final-state snapshot. Complex terrain and interactively added collision objects
+are planned follow-on stages.
+
+To download the G1 assets before launching the demo and print their cache
+location:
+
+```bash
+python3 -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
+```
+
+Newton stores assets under the platform user cache by default, normally
+`~/.cache/newton/` on Linux. Set `NEWTON_CACHE_PATH` to choose a different
+persistent cache location:
+
+```bash
+NEWTON_CACHE_PATH=/path/to/newton-cache \
+python3 -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
+```
+
+If the asset download was interrupted and files such as `usd/g1_isaac.usd`
+are missing, download into a fresh cache directory:
+
+```bash
+export NEWTON_CACHE_PATH="$HOME/.cache/newton-mophi"
+python3 -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
+```
+
+Keep `NEWTON_CACHE_PATH` set when running the demo.
 
 `NewtonXLBDEMCoupler` is a three-way co-simulation coupler:
 

@@ -17,6 +17,7 @@ dependencies = [
     "xlb[cuda]",
     "torch",
     "GitPython",
+    "PyYAML",
     "pycollada",
     "mujoco_warp==3.6.0",
     "pyglet",

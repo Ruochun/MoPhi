@@ -27,6 +27,7 @@ Or from the repository root after installing the mophi package:
 import os
 import sys
 from importlib.util import find_spec
+from pathlib import Path
 
 import numpy as np
 
@@ -98,9 +99,11 @@ BOX_POSES = [(float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_
 # ── Visualization & output ────────────────────────────────────────────────
 USE_OMNIVERSE_VISUALIZATION = False
 SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_anymal_robot_newton_baseline.mp4"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
+MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_anymal_robot_newton_baseline.mp4"
 MOVIE_FPS = RENDER_FPS
-OMNIVERSE_OUTPUT_PATH = "demo_anymal_robot_newton_baseline.usdc"
+OMNIVERSE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_anymal_robot_newton_baseline.usdc"
 
 # ── Derived timing constants ──────────────────────────────────────────────
 FRAME_DT = 1.0 / RENDER_FPS
@@ -248,10 +251,11 @@ newton_contacts = newton_model.contacts()
 newton.eval_fk(newton_model, newton_model.joint_q, newton_model.joint_qd, newton_state_0)
 
 # ─── Visualization backend selection ─────────────────────────────────────
+OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
 vis = None
 _vis_available = False
 if USE_OMNIVERSE_VISUALIZATION:
-    vis = mophi.OmniverseVisualizer(output_path=OMNIVERSE_OUTPUT_PATH, fps=float(RENDER_FPS))
+    vis = mophi.OmniverseVisualizer(output_path=str(OMNIVERSE_OUTPUT_PATH), fps=float(RENDER_FPS))
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")

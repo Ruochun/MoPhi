@@ -243,6 +243,20 @@ Key rules for agents:
 
 Use these rules for all demo simulation loops.
 
+### Document new user-facing scripts
+
+- Whenever a new user-facing runnable script is added, including a demo, add
+  its prerequisites, purpose, and run command to `docs/how-to.md` in the same
+  change.
+
+### Store generated demo output under the repository output directory
+
+- Every demo must write generated files by default under
+  `<repository-root>/output/<demo-name>/`, where `<demo-name>` identifies the
+  runnable script (for example `output/demo_claw_newton/`).
+- The repository-level `output/` directory is git-ignored. Do not add
+  per-demo generated-output directories beside source files.
+
 ### Physics step sizes must be explicit and decoupled from render frame rate
 
 - Define each physics system step size as an explicit user-modifiable constant

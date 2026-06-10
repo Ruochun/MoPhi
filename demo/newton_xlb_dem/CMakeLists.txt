@@ -9,6 +9,7 @@
 #   python demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_newton_baseline.py
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
+#   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 #
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
@@ -61,6 +62,17 @@ add_custom_target(demo_claw_newton_cubes
     VERBATIM
 )
 
+# ── Custom target: interactive humanoid complex-environment baseline ──────────
+# Adds a `demo_humanoid_complex_environment` build target.  Run with:
+#   cmake --build <build-dir> --target demo_humanoid_complex_environment
+add_custom_target(demo_humanoid_complex_environment
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/humanoid_complex_environment/demo_humanoid_complex_environment.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running interactive Newton humanoid complex-environment baseline demo"
+    VERBATIM
+)
+
 # ── Installation ───────────────────────────────────────────────────────────────
 # newton_xlb_dem_utils.py is a pre-existing helper module imported by
 # demo_anymal_robot_multiphysics.py; it is included here so that the install tree is
@@ -83,4 +95,11 @@ install(
         excavation_comparison/demo_claw_newton.py
         excavation_comparison/demo_claw_newton_cubes.py
     DESTINATION demo/newton_xlb_dem/excavation_comparison
+)
+
+install(
+    FILES
+        humanoid_complex_environment/demo_humanoid_complex_environment.py
+        humanoid_complex_environment/README.md
+    DESTINATION demo/newton_xlb_dem/humanoid_complex_environment
 )

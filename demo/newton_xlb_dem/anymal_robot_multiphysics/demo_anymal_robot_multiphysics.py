@@ -51,6 +51,7 @@ Or from the repository root after installing the mophi package:
 import os
 import sys
 from importlib.util import find_spec
+from pathlib import Path
 
 import numpy as np
 
@@ -243,12 +244,16 @@ foot_tip_body_indices = [int(d["body_idx"]) for d in foot_tip_descriptors]
 # The simulation loop body (begin_frame / log_state / log_points / end_frame)
 # is identical for both backends; only the constructor and close() differ.
 USE_OMNIVERSE_VISUALIZATION = False
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
+OMNIVERSE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_anymal_robot_multiphysics.usdc"
 
 vis = None
 _vis_available = False
 
+OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
 if USE_OMNIVERSE_VISUALIZATION:
-    vis = mophi.OmniverseVisualizer(output_path="demo_anymal_robot_multiphysics.usdc", fps=50.0)
+    vis = mophi.OmniverseVisualizer(output_path=str(OMNIVERSE_OUTPUT_PATH), fps=50.0)
     _vis_available = vis.pxr_available
     if _vis_available:
         print("[USD] pxr (OpenUSD) available — Omniverse USD export enabled.\n")
@@ -662,7 +667,7 @@ sim_time = 0.0
 # When SAVE_MOVIE=True and imageio is missing, this demo exits with an
 # actionable install message instead of silently disabling recording.
 SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = "demo_anymal_robot_multiphysics.mp4"
+MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_anymal_robot_multiphysics.mp4"
 MOVIE_FPS = 50  # frames per second for the output video
 
 _movie_writer = None
