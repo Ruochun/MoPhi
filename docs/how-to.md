@@ -7,6 +7,10 @@ All demos write generated files by default under
 directory is git-ignored so movies, USD scenes, state snapshots, and other
 generated artifacts do not appear in normal staging operations.
 
+Visual demos include a persistent world reference: RGB segments show the
+positive X, Y, and Z directions, and a yellow endpoint-marked bar shows one
+metre of world-space length.
+
 ---
 
 ## Python packages used by MoPhi workflows
@@ -192,9 +196,12 @@ The humanoid complex-environment demo starts from Newton 1.0.0's public
 keyboard-controlled Unitree G1 walking-policy example. On first run, Newton
 downloads the G1 model, policy, and YAML configuration from the public
 `newton-assets` repository; no manual asset placement is required. This first
-stage adds MoPhi-style configuration, movie output, run metadata, and a
-final-state snapshot. Complex terrain and interactively added collision objects
-are planned follow-on stages.
+stage generates convex Newton contact proxies from the G1's visual body meshes
+and places lightweight dynamic boxes in its walking path. It also adds
+MoPhi-style configuration, movie output, run metadata, and a final-state
+snapshot. Press `I` in the viewer to walk forward into the boxes and observe
+body-object contact. Interactively added collision objects are planned
+follow-on stages.
 
 To download the G1 assets before launching the demo and print their cache
 location:

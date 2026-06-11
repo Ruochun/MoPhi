@@ -99,6 +99,8 @@ BOX_POSES = [(float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_
 # ── Visualization & output ────────────────────────────────────────────────
 USE_OMNIVERSE_VISUALIZATION = False
 SAVE_MOVIE = True
+REFERENCE_AXIS_ORIGIN = (0.8, -0.9, 0.02)
+REFERENCE_SCALE_BAR_CENTER = (0.0, -0.9, 0.06)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
 MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_anymal_robot_newton_baseline.mp4"
@@ -283,6 +285,12 @@ if _vis_available and not USE_OMNIVERSE_VISUALIZATION:
         pos=wp.vec3(_init_base_pos[0], _init_base_pos[1] - 6.0, _init_base_pos[2] + 2.0),
         pitch=-10.0,
         yaw=90.0,
+    )
+if _vis_available:
+    mophi.log_orientation_and_scale_reference(
+        vis,
+        axis_origin=REFERENCE_AXIS_ORIGIN,
+        scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
     )
 
 # ─── Load the ANYmal C walking policy ────────────────────────────────────

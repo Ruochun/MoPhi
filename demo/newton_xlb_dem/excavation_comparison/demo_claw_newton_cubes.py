@@ -57,6 +57,8 @@ NEWTON_WARMUP_FRAMES = 50
 # Save an mp4 so this reduced-representation run can be compared side-by-side
 # with the DEME-based baseline demo.
 SAVE_MOVIE = True
+REFERENCE_AXIS_ORIGIN = (0.8, -0.9, 0.02)
+REFERENCE_SCALE_BAR_CENTER = (0.0, -0.9, 0.06)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
 MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_claw_newton_cubes.mp4"
@@ -253,6 +255,11 @@ vis.set_camera(
     pos=wp.vec3(3.0, -3.0, 2.5),
     pitch=-25.0,
     yaw=135.0,
+)
+mophi.log_orientation_and_scale_reference(
+    vis,
+    axis_origin=REFERENCE_AXIS_ORIGIN,
+    scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
 )
 
 coupler = mophi.NewtonXLBDEMCoupler()

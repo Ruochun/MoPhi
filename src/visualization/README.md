@@ -90,8 +90,8 @@ Every visualizer backend must implement the following methods:
 | `log_state` | `(state)` | Render/record the rigid-body state from a physics solver |
 | `log_points` | `(name, positions, *, radii, colors)` | Render/record a named point cloud (spheres) |
 | `log_clumps` | `(name, centers, orientations, sphere_radii, sphere_offsets, *, colors)` | Render/record DEME clumps as overlapping-sphere assemblies; expands template to world-space spheres and delegates to `log_points` |
-| `log_arrows` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named arrows (coordinate axes, vector fields); no-op for USD backend |
-| `log_lines` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named line segments (scale bars, grids); no-op for USD backend |
+| `log_arrows` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named arrows (coordinate axes, vector fields); USD records sampled colored segments |
+| `log_lines` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named line segments (scale bars, grids); USD records sampled colored segments |
 | `end_frame` | `()` | Finalize the current frame |
 | `get_frame` | `() → array | None` | Return the rendered frame (or `None` if unsupported) |
 | `close` | `()` | Release all resources / save the output file |

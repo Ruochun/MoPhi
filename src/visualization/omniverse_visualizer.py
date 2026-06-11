@@ -366,21 +366,8 @@ class OmniverseVisualizer:
                 pass
 
     def log_arrows(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
-        """No-op for the USD backend — accepted for API compatibility.
-
-        Arrow overlays (e.g. coordinate-axis indicators) are not exported to
-        the USD scene.  The argument signature matches
-        :meth:`~mophi.OpenGLVisualizer.log_arrows` so that demos can switch
-        backends without changing the simulation loop.
-
-        Args:
-            name:   Unique string identifier (ignored).
-            starts: Arrow tail positions (ignored).
-            ends:   Arrow tip positions (ignored).
-            colors: Arrow colours (ignored).
-            width:  Reserved (ignored).
-            hidden: Visibility flag (ignored).
-        """
+        """Record arrows as colored line segments in the USD scene."""
+        self.log_lines(name, starts, ends, colors, width=width, hidden=hidden)
 
     def log_clumps(
         self,
@@ -447,21 +434,32 @@ class OmniverseVisualizer:
         self.log_points(name, pos_flat, radii=radii_flat, colors=colors_flat)
 
     def log_lines(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
-        """No-op for the USD backend — accepted for API compatibility.
+        """Record line segments as sampled sphere instances in the USD scene."""
+        if hidden or not self._pxr_available:
+            return
+        if self._stage is None:
+            self._create_stage()
 
-        Line overlays (e.g. scale bars) are not exported to the USD scene.
-        The argument signature matches
-        :meth:`~mophi.OpenGLVisualizer.log_lines` so that demos can switch
-        backends without changing the simulation loop.
+        starts_np = starts.numpy() if hasattr(starts, "numpy") else np.asarray(starts, dtype=np.float32)
+        ends_np = ends.numpy() if hasattr(ends, "numpy") else np.asarray(ends, dtype=np.float32)
+        colors_np = colors.numpy() if hasattr(colors, "numpy") else np.asarray(colors, dtype=np.float32)
+        starts_np = np.asarray(starts_np, dtype=np.float32).reshape(-1, 3)
+        ends_np = np.asarray(ends_np, dtype=np.float32).reshape(-1, 3)
+        colors_np = np.asarray(colors_np, dtype=np.float32).reshape(-1, 3)
+        if len(starts_np) == 0:
+            return
+        if len(colors_np) == 1:
+            colors_np = np.repeat(colors_np, len(starts_np), axis=0)
 
-        Args:
-            name:   Unique string identifier (ignored).
-            starts: Line start positions (ignored).
-            ends:   Line end positions (ignored).
-            colors: Line colours (ignored).
-            width:  Reserved (ignored).
-            hidden: Visibility flag (ignored).
-        """
+        samples_per_line = 24
+        interpolation = np.linspace(0.0, 1.0, samples_per_line, dtype=np.float32)
+        positions = (
+            starts_np[:, np.newaxis, :] * (1.0 - interpolation[np.newaxis, :, np.newaxis])
+            + ends_np[:, np.newaxis, :] * interpolation[np.newaxis, :, np.newaxis]
+        ).reshape(-1, 3)
+        radii = np.full(len(positions), max(float(width), 0.005), dtype=np.float32)
+        sampled_colors = np.repeat(colors_np, samples_per_line, axis=0)
+        self.log_points(name, positions, radii=radii, colors=sampled_colors)
 
     def end_frame(self) -> None:
         """No-op for the USD backend — accepted for API compatibility.

@@ -257,6 +257,15 @@ Use these rules for all demo simulation loops.
 - The repository-level `output/` directory is git-ignored. Do not add
   per-demo generated-output directories beside source files.
 
+### Show world orientation and metric scale in visual demos
+
+- New demos with visualization should call
+  `mophi.log_orientation_and_scale_reference(...)` so users can see the world
+  XYZ orientation and a one-metre reference object.
+- Define scene-appropriate axis-origin and scale-bar-center constants in the
+  demo configuration block and pass them explicitly to the helper. Place the
+  reference where it remains visible without obscuring the primary simulation.
+
 ### Physics step sizes must be explicit and decoupled from render frame rate
 
 - Define each physics system step size as an explicit user-modifiable constant

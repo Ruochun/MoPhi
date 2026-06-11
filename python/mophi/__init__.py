@@ -76,6 +76,14 @@ try:
 except ImportError:
     pass
 
+# Shared visualization helpers.
+try:
+    from .utils.vis_utils import log_orientation_and_scale_reference  # noqa: F401
+
+    __all__.append("log_orientation_and_scale_reference")
+except ImportError:
+    pass
+
 # Package-version helper utilities.
 try:
     from .utils.version_checker import (  # noqa: F401

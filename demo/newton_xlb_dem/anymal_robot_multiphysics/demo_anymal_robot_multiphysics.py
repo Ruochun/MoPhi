@@ -244,6 +244,8 @@ foot_tip_body_indices = [int(d["body_idx"]) for d in foot_tip_descriptors]
 # The simulation loop body (begin_frame / log_state / log_points / end_frame)
 # is identical for both backends; only the constructor and close() differ.
 USE_OMNIVERSE_VISUALIZATION = False
+REFERENCE_AXIS_ORIGIN = (0.8, -0.9, 0.02)
+REFERENCE_SCALE_BAR_CENTER = (0.0, -0.9, 0.06)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
 OMNIVERSE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_anymal_robot_multiphysics.usdc"
@@ -271,6 +273,13 @@ else:
     vis = mophi.create_opengl_visualizer_or_fatal(newton_model)
     _vis_available = True
     print("[Viewer] MoPhi OpenGL visualization window opened.\n")
+
+if _vis_available:
+    mophi.log_orientation_and_scale_reference(
+        vis,
+        axis_origin=REFERENCE_AXIS_ORIGIN,
+        scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
+    )
 
 # ─── XLB real LBM simulation setup ───────────────────────────────────────────
 # Configures a real 3-D incompressible Navier-Stokes LBM simulation using XLB.

@@ -4,9 +4,9 @@ This demo adapts Newton 1.0.0's public ``example_robot_policy.py`` Unitree G1
 walking baseline for MoPhi. Newton downloads the robot model, policy, and YAML
 configuration from the public ``newton-assets`` repository on first run.
 
-The demo adds a finite run, movie generation, run metadata, and a final-state
-snapshot. Complex terrain and objects added interactively during simulation
-are planned follow-on stages.
+The demo uses convex contact proxies generated from the robot's visual body
+meshes and places lightweight dynamic boxes in its walking path. It also adds
+a finite run, movie generation, run metadata, and a final-state snapshot.
 
 Keyboard controls
 -----------------
@@ -31,12 +31,15 @@ from pathlib import Path
 
 import imageio.v2 as imageio
 import numpy as np
+import torch
 import warp as wp
 import yaml
 
 import mophi
 import newton
+import newton.examples
 import newton.utils
+from newton import JointTargetMode, ShapeFlags
 from newton.examples.robot import example_robot_policy as newton_robot_policy
 
 # =============================================================================
@@ -51,12 +54,26 @@ NUM_FRAMES = 500
 
 # -- Robot --------------------------------------------------------------------
 ROBOT_NAME = "g1_29dof"
+USE_ROBOT_VISUAL_MESH_COLLIDERS = True
+ROBOT_MESH_APPROXIMATION_METHOD = "convex_hull"
+
+# -- Contact objects -----------------------------------------------------------
+ENABLE_DYNAMIC_CONTACT_BOXES = True
+BOX_HALF_EXTENTS = np.array([0.16, 0.16, 0.16], dtype=np.float32)
+BOX_MASS = 0.5
+BOX_GRID_X_OFFSETS = (-0.35, 0.0, 0.35)
+BOX_GRID_Y_POSITIONS = (0.9, 1.45, 2.0)
+BOX_POSES = [(float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_Y_POSITIONS for x in BOX_GRID_X_OFFSETS]
+MAX_CONTACT_COUNT = 2048
+MAX_CONSTRAINT_COUNT = 4096
 
 # -- Visualization ------------------------------------------------------------
 USE_OMNIVERSE_VISUALIZATION = False
 CAMERA_POSITION = (3.0, -4.0, 2.0)
 CAMERA_PITCH = -12.0
 CAMERA_YAW = 135.0
+REFERENCE_AXIS_ORIGIN = (0.8, -0.8, 0.02)
+REFERENCE_SCALE_BAR_CENTER = (0.0, -0.8, 0.06)
 
 # -- Output -------------------------------------------------------------------
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -75,6 +92,233 @@ if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
 
 
+def _replace_robot_colliders_with_visual_mesh_proxies(builder: newton.ModelBuilder) -> int:
+    """Replace authored robot colliders with convex proxies derived from visual meshes."""
+    robot_body_count = len(builder.body_label)
+    original_shape_count = len(builder.shape_type)
+    visual_mesh_indices = [
+        shape_idx
+        for shape_idx in range(original_shape_count)
+        if 0 <= builder.shape_body[shape_idx] < robot_body_count
+        and builder.shape_type[shape_idx] == newton.GeoType.MESH
+        and builder.shape_flags[shape_idx] & ShapeFlags.VISIBLE
+        and not builder.shape_flags[shape_idx] & ShapeFlags.COLLIDE_SHAPES
+    ]
+
+    for shape_idx in range(original_shape_count):
+        body_idx = builder.shape_body[shape_idx]
+        if body_idx < 0 or body_idx >= robot_body_count:
+            continue
+        flags = builder.shape_flags[shape_idx]
+        if flags & ShapeFlags.COLLIDE_SHAPES:
+            builder.shape_flags[shape_idx] &= ~ShapeFlags.COLLIDE_SHAPES
+
+    mesh_proxy_indices = []
+    for shape_idx in visual_mesh_indices:
+        body_idx = builder.shape_body[shape_idx]
+        proxy_idx = builder.add_shape_mesh(
+            body=body_idx,
+            xform=builder.shape_transform[shape_idx],
+            mesh=builder.shape_source[shape_idx],
+            scale=builder.shape_scale[shape_idx],
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                ke=builder.default_shape_cfg.ke,
+                kd=builder.default_shape_cfg.kd,
+                kf=builder.default_shape_cfg.kf,
+                mu=builder.default_shape_cfg.mu,
+                is_solid=builder.shape_is_solid[shape_idx],
+                has_shape_collision=True,
+                has_particle_collision=True,
+                is_visible=False,
+            ),
+            label=f"{builder.shape_label[shape_idx]}_contact_proxy",
+        )
+        mesh_proxy_indices.append(proxy_idx)
+
+    remeshed_indices = builder.approximate_meshes(
+        method=ROBOT_MESH_APPROXIMATION_METHOD,
+        shape_indices=mesh_proxy_indices,
+    )
+    return len(remeshed_indices)
+
+
+def _add_dynamic_contact_boxes(builder: newton.ModelBuilder) -> int:
+    """Add lightweight free bodies that visibly demonstrate robot contact."""
+    if not ENABLE_DYNAMIC_CONTACT_BOXES:
+        return 0
+
+    for box_idx, (x, y, z) in enumerate(BOX_POSES):
+        body_idx = builder.add_link(
+            xform=wp.transform(wp.vec3(x, y, z), wp.quat_identity()),
+            mass=BOX_MASS,
+            label=f"contact_box_{box_idx}",
+        )
+        builder.add_shape_box(
+            body_idx,
+            hx=float(BOX_HALF_EXTENTS[0]),
+            hy=float(BOX_HALF_EXTENTS[1]),
+            hz=float(BOX_HALF_EXTENTS[2]),
+        )
+        builder.add_articulation([builder.add_joint_free(body_idx)], label=f"contact_box_{box_idx}")
+    return len(BOX_POSES)
+
+
+class HumanoidContactExample(newton_robot_policy.Example):
+    """Newton's G1 policy example with mesh-derived robot contact proxies and boxes."""
+
+    def __init__(
+        self,
+        viewer,
+        robot_config,
+        config,
+        asset_directory: str,
+        mjc_to_physx: list[int],
+        physx_to_mjc: list[int],
+    ):
+        self.frame_dt = NEWTON_DT
+        self.decimation = 4
+        self.cycle_time = self.frame_dt * self.decimation
+        self.sim_time = 0.0
+        self.sim_step = 0
+        self.sim_substeps = 1
+        self.sim_dt = self.frame_dt
+        self.viewer = viewer
+        self.use_mujoco = False
+        self.config = config
+        self.robot_config = robot_config
+        self.device = wp.get_device()
+        self.torch_device = "cuda" if self.device.is_cuda else "cpu"
+
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
+        builder.default_joint_cfg = newton.ModelBuilder.JointDofConfig(
+            armature=0.1,
+            limit_ke=1.0e2,
+            limit_kd=1.0e0,
+        )
+        builder.default_shape_cfg.ke = 5.0e4
+        builder.default_shape_cfg.kd = 5.0e2
+        builder.default_shape_cfg.kf = 1.0e3
+        builder.default_shape_cfg.mu = 0.75
+
+        builder.add_usd(
+            newton.examples.get_asset(asset_directory + "/" + robot_config.asset_path),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 0.8)),
+            collapse_fixed_joints=False,
+            enable_self_collisions=False,
+            joint_ordering="dfs",
+            hide_collision_shapes=True,
+        )
+        self.robot_mesh_proxy_count = 0
+        if USE_ROBOT_VISUAL_MESH_COLLIDERS:
+            self.robot_mesh_proxy_count = _replace_robot_colliders_with_visual_mesh_proxies(builder)
+        else:
+            builder.approximate_meshes(ROBOT_MESH_APPROXIMATION_METHOD)
+
+        builder.add_ground_plane()
+        self.contact_box_count = _add_dynamic_contact_boxes(builder)
+
+        builder.joint_q[:3] = [0.0, 0.0, 0.76]
+        builder.joint_q[3:7] = [0.0, 0.0, 0.7071, 0.7071]
+        builder.joint_q[7 : 7 + len(config["mjw_joint_pos"])] = config["mjw_joint_pos"]
+
+        for joint_idx in range(len(config["mjw_joint_stiffness"])):
+            builder.joint_target_ke[joint_idx + 6] = config["mjw_joint_stiffness"][joint_idx]
+            builder.joint_target_kd[joint_idx + 6] = config["mjw_joint_damping"][joint_idx]
+            builder.joint_armature[joint_idx + 6] = config["mjw_joint_armature"][joint_idx]
+            builder.joint_target_mode[joint_idx + 6] = int(JointTargetMode.POSITION)
+
+        self.model = builder.finalize()
+        self.model.set_gravity((0.0, 0.0, -9.81))
+        self.solver = newton.solvers.SolverMuJoCo(
+            self.model,
+            use_mujoco_cpu=self.use_mujoco,
+            solver="newton",
+            nconmax=MAX_CONTACT_COUNT,
+            njmax=MAX_CONSTRAINT_COUNT,
+        )
+
+        self.state_temp = self.model.state()
+        self.state_0 = self.model.state()
+        self.state_1 = self.model.state()
+        self.control = self.model.control()
+        self.contacts = newton.Contacts(self.solver.get_max_contact_count(), 0)
+        self.robot_joint_q_count = 7 + config["num_dofs"]
+        self.robot_joint_qd_count = 6 + config["num_dofs"]
+        self.robot_joint_target_count = 6 + config["num_dofs"]
+        self.viewer.set_model(self.model)
+        self.viewer.vsync = True
+        newton.eval_fk(self.model, self.state_0.joint_q, self.state_0.joint_qd, self.state_0)
+        self._initial_joint_q = wp.clone(self.state_0.joint_q)
+        self._initial_joint_qd = wp.clone(self.state_0.joint_qd)
+
+        self.physx_to_mjc_indices = torch.tensor(physx_to_mjc, device=self.torch_device, dtype=torch.long)
+        self.mjc_to_physx_indices = torch.tensor(mjc_to_physx, device=self.torch_device, dtype=torch.long)
+        self.gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=self.torch_device, dtype=torch.float32).unsqueeze(0)
+        self.command = torch.zeros((1, 3), device=self.torch_device, dtype=torch.float32)
+        self._reset_key_prev = False
+        self.policy = None
+        self.joint_pos_initial = None
+        self.act = None
+        self.rearranged_act = None
+        self.capture()
+        # CUDA graph capture replaces joint_target_pos with a robot-only buffer.
+        # Allocate against the final control shape so CPU and CUDA copies agree.
+        self.full_joint_target_pos = torch.zeros(
+            self.control.joint_target_pos.shape[0],
+            device=self.torch_device,
+            dtype=torch.float32,
+        )
+
+    def step(self):
+        """Advance the inherited policy while excluding free-box coordinates from its inputs."""
+        if hasattr(self.viewer, "is_key_down"):
+            forward = 1.0 if self.viewer.is_key_down("i") else (-1.0 if self.viewer.is_key_down("k") else 0.0)
+            lateral = 0.5 if self.viewer.is_key_down("j") else (-0.5 if self.viewer.is_key_down("l") else 0.0)
+            rotation = 1.0 if self.viewer.is_key_down("u") else (-1.0 if self.viewer.is_key_down("o") else 0.0)
+            self.command[0, 0] = float(forward)
+            self.command[0, 1] = float(lateral)
+            self.command[0, 2] = float(rotation)
+            reset_down = bool(self.viewer.is_key_down("p"))
+            if reset_down and not self._reset_key_prev:
+                self.reset()
+            self._reset_key_prev = reset_down
+
+        policy_state = newton.State()
+        policy_state.joint_q = self.state_0.joint_q[: self.robot_joint_q_count]
+        policy_state.joint_qd = self.state_0.joint_qd[: self.robot_joint_qd_count]
+        observation = newton_robot_policy.compute_obs(
+            self.act,
+            policy_state,
+            self.joint_pos_initial,
+            self.torch_device,
+            self.physx_to_mjc_indices,
+            self.gravity_vec,
+            self.command,
+        )
+        with torch.no_grad():
+            self.act = self.policy(observation)
+            self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
+            robot_target = self.joint_pos_initial + self.config["action_scale"] * self.rearranged_act
+            robot_target_with_zeros = torch.cat(
+                [torch.zeros(6, device=self.torch_device, dtype=torch.float32), robot_target.squeeze(0)]
+            )
+            self.full_joint_target_pos.zero_()
+            self.full_joint_target_pos[: self.robot_joint_target_count] = robot_target_with_zeros
+            target_wp = wp.from_torch(self.full_joint_target_pos, dtype=wp.float32, requires_grad=False)
+            wp.copy(self.control.joint_target_pos, target_wp)
+
+        for _ in range(self.decimation):
+            if self.graph:
+                wp.capture_launch(self.graph)
+            else:
+                self.simulate()
+
+        self.sim_time += self.frame_dt
+        self.sim_step += 1
+
+
 def _write_run_metadata(frame_count: int, asset_directory: Path) -> None:
     metadata = {
         "baseline": "newton.examples.robot.example_robot_policy",
@@ -86,6 +330,8 @@ def _write_run_metadata(frame_count: int, asset_directory: Path) -> None:
         "requested_frames": NUM_FRAMES,
         "completed_frames": frame_count,
         "sim_duration": frame_count * FRAME_DT,
+        "use_robot_visual_mesh_colliders": USE_ROBOT_VISUAL_MESH_COLLIDERS,
+        "dynamic_contact_box_count": len(BOX_POSES) if ENABLE_DYNAMIC_CONTACT_BOXES else 0,
     }
     RUN_METADATA_OUTPUT_PATH.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
 
@@ -141,7 +387,7 @@ def main() -> None:
 
     dof_indices = list(range(config["num_dofs"]))
     viewer = newton.viewer.ViewerGL()
-    example = newton_robot_policy.Example(
+    example = HumanoidContactExample(
         viewer,
         robot_config,
         config,
@@ -153,13 +399,22 @@ def main() -> None:
         example,
         str(policy_path),
         config["num_dofs"],
-        slice(7, None),
+        slice(7, 7 + config["num_dofs"]),
     )
     if not np.isclose(example.frame_dt, NEWTON_DT, rtol=0.0, atol=1.0e-12):
         mophi.fatal(f"Newton G1 policy timestep changed: expected {NEWTON_DT}, got {example.frame_dt}.")
+    print(
+        f"[Contact] Created {example.robot_mesh_proxy_count} mesh-derived robot contact proxies "
+        f"and {example.contact_box_count} dynamic boxes."
+    )
 
     if hasattr(viewer, "set_camera"):
         viewer.set_camera(wp.vec3(*CAMERA_POSITION), CAMERA_PITCH, CAMERA_YAW)
+    mophi.log_orientation_and_scale_reference(
+        viewer,
+        axis_origin=REFERENCE_AXIS_ORIGIN,
+        scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
+    )
 
     movie_writer = None
     if SAVE_MOVIE:

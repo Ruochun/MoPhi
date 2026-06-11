@@ -187,6 +187,8 @@ ENABLE_DEME_FORCE_FEEDBACK = True
 # (requires: pip install usd-core).  False uses Newton's real-time OpenGL window.
 # The simulation loop body is identical for both backends.
 USE_OMNIVERSE_VISUALIZATION = False
+REFERENCE_AXIS_ORIGIN = (0.8, -0.9, 0.02)
+REFERENCE_SCALE_BAR_CENTER = (0.0, -0.9, 0.06)
 
 # Set SAVE_MOVIE = True to record the rendered simulation to a video file
 # (requires: pip install imageio imageio-ffmpeg).
@@ -658,56 +660,11 @@ if not USE_OMNIVERSE_VISUALIZATION:
         yaw=135.0,
     )
 
-# ─── Static scene overlays: coordinate axes and scale bar ─────────────────
-# Log arrows and lines ONCE before the simulation loop.  Newton's ViewerGL
-# stores them in a persistent dict and re-renders them every frame; there
-# is no need to re-submit static geometry.
-#
-# Placement rationale:
-#   • Coordinate axes are placed in the foreground, clear of the arm and terrain.
-#   • The scale bar is also placed in the foreground and slightly elevated so it
-#     remains legible and avoids z-fighting with the ground.
-# XYZ coordinate-axis arrows at a foreground reference point.
-# X = red, Y = green, Z = blue; all arrows share the same configurable length.
-_AXIS_LEN = 0.5
-_AXIS_OX, _AXIS_OY, _AXIS_OZ = 0.8, -0.9, 0.02  # origin in world space
-_axis_origin = np.full((3, 3), [_AXIS_OX, _AXIS_OY, _AXIS_OZ], dtype=np.float32)
-_axis_tips = np.array(
-    [
-        [_AXIS_OX + _AXIS_LEN, _AXIS_OY, _AXIS_OZ],
-        [_AXIS_OX, _AXIS_OY + _AXIS_LEN, _AXIS_OZ],
-        [_AXIS_OX, _AXIS_OY, _AXIS_OZ + _AXIS_LEN],
-    ],
-    dtype=np.float32,
-)
-_axis_colors = np.array(
-    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-    dtype=np.float32,
-)
-vis.log_arrows(
-    "coord_axes",
-    wp.array(_axis_origin, dtype=wp.vec3),
-    wp.array(_axis_tips, dtype=wp.vec3),
-    wp.array(_axis_colors, dtype=wp.vec3),
-)
-
-# Scale bar in the foreground, raised above the ground to avoid
-# z-fighting.  Endpoint spheres anchor the bar ends
-# and make its extent unambiguous.
-_SB_X0, _SB_X1, _SB_Y, _SB_Z = -0.5, 0.5, -0.9, 0.06  # 1 m along x
-vis.log_lines(
-    "scale_bar",
-    wp.array([[_SB_X0, _SB_Y, _SB_Z]], dtype=wp.vec3),
-    wp.array([[_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
-    (1.0, 1.0, 0.0),  # yellow
-)
-# Endpoint marker spheres so the scale bar endpoints are clearly visible.
-_sb_marker_radius = 0.04  # m
-vis.log_points(
-    "scale_bar_markers",
-    wp.array([[_SB_X0, _SB_Y, _SB_Z], [_SB_X1, _SB_Y, _SB_Z]], dtype=wp.vec3),
-    radii=wp.array([_sb_marker_radius, _sb_marker_radius], dtype=wp.float32),
-    colors=wp.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]], dtype=wp.vec3),
+# Static world-orientation and one-metre scale reference.
+mophi.log_orientation_and_scale_reference(
+    vis,
+    axis_origin=REFERENCE_AXIS_ORIGIN,
+    scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
 )
 
 sim_time = 0.0
