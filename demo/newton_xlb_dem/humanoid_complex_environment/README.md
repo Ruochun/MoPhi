@@ -9,15 +9,22 @@ humanoid walking policy.
 implementation as the baseline. It preserves the G1's policy-trained colliders
 for stable ground contact and adds convex contact proxies generated from its
 visual body meshes for external-object contact. Lightweight dynamic boxes in
-the walking path demonstrate body-object contact. It also adds MoPhi-style
-configuration, a finite run loop, MP4 generation, run metadata, and a
-final-state snapshot.
+the walking path demonstrate body-object contact, and pressing `B`
+interactively spawns additional boxes in front of the robot. It also adds
+MoPhi-style configuration, a finite run loop, MP4 generation, run metadata,
+and a final-state snapshot.
 Generated files are written to
 `<repository-root>/output/demo_humanoid_complex_environment/`.
 
 Press `I` in the viewer to walk the G1 forward into the boxes. The boxes are
 free Newton bodies and move when struck by the robot's mesh-derived contact
 proxies.
+
+Press `B` to spawn a dynamic box in front of the robot. Because Newton models
+have fixed topology after finalization, the demo preallocates a configurable
+pool of boxes and activates them on demand. Increase
+`INTERACTIVE_OBJECT_POOL_SIZE` when testing larger interactive object counts.
+Press `P` to reset the robot and return spawned objects to the pool.
 
 ## Assets
 
@@ -50,7 +57,7 @@ python -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))
 
 Keep `NEWTON_CACHE_PATH` set when running the demo.
 
-The next stages will add complex terrain and objects spawned interactively
-during simulation.
+The next stages will add complex terrain and support more challenging
+interactive object shapes and counts.
 
 [newton-policy]: https://github.com/newton-physics/newton/blob/v1.0.0/newton/examples/robot/example_robot_policy.py

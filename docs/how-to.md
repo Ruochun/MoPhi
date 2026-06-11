@@ -201,7 +201,10 @@ proxies from the G1's visual body meshes for external-object contact, and
 places lightweight dynamic boxes in its walking path. It also adds MoPhi-style
 configuration, movie output, run metadata, and a final-state snapshot. Press
 `I` in the viewer to walk forward into the boxes and observe body-object
-contact. Interactively added collision objects are planned follow-on stages.
+contact. Press `B` to interactively spawn an additional dynamic box in front
+of the robot. The demo uses a configurable preallocated object pool because
+Newton model topology is fixed after finalization; press `P` to reset the
+robot and return spawned objects to the pool.
 
 To download the G1 assets before launching the demo and print their cache
 location:

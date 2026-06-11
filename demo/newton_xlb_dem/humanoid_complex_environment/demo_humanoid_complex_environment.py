@@ -5,14 +5,16 @@ walking baseline for MoPhi. Newton downloads the robot model, policy, and YAML
 configuration from the public ``newton-assets`` repository on first run.
 
 The demo uses convex contact proxies generated from the robot's visual body
-meshes and places lightweight dynamic boxes in its walking path. It also adds
-a finite run, movie generation, run metadata, and a final-state snapshot.
+meshes, places lightweight dynamic boxes in its walking path, and allows more
+boxes to be spawned interactively. It also adds a finite run, movie generation,
+run metadata, and a final-state snapshot.
 
 Keyboard controls
 -----------------
   I / K  -- walk forward / backward
   J / L  -- strafe left / right
   U / O  -- turn left / right
+  B      -- spawn a dynamic contact box in front of the robot
   P      -- reset
 
 Running
@@ -64,8 +66,16 @@ BOX_MASS = 0.5
 BOX_GRID_X_OFFSETS = (-0.35, 0.0, 0.35)
 BOX_GRID_Y_POSITIONS = (1.4, 2.0, 2.6)
 BOX_POSES = [(float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_Y_POSITIONS for x in BOX_GRID_X_OFFSETS]
-MAX_CONTACT_COUNT = 2048
-MAX_CONSTRAINT_COUNT = 4096
+ENABLE_INTERACTIVE_OBJECT_SPAWNING = True
+INTERACTIVE_OBJECT_SPAWN_KEY = "b"
+INTERACTIVE_OBJECT_POOL_SIZE = 24
+INTERACTIVE_BOX_HALF_EXTENTS = np.array([0.14, 0.14, 0.14], dtype=np.float32)
+INTERACTIVE_BOX_MASS = 0.35
+INTERACTIVE_OBJECT_SPAWN_OFFSET = np.array([0.0, 0.9, 0.8], dtype=np.float32)
+INTERACTIVE_OBJECT_PARKING_ORIGIN = np.array([50.0, 0.0, 0.2], dtype=np.float32)
+INTERACTIVE_OBJECT_PARKING_SPACING = 0.8
+MAX_CONTACT_COUNT = 4096
+MAX_CONSTRAINT_COUNT = 8192
 
 # -- Visualization ------------------------------------------------------------
 USE_OMNIVERSE_VISUALIZATION = False
@@ -173,6 +183,35 @@ def _add_dynamic_contact_boxes(builder: newton.ModelBuilder) -> int:
     return len(BOX_POSES)
 
 
+def _add_interactive_object_pool(builder: newton.ModelBuilder) -> list[tuple[int, int]]:
+    """Preallocate free boxes and return their free-joint position and velocity offsets."""
+    if not ENABLE_INTERACTIVE_OBJECT_SPAWNING:
+        return []
+
+    joint_starts = []
+    for object_idx in range(INTERACTIVE_OBJECT_POOL_SIZE):
+        parking_position = INTERACTIVE_OBJECT_PARKING_ORIGIN + np.array(
+            [INTERACTIVE_OBJECT_PARKING_SPACING * object_idx, 0.0, 0.0],
+            dtype=np.float32,
+        )
+        label = f"interactive_box_{object_idx}"
+        body_idx = builder.add_link(
+            xform=wp.transform(wp.vec3(*parking_position), wp.quat_identity()),
+            mass=INTERACTIVE_BOX_MASS,
+            label=label,
+        )
+        builder.add_shape_box(
+            body_idx,
+            hx=float(INTERACTIVE_BOX_HALF_EXTENTS[0]),
+            hy=float(INTERACTIVE_BOX_HALF_EXTENTS[1]),
+            hz=float(INTERACTIVE_BOX_HALF_EXTENTS[2]),
+        )
+        joint_idx = builder.add_joint_free(body_idx, label=f"{label}_free_joint")
+        builder.add_articulation([joint_idx], label=label)
+        joint_starts.append((builder.joint_q_start[joint_idx], builder.joint_qd_start[joint_idx]))
+    return joint_starts
+
+
 class HumanoidContactExample(newton_robot_policy.Example):
     """Newton's G1 policy example with mesh-derived robot contact proxies and boxes."""
 
@@ -237,6 +276,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
             ground_shape_idx,
         )
         self.contact_box_count = _add_dynamic_contact_boxes(builder)
+        self.interactive_object_joint_starts = _add_interactive_object_pool(builder)
 
         builder.joint_q[:3] = [0.0, 0.0, 0.76]
         builder.joint_q[3:7] = [0.0, 0.0, 0.7071, 0.7071]
@@ -277,6 +317,8 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=self.torch_device, dtype=torch.float32).unsqueeze(0)
         self.command = torch.zeros((1, 3), device=self.torch_device, dtype=torch.float32)
         self._reset_key_prev = False
+        self._spawn_key_prev = False
+        self.spawned_object_count = 0
         self.policy = None
         self.joint_pos_initial = None
         self.act = None
@@ -303,6 +345,10 @@ class HumanoidContactExample(newton_robot_policy.Example):
             if reset_down and not self._reset_key_prev:
                 self.reset()
             self._reset_key_prev = reset_down
+            spawn_down = bool(self.viewer.is_key_down(INTERACTIVE_OBJECT_SPAWN_KEY))
+            if spawn_down and not self._spawn_key_prev:
+                self.spawn_interactive_object()
+            self._spawn_key_prev = spawn_down
 
         policy_state = newton.State()
         policy_state.joint_q = self.state_0.joint_q[: self.robot_joint_q_count]
@@ -337,8 +383,40 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.sim_time += self.frame_dt
         self.sim_step += 1
 
+    def spawn_interactive_object(self) -> bool:
+        """Activate the next pooled object at a configurable robot-relative position."""
+        if self.spawned_object_count >= len(self.interactive_object_joint_starts):
+            print(f"[Spawn] Interactive object pool is full ({len(self.interactive_object_joint_starts)} objects).")
+            return False
 
-def _write_run_metadata(frame_count: int, asset_directory: Path) -> None:
+        robot_position = self.state_0.joint_q.numpy()[:3]
+        spawn_position = robot_position + INTERACTIVE_OBJECT_SPAWN_OFFSET
+        joint_q_start, joint_qd_start = self.interactive_object_joint_starts[self.spawned_object_count]
+        spawn_q = wp.array(
+            [*spawn_position, 0.0, 0.0, 0.0, 1.0],
+            dtype=wp.float32,
+            device=self.device,
+        )
+        spawn_qd = wp.zeros(6, dtype=wp.float32, device=self.device)
+        for state in (self.state_0, self.state_1):
+            wp.copy(state.joint_q, spawn_q, dest_offset=joint_q_start)
+            wp.copy(state.joint_qd, spawn_qd, dest_offset=joint_qd_start)
+            newton.eval_fk(self.model, state.joint_q, state.joint_qd, state)
+
+        self.spawned_object_count += 1
+        print(
+            f"[Spawn] Added interactive box {self.spawned_object_count}/{len(self.interactive_object_joint_starts)} "
+            f"at ({spawn_position[0]:.2f}, {spawn_position[1]:.2f}, {spawn_position[2]:.2f})."
+        )
+        return True
+
+    def reset(self):
+        """Reset the robot and return all interactively spawned objects to the pool."""
+        super().reset()
+        self.spawned_object_count = 0
+
+
+def _write_run_metadata(frame_count: int, asset_directory: Path, spawned_object_count: int) -> None:
     metadata = {
         "baseline": "newton.examples.robot.example_robot_policy",
         "robot": ROBOT_NAME,
@@ -351,6 +429,8 @@ def _write_run_metadata(frame_count: int, asset_directory: Path) -> None:
         "sim_duration": frame_count * FRAME_DT,
         "use_robot_visual_mesh_colliders": USE_ROBOT_VISUAL_MESH_COLLIDERS,
         "dynamic_contact_box_count": len(BOX_POSES) if ENABLE_DYNAMIC_CONTACT_BOXES else 0,
+        "interactive_object_pool_size": INTERACTIVE_OBJECT_POOL_SIZE if ENABLE_INTERACTIVE_OBJECT_SPAWNING else 0,
+        "interactively_spawned_object_count": spawned_object_count,
     }
     RUN_METADATA_OUTPUT_PATH.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
 
@@ -424,7 +504,9 @@ def main() -> None:
         mophi.fatal(f"Newton G1 policy timestep changed: expected {NEWTON_DT}, got {example.frame_dt}.")
     print(
         f"[Contact] Created {example.robot_mesh_proxy_count} mesh-derived robot contact proxies "
-        f"and {example.contact_box_count} dynamic boxes."
+        f"and {example.contact_box_count} initial dynamic boxes. "
+        f"Press '{INTERACTIVE_OBJECT_SPAWN_KEY.upper()}' to spawn up to "
+        f"{len(example.interactive_object_joint_starts)} additional boxes."
     )
 
     if hasattr(viewer, "set_camera"):
@@ -474,7 +556,7 @@ def main() -> None:
         )
         print(f"[Output] Saved final state to '{FINAL_STATE_OUTPUT_PATH}'.")
 
-    _write_run_metadata(completed_frames, asset_directory)
+    _write_run_metadata(completed_frames, asset_directory, example.spawned_object_count)
     print(f"[Output] Saved run metadata to '{RUN_METADATA_OUTPUT_PATH}'.")
     if SAVE_MOVIE:
         print(f"[Movie] Saved simulation recording to '{MOVIE_OUTPUT_PATH}'.")
