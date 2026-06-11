@@ -6,11 +6,12 @@ Unitree G1 walking baseline. It provides an interactive keyboard-controlled
 humanoid walking policy.
 
 `demo_humanoid_complex_environment.py` keeps Newton's policy and simulation
-implementation as the baseline. It replaces the G1's authored simplified
-colliders with convex contact proxies generated from its visual body meshes,
-then places lightweight dynamic boxes in the walking path to demonstrate
-body-object contact. It also adds MoPhi-style configuration, a finite run loop,
-MP4 generation, run metadata, and a final-state snapshot.
+implementation as the baseline. It preserves the G1's policy-trained colliders
+for stable ground contact and adds convex contact proxies generated from its
+visual body meshes for external-object contact. Lightweight dynamic boxes in
+the walking path demonstrate body-object contact. It also adds MoPhi-style
+configuration, a finite run loop, MP4 generation, run metadata, and a
+final-state snapshot.
 Generated files are written to
 `<repository-root>/output/demo_humanoid_complex_environment/`.
 

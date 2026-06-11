@@ -196,12 +196,12 @@ The humanoid complex-environment demo starts from Newton 1.0.0's public
 keyboard-controlled Unitree G1 walking-policy example. On first run, Newton
 downloads the G1 model, policy, and YAML configuration from the public
 `newton-assets` repository; no manual asset placement is required. This first
-stage generates convex Newton contact proxies from the G1's visual body meshes
-and places lightweight dynamic boxes in its walking path. It also adds
-MoPhi-style configuration, movie output, run metadata, and a final-state
-snapshot. Press `I` in the viewer to walk forward into the boxes and observe
-body-object contact. Interactively added collision objects are planned
-follow-on stages.
+stage preserves the policy-trained ground colliders, adds convex Newton contact
+proxies from the G1's visual body meshes for external-object contact, and
+places lightweight dynamic boxes in its walking path. It also adds MoPhi-style
+configuration, movie output, run metadata, and a final-state snapshot. Press
+`I` in the viewer to walk forward into the boxes and observe body-object
+contact. Interactively added collision objects are planned follow-on stages.
 
 To download the G1 assets before launching the demo and print their cache
 location:

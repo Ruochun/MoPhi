@@ -62,7 +62,7 @@ ENABLE_DYNAMIC_CONTACT_BOXES = True
 BOX_HALF_EXTENTS = np.array([0.16, 0.16, 0.16], dtype=np.float32)
 BOX_MASS = 0.5
 BOX_GRID_X_OFFSETS = (-0.35, 0.0, 0.35)
-BOX_GRID_Y_POSITIONS = (0.9, 1.45, 2.0)
+BOX_GRID_Y_POSITIONS = (1.4, 2.0, 2.6)
 BOX_POSES = [(float(x), float(y), float(BOX_HALF_EXTENTS[2])) for y in BOX_GRID_Y_POSITIONS for x in BOX_GRID_X_OFFSETS]
 MAX_CONTACT_COUNT = 2048
 MAX_CONSTRAINT_COUNT = 4096
@@ -92,8 +92,8 @@ if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
 
 
-def _replace_robot_colliders_with_visual_mesh_proxies(builder: newton.ModelBuilder) -> int:
-    """Replace authored robot colliders with convex proxies derived from visual meshes."""
+def _add_robot_visual_mesh_proxies(builder: newton.ModelBuilder) -> list[int]:
+    """Add convex visual-mesh proxies while preserving policy-trained colliders."""
     robot_body_count = len(builder.body_label)
     original_shape_count = len(builder.shape_type)
     visual_mesh_indices = [
@@ -104,14 +104,6 @@ def _replace_robot_colliders_with_visual_mesh_proxies(builder: newton.ModelBuild
         and builder.shape_flags[shape_idx] & ShapeFlags.VISIBLE
         and not builder.shape_flags[shape_idx] & ShapeFlags.COLLIDE_SHAPES
     ]
-
-    for shape_idx in range(original_shape_count):
-        body_idx = builder.shape_body[shape_idx]
-        if body_idx < 0 or body_idx >= robot_body_count:
-            continue
-        flags = builder.shape_flags[shape_idx]
-        if flags & ShapeFlags.COLLIDE_SHAPES:
-            builder.shape_flags[shape_idx] &= ~ShapeFlags.COLLIDE_SHAPES
 
     mesh_proxy_indices = []
     for shape_idx in visual_mesh_indices:
@@ -136,11 +128,28 @@ def _replace_robot_colliders_with_visual_mesh_proxies(builder: newton.ModelBuild
         )
         mesh_proxy_indices.append(proxy_idx)
 
-    remeshed_indices = builder.approximate_meshes(
+    builder.approximate_meshes(
         method=ROBOT_MESH_APPROXIMATION_METHOD,
         shape_indices=mesh_proxy_indices,
     )
-    return len(remeshed_indices)
+    return mesh_proxy_indices
+
+
+def _filter_mesh_proxies_to_external_objects(
+    builder: newton.ModelBuilder,
+    mesh_proxy_indices: list[int],
+    robot_body_count: int,
+    ground_shape_idx: int,
+) -> None:
+    """Prevent mesh proxies from changing robot-ground and robot-self contact."""
+    robot_shape_indices = [
+        shape_idx for shape_idx, body_idx in enumerate(builder.shape_body) if 0 <= body_idx < robot_body_count
+    ]
+    for proxy_idx in mesh_proxy_indices:
+        builder.add_shape_collision_filter_pair(proxy_idx, ground_shape_idx)
+        for robot_shape_idx in robot_shape_indices:
+            if proxy_idx != robot_shape_idx:
+                builder.add_shape_collision_filter_pair(proxy_idx, robot_shape_idx)
 
 
 def _add_dynamic_contact_boxes(builder: newton.ModelBuilder) -> int:
@@ -210,13 +219,23 @@ class HumanoidContactExample(newton_robot_policy.Example):
             joint_ordering="dfs",
             hide_collision_shapes=True,
         )
+        robot_body_count = len(builder.body_label)
+        # Preserve Newton's policy baseline collision model for stable ground
+        # contact, then add separate body-mesh proxies for external objects.
+        builder.approximate_meshes(ROBOT_MESH_APPROXIMATION_METHOD)
+        robot_mesh_proxy_indices = []
         self.robot_mesh_proxy_count = 0
         if USE_ROBOT_VISUAL_MESH_COLLIDERS:
-            self.robot_mesh_proxy_count = _replace_robot_colliders_with_visual_mesh_proxies(builder)
-        else:
-            builder.approximate_meshes(ROBOT_MESH_APPROXIMATION_METHOD)
+            robot_mesh_proxy_indices = _add_robot_visual_mesh_proxies(builder)
+            self.robot_mesh_proxy_count = len(robot_mesh_proxy_indices)
 
-        builder.add_ground_plane()
+        ground_shape_idx = builder.add_ground_plane()
+        _filter_mesh_proxies_to_external_objects(
+            builder,
+            robot_mesh_proxy_indices,
+            robot_body_count,
+            ground_shape_idx,
+        )
         self.contact_box_count = _add_dynamic_contact_boxes(builder)
 
         builder.joint_q[:3] = [0.0, 0.0, 0.76]
