@@ -5,6 +5,161 @@ from __future__ import annotations
 import numpy as np
 
 
+def _get_newton_viewer(visualizer):
+    """Return a Newton viewer from either a raw viewer or MoPhi OpenGL wrapper."""
+    return getattr(visualizer, "_viewer", visualizer)
+
+
+def _set_newton_sky_colors(visualizer, upper, lower) -> None:
+    viewer = _get_newton_viewer(visualizer)
+    if hasattr(viewer, "renderer"):
+        viewer.renderer.sky_upper = tuple(upper)
+        viewer.renderer.sky_lower = tuple(lower)
+        viewer.renderer.background_color = tuple(upper)
+
+
+def _log_box_instances(visualizer, name: str, centers, half_extents, colors) -> None:
+    """Log non-physical decorative boxes through Newton's instanced renderer."""
+    import newton
+    import warp as wp
+
+    viewer = _get_newton_viewer(visualizer)
+    if not hasattr(viewer, "log_geo") or not hasattr(viewer, "log_instances"):
+        return
+
+    mesh_name = f"{name}_box_mesh"
+    viewer.log_geo(mesh_name, newton.GeoType.BOX, (1.0, 1.0, 1.0), 0.0, True, hidden=True)
+    centers_np = np.asarray(centers, dtype=np.float32)
+    half_extents_np = np.asarray(half_extents, dtype=np.float32)
+    colors_np = np.asarray(colors, dtype=np.float32)
+    xforms = [wp.transform(wp.vec3(*center), wp.quat_identity()) for center in centers_np]
+    viewer.log_instances(
+        name,
+        mesh_name,
+        wp.array(xforms, dtype=wp.transform),
+        wp.array(half_extents_np, dtype=wp.vec3),
+        wp.array(colors_np, dtype=wp.vec3),
+        None,
+    )
+
+
+def log_underwater_environment(
+    visualizer,
+    *,
+    domain_min=(-2.0, -2.0, 0.0),
+    domain_max=(2.0, 4.0, 3.0),
+    name_prefix: str = "underwater_environment",
+) -> None:
+    """Log a decorative sandbed, rocks, vegetation, and underwater sky."""
+    import warp as wp
+
+    domain_min_np = np.asarray(domain_min, dtype=np.float32)
+    domain_max_np = np.asarray(domain_max, dtype=np.float32)
+    center = 0.5 * (domain_min_np + domain_max_np)
+    size = domain_max_np - domain_min_np
+    sandbed_half_height = 0.04
+    sandbed_center = np.array([center[0], center[1], -sandbed_half_height], dtype=np.float32)
+    _set_newton_sky_colors(visualizer, (0.015, 0.16, 0.24), (0.01, 0.06, 0.09))
+    _log_box_instances(
+        visualizer,
+        f"{name_prefix}_sandbed",
+        [sandbed_center],
+        [[0.5 * size[0], 0.5 * size[1], sandbed_half_height]],
+        [[0.58, 0.48, 0.28]],
+    )
+
+    rng = np.random.default_rng(7)
+    rock_positions = np.column_stack(
+        (
+            rng.uniform(domain_min_np[0] + 0.25, domain_max_np[0] - 0.25, 30),
+            rng.uniform(domain_min_np[1] + 0.25, domain_max_np[1] - 0.25, 30),
+            rng.uniform(0.06, 0.14, 30),
+        )
+    ).astype(np.float32)
+    rock_radii = rng.uniform(0.07, 0.20, 30).astype(np.float32)
+    rock_colors = rng.uniform((0.18, 0.20, 0.16), (0.42, 0.38, 0.27), (30, 3)).astype(np.float32)
+    visualizer.log_points(
+        f"{name_prefix}_rocks",
+        wp.array(rock_positions, dtype=wp.vec3),
+        radii=wp.array(rock_radii, dtype=wp.float32),
+        colors=wp.array(rock_colors, dtype=wp.vec3),
+    )
+
+    plant_roots = np.column_stack(
+        (
+            rng.uniform(domain_min_np[0] + 0.2, domain_max_np[0] - 0.2, 45),
+            rng.uniform(domain_min_np[1] + 0.2, domain_max_np[1] - 0.2, 45),
+            np.full(45, 0.04),
+        )
+    ).astype(np.float32)
+    plant_heights = rng.uniform(0.25, 0.75, 45).astype(np.float32)
+    plant_tips = plant_roots.copy()
+    plant_tips[:, 0] += rng.uniform(-0.12, 0.12, 45)
+    plant_tips[:, 2] += plant_heights
+    plant_colors = rng.uniform((0.03, 0.28, 0.12), (0.10, 0.62, 0.25), (45, 3)).astype(np.float32)
+    visualizer.log_lines(
+        f"{name_prefix}_vegetation",
+        wp.array(plant_roots, dtype=wp.vec3),
+        wp.array(plant_tips, dtype=wp.vec3),
+        wp.array(plant_colors, dtype=wp.vec3),
+    )
+
+
+def log_warehouse_environment(
+    visualizer,
+    *,
+    aisle_length: float = 8.0,
+    aisle_half_width: float = 1.7,
+    name_prefix: str = "warehouse_environment",
+) -> None:
+    """Log decorative warehouse racks, pallets, crates, walls, and floor grid."""
+    import warp as wp
+
+    _set_newton_sky_colors(visualizer, (0.12, 0.14, 0.18), (0.06, 0.07, 0.08))
+    box_centers = []
+    box_extents = []
+    box_colors = []
+    for side in (-1.0, 1.0):
+        x = side * (aisle_half_width + 0.35)
+        for y in np.linspace(0.5, aisle_length - 0.5, 5):
+            for z in (0.45, 1.35, 2.25):
+                box_centers.append((x, float(y), z))
+                box_extents.append((0.45, 0.65, 0.06))
+                box_colors.append((0.16, 0.24, 0.34))
+            for z in (0.45, 1.35):
+                box_centers.append((x, float(y), z + 0.30))
+                box_extents.append((0.32, 0.42, 0.24))
+                box_colors.append((0.56, 0.31, 0.12))
+        for y in (0.0, aisle_length):
+            box_centers.append((x, y, 1.35))
+            box_extents.append((0.07, 0.07, 1.35))
+            box_colors.append((0.12, 0.18, 0.26))
+    # Keep a far wall for depth while leaving the negative-Y entrance open to
+    # the default camera.
+    box_centers.append((0.0, aisle_length + 0.8, 1.5))
+    box_extents.append((4.0, 0.08, 1.5))
+    box_colors.append((0.32, 0.34, 0.36))
+    _log_box_instances(visualizer, f"{name_prefix}_fixtures", box_centers, box_extents, box_colors)
+
+    grid_x = np.arange(-3.5, 3.51, 0.5, dtype=np.float32)
+    grid_y = np.arange(-1.0, aisle_length + 0.01, 0.5, dtype=np.float32)
+    starts = []
+    ends = []
+    for x in grid_x:
+        starts.append((x, -1.0, 0.006))
+        ends.append((x, aisle_length, 0.006))
+    for y in grid_y:
+        starts.append((-3.5, y, 0.006))
+        ends.append((3.5, y, 0.006))
+    colors = np.tile(np.array([[0.24, 0.26, 0.28]], dtype=np.float32), (len(starts), 1))
+    visualizer.log_lines(
+        f"{name_prefix}_floor_grid",
+        wp.array(starts, dtype=wp.vec3),
+        wp.array(ends, dtype=wp.vec3),
+        wp.array(colors, dtype=wp.vec3),
+    )
+
+
 def log_orientation_and_scale_reference(
     visualizer,
     *,

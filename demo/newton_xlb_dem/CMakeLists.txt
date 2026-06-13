@@ -10,6 +10,7 @@
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
+#   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 #
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
@@ -73,6 +74,15 @@ add_custom_target(demo_humanoid_complex_environment
     VERBATIM
 )
 
+# ── Custom target: humanoid swimming idea demo ────────────────────────────────
+add_custom_target(demo_humanoid_swimming
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/humanoid_complex_environment/demo_humanoid_swimming.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running Newton + XLB humanoid swimming idea demo"
+    VERBATIM
+)
+
 # ── Installation ───────────────────────────────────────────────────────────────
 # newton_xlb_dem_utils.py is a pre-existing helper module imported by
 # demo_anymal_robot_multiphysics.py; it is included here so that the install tree is
@@ -100,6 +110,7 @@ install(
 install(
     FILES
         humanoid_complex_environment/demo_humanoid_complex_environment.py
+        humanoid_complex_environment/demo_humanoid_swimming.py
         humanoid_complex_environment/README.md
     DESTINATION demo/newton_xlb_dem/humanoid_complex_environment
 )

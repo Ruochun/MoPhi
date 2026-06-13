@@ -78,9 +78,13 @@ except ImportError:
 
 # Shared visualization helpers.
 try:
-    from .utils.vis_utils import log_orientation_and_scale_reference  # noqa: F401
+    from .utils.vis_utils import (  # noqa: F401
+        log_orientation_and_scale_reference,
+        log_underwater_environment,
+        log_warehouse_environment,
+    )
 
-    __all__.append("log_orientation_and_scale_reference")
+    __all__ += ["log_orientation_and_scale_reference", "log_underwater_environment", "log_warehouse_environment"]
 except ImportError:
     pass
 

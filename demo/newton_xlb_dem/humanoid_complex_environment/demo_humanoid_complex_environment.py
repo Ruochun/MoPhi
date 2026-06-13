@@ -79,11 +79,14 @@ MAX_CONSTRAINT_COUNT = 8192
 
 # -- Visualization ------------------------------------------------------------
 USE_OMNIVERSE_VISUALIZATION = False
-CAMERA_POSITION = (3.0, -4.0, 2.0)
+CAMERA_POSITION = (5.0, -7.0, 2.8)
 CAMERA_PITCH = -12.0
 CAMERA_YAW = 135.0
 REFERENCE_AXIS_ORIGIN = (0.8, -0.8, 0.02)
 REFERENCE_SCALE_BAR_CENTER = (0.0, -0.8, 0.06)
+SHOW_WAREHOUSE_ENVIRONMENT = True
+WAREHOUSE_AISLE_LENGTH = 8.0
+WAREHOUSE_AISLE_HALF_WIDTH = 1.7
 
 # -- Output -------------------------------------------------------------------
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -431,6 +434,7 @@ def _write_run_metadata(frame_count: int, asset_directory: Path, spawned_object_
         "dynamic_contact_box_count": len(BOX_POSES) if ENABLE_DYNAMIC_CONTACT_BOXES else 0,
         "interactive_object_pool_size": INTERACTIVE_OBJECT_POOL_SIZE if ENABLE_INTERACTIVE_OBJECT_SPAWNING else 0,
         "interactively_spawned_object_count": spawned_object_count,
+        "show_warehouse_environment": SHOW_WAREHOUSE_ENVIRONMENT,
     }
     RUN_METADATA_OUTPUT_PATH.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
 
@@ -516,6 +520,12 @@ def main() -> None:
         axis_origin=REFERENCE_AXIS_ORIGIN,
         scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
     )
+    if SHOW_WAREHOUSE_ENVIRONMENT:
+        mophi.log_warehouse_environment(
+            viewer,
+            aisle_length=WAREHOUSE_AISLE_LENGTH,
+            aisle_half_width=WAREHOUSE_AISLE_HALF_WIDTH,
+        )
 
     movie_writer = None
     if SAVE_MOVIE:

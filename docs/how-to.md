@@ -185,6 +185,8 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_ne
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 # Run the interactive Newton humanoid walking baseline
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
+# Run the Newton + XLB humanoid swimming idea demo
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 ```
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
@@ -205,6 +207,20 @@ contact. Press `B` to interactively spawn an additional dynamic box in front
 of the robot. The demo uses a configurable preallocated object pool because
 Newton model topology is fixed after finalization; press `P` to reset the
 robot and return spawned objects to the pool.
+The viewer also shows a non-physical warehouse aisle; set
+`SHOW_WAREHOUSE_ENVIRONMENT = False` to hide the decorative scene.
+
+The humanoid swimming idea demo places the G1 in an XLB fluid domain without a
+ground plane. Newton advances a scripted swimming stroke while analytic
+buoyancy, drag, and propulsion keep the robot suspended and moving. Ten
+axis-aligned XLB obstacle boxes follow the torso, pelvis, arms, and legs so the
+visualized flow responds to the prescribed limb motion. Edit the
+`PRESCRIBED_SWIM_MOTION` configuration block to change each swimming joint's
+pose offset, amplitude, and phase. This first stage is intentionally one-way:
+XLB does not yet calculate forces that feed back into Newton.
+The underwater sandbed, rocks, vegetation, and background colors are
+renderer-only decorations. Set `SHOW_UNDERWATER_ENVIRONMENT = False` to hide
+them.
 
 To download the G1 assets before launching the demo and print their cache
 location:
