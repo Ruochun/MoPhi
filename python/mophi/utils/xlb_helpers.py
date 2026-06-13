@@ -15,13 +15,14 @@ def xlb_make_y_plane_seeds(
     seed_y=None,
     x_inset=0.4,
     z_inset=0.15,
+    flow_direction=-1,
 ):
     """Build a regular grid of seed points on a y = const plane.
 
-    This is the canonical seed-generation helper for flows that enter the domain
-    through a face at y ≈ domain_max and travel in the −y direction (e.g. the
-    Newton-XLB-DEM demo).  Pass the returned array directly to
-    :func:`xlb_build_streamlines` as the *seed_points* argument.
+    By default, seeds are placed near ``domain_max[1]`` for flows travelling in
+    the -y direction. Set ``flow_direction=1`` to seed near ``domain_min[1]``
+    for flows travelling in the +y direction. Pass the returned array directly
+    to :func:`xlb_build_streamlines` as the *seed_points* argument.
 
     Args:
         domain_min: (3,) world-space lower corner of the LBM domain [m].
@@ -29,7 +30,9 @@ def xlb_make_y_plane_seeds(
         n_x_seeds:  number of seed positions along x.
         n_z_seeds:  number of seed positions along z.
         seed_y:     y-coordinate of the seed plane.  Defaults to
-                    ``domain_max[1] − 0.05`` (just inside the inlet face).
+                    just inside the upstream y face selected by *flow_direction*.
+        flow_direction: sign of the predominant y flow. Positive selects the
+                    domain-min face; negative selects the domain-max face.
         x_inset:    distance [m] to inset from the x-edges of the domain.
                     Avoids the near-wall low-speed boundary layers.
         z_inset:    distance [m] to inset from the z-edges of the domain.
@@ -39,8 +42,10 @@ def xlb_make_y_plane_seeds(
     """
     domain_min = np.asarray(domain_min, dtype=np.float64)
     domain_max = np.asarray(domain_max, dtype=np.float64)
+    if flow_direction == 0:
+        raise ValueError("flow_direction must be positive or negative.")
     if seed_y is None:
-        seed_y = float(domain_max[1]) - 0.05
+        seed_y = float(domain_min[1]) + 0.05 if flow_direction > 0 else float(domain_max[1]) - 0.05
     xs = np.linspace(domain_min[0] + x_inset, domain_max[0] - x_inset, n_x_seeds)
     zs = np.linspace(domain_min[2] + z_inset, domain_max[2] - z_inset, n_z_seeds)
     xx, zz = np.meshgrid(xs, zs, indexing="ij")
@@ -150,8 +155,7 @@ def xlb_make_streamline_warp_arrays(
     arrowhead sphere (at the sampled position, pointing in the flow direction)
     followed by ``n_shaft`` progressively smaller shaft spheres trailing
     behind the head along ``-dirs[i]``.  This makes the flow direction
-    immediately legible — in the Newton-XLB-DEM demo the arrows should point
-    predominantly in the −y direction.
+    immediately legible.
 
     Colours are mapped from slow → cornflower-blue (0.20, 0.55, 0.85) to
     fast → cyan-white (0.55, 0.90, 1.00); this cool palette contrasts with the

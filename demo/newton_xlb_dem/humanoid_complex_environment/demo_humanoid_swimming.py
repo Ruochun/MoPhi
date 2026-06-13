@@ -40,14 +40,17 @@ import newton_xlb_dem_utils as demo_utils  # noqa: E402
 # -- Timing -------------------------------------------------------------------
 RENDER_FPS = 25
 NEWTON_DT = 1.0 / 200.0
-NUM_FRAMES = 300
+SIM_DURATION_SECONDS = 5.0
 XLB_STEPS_PER_FRAME = 2
 XLB_WARMUP_STEPS = 100
 XLB_VIS_INTERVAL = 5
 
 # -- Robot and swimming motion ------------------------------------------------
 ROBOT_NAME = "g1_29dof"
-ROBOT_START_POSITION = np.array([0.0, 0.0, 1.5], dtype=np.float32)
+ROBOT_START_Y_CLEARANCE = 0.8
+ROBOT_START_HEIGHT = 1.5
+# The G1 asset faces +X by default; rotate it +90 degrees around Z to face +Y.
+ROBOT_START_ORIENTATION_XYZW = np.array([0.0, 0.0, 0.7071068, 0.7071068], dtype=np.float32)
 SWIM_STROKE_FREQUENCY = 0.65
 SWIM_FORWARD_FORCE = 35.0
 SWIM_FORWARD_FORCE_BODY_LABEL = "pelvis"
@@ -70,17 +73,21 @@ PRESCRIBED_SWIM_MOTION = (
 
 # -- Analytic underwater forces -----------------------------------------------
 BUOYANCY_GRAVITY = 9.81
-BUOYANCY_SCALE = 1.03
+BUOYANCY_SCALE = 1.0
 LINEAR_DRAG_COEFFICIENT = 22.0
 ANGULAR_DRAG_COEFFICIENT = 4.0
+DEPTH_HOLD_STIFFNESS = 80.0
+DEPTH_HOLD_DAMPING = 40.0
 
 # -- XLB fluid ----------------------------------------------------------------
 XLB_GRID_DIMS = (64, 96, 64)
-XLB_DOMAIN_MIN = np.array([-2.0, -2.0, 0.0], dtype=np.float64)
+XLB_DOMAIN_MIN = np.array([-2.0, -4.0, 0.0], dtype=np.float64)
 XLB_DOMAIN_MAX = np.array([2.0, 4.0, 3.0], dtype=np.float64)
+XLB_FLOW_DIRECTION_Y = 1
 XLB_INLET_SPEED = 0.015
 XLB_KINEMATIC_VISCOSITY = 0.02
 XLB_OMEGA = 1.0 / (3.0 * XLB_KINEMATIC_VISCOSITY + 0.5)
+XLB_STREAMLINE_STEP_SIZE = 0.12
 XLB_OBSTACLE_SPECS = (
     ("pelvis", np.array([0.20, 0.14, 0.16])),
     ("torso", np.array([0.24, 0.16, 0.24])),
@@ -95,11 +102,11 @@ XLB_OBSTACLE_SPECS = (
 )
 
 # -- Visualization ------------------------------------------------------------
-CAMERA_POSITION = (6.0, -7.0, 3.2)
+CAMERA_POSITION = (7.0, -8.0, 3.2)
 CAMERA_PITCH = -8.0
 CAMERA_YAW = 140.0
-REFERENCE_AXIS_ORIGIN = (1.2, -1.2, 0.1)
-REFERENCE_SCALE_BAR_CENTER = (0.2, -1.2, 0.14)
+REFERENCE_AXIS_ORIGIN = (1.2, -3.6, 0.1)
+REFERENCE_SCALE_BAR_CENTER = (0.2, -3.6, 0.14)
 SHOW_UNDERWATER_ENVIRONMENT = True
 
 # -- Output -------------------------------------------------------------------
@@ -111,7 +118,13 @@ MOVIE_FPS = RENDER_FPS
 RUN_METADATA_OUTPUT_PATH = OUTPUT_DIRECTORY / "run_metadata.json"
 
 # -- Derived constants --------------------------------------------------------
+ROBOT_START_POSITION = np.array(
+    [0.0, XLB_DOMAIN_MIN[1] + ROBOT_START_Y_CLEARANCE, ROBOT_START_HEIGHT],
+    dtype=np.float32,
+)
+XLB_STREAMLINE_STEPS = int(np.ceil((XLB_DOMAIN_MAX[1] - XLB_DOMAIN_MIN[1]) / XLB_STREAMLINE_STEP_SIZE)) + 2
 FRAME_DT = 1.0 / RENDER_FPS
+NUM_FRAMES = int(round(SIM_DURATION_SECONDS / FRAME_DT))
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, atol=1.0e-12):
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
@@ -158,7 +171,7 @@ def _build_newton_robot(robot_config, config, asset_directory: Path):
     builder.default_shape_cfg.mu = 0.5
     builder.add_usd(
         newton.examples.get_asset(str(asset_directory / robot_config.asset_path)),
-        xform=wp.transform(wp.vec3(*ROBOT_START_POSITION), wp.quat_identity()),
+        xform=wp.transform(wp.vec3(*ROBOT_START_POSITION), wp.quat(*ROBOT_START_ORIENTATION_XYZW)),
         collapse_fixed_joints=False,
         enable_self_collisions=False,
         joint_ordering="dfs",
@@ -166,7 +179,7 @@ def _build_newton_robot(robot_config, config, asset_directory: Path):
     )
     builder.approximate_meshes("convex_hull")
     builder.joint_q[:3] = ROBOT_START_POSITION.tolist()
-    builder.joint_q[3:7] = [0.0, 0.0, 0.0, 1.0]
+    builder.joint_q[3:7] = ROBOT_START_ORIENTATION_XYZW.tolist()
     builder.joint_q[7 : 7 + len(config["mjw_joint_pos"])] = config["mjw_joint_pos"]
     for joint_idx in range(len(config["mjw_joint_stiffness"])):
         dof_idx = joint_idx + 6
@@ -229,10 +242,10 @@ def _setup_xlb(initial_boxes):
     faces = grid.bounding_box_indices(remove_edges=True)
     inlet = ZouHeBC(
         bc_type="velocity",
-        prescribed_value=np.array([0.0, XLB_INLET_SPEED, 0.0]),
-        indices=faces["back"],
+        prescribed_value=np.array([0.0, XLB_FLOW_DIRECTION_Y * XLB_INLET_SPEED, 0.0]),
+        indices=faces["front"],
     )
-    outlet = ExtrapolationOutflowBC(indices=faces["front"])
+    outlet = ExtrapolationOutflowBC(indices=faces["back"])
     box_bcs = []
     placeholder_boxes = []
     for box_idx in range(len(initial_boxes)):
@@ -293,12 +306,16 @@ def _underwater_forces(
     body_qd: np.ndarray,
     body_mass: np.ndarray,
     propulsion_idx: int,
+    target_depth: float,
 ) -> np.ndarray:
     """Return a stable net flotation-pack wrench applied at the pelvis."""
     forces = np.zeros((len(body_q), 6), dtype=np.float32)
     forces[propulsion_idx, 2] += float(body_mass.sum()) * BUOYANCY_GRAVITY * BUOYANCY_SCALE
     forces[propulsion_idx, :3] -= LINEAR_DRAG_COEFFICIENT * body_qd[propulsion_idx, :3]
     forces[propulsion_idx, 3:] -= ANGULAR_DRAG_COEFFICIENT * body_qd[propulsion_idx, 3:]
+    depth_error = target_depth - body_q[propulsion_idx, 2]
+    forces[propulsion_idx, 2] += DEPTH_HOLD_STIFFNESS * depth_error
+    forces[propulsion_idx, 2] -= DEPTH_HOLD_DAMPING * body_qd[propulsion_idx, 2]
     forces[propulsion_idx, 1] += SWIM_FORWARD_FORCE
     return forces
 
@@ -331,6 +348,7 @@ def main() -> None:
     initial_state = model.state()
     newton.eval_fk(model, initial_state.joint_q, initial_state.joint_qd, initial_state)
     initial_body_q = initial_state.body_q.numpy()
+    target_depth = float(initial_body_q[propulsion_idx, 2])
     initial_boxes = [
         _make_box_grid(initial_body_q[body_idx, :3], half_extents)
         for body_idx, (_, half_extents) in zip(obstacle_body_indices, XLB_OBSTACLE_SPECS)
@@ -360,7 +378,11 @@ def main() -> None:
             domain_min=XLB_DOMAIN_MIN,
             domain_max=XLB_DOMAIN_MAX,
         )
-    seed_points = mophi.xlb_make_y_plane_seeds(XLB_DOMAIN_MIN, XLB_DOMAIN_MAX)
+    seed_points = mophi.xlb_make_y_plane_seeds(
+        XLB_DOMAIN_MIN,
+        XLB_DOMAIN_MAX,
+        flow_direction=XLB_FLOW_DIRECTION_Y,
+    )
     old_boxes = initial_boxes
     xlb_timestep = XLB_WARMUP_STEPS
     movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS) if SAVE_MOVIE else None
@@ -377,7 +399,7 @@ def main() -> None:
             for _ in range(SIM_SUBSTEPS):
                 body_q = coupler.newton_state_0.body_q.numpy()
                 body_qd = coupler.newton_state_0.body_qd.numpy()
-                forces = _underwater_forces(body_q, body_qd, body_mass, propulsion_idx)
+                forces = _underwater_forces(body_q, body_qd, body_mass, propulsion_idx, target_depth)
                 coupler.set_newton_body_forces(wp.array(forces, dtype=wp.spatial_vector, device=wp.get_device()))
                 coupler.step_newton()
 
@@ -399,7 +421,12 @@ def main() -> None:
                 rho, velocity = macro(f0, rho, velocity)
                 velocity_np = velocity.numpy().transpose(1, 2, 3, 0).astype(np.float32)
                 points, speeds, directions = mophi.xlb_build_streamlines(
-                    velocity_np, XLB_DOMAIN_MIN, XLB_DOMAIN_MAX, seed_points
+                    velocity_np,
+                    XLB_DOMAIN_MIN,
+                    XLB_DOMAIN_MAX,
+                    seed_points,
+                    n_steps=XLB_STREAMLINE_STEPS,
+                    step_size=XLB_STREAMLINE_STEP_SIZE,
                 )
                 stream_pos, stream_radii, stream_colors = mophi.xlb_make_streamline_warp_arrays(
                     points, speeds, directions
@@ -418,9 +445,19 @@ def main() -> None:
     metadata = {
         "demo": "humanoid_swimming",
         "completed_frames": completed_frames,
+        "requested_duration_seconds": SIM_DURATION_SECONDS,
         "newton_dt": NEWTON_DT,
+        "buoyancy_scale": BUOYANCY_SCALE,
+        "target_depth": target_depth,
+        "depth_hold_stiffness": DEPTH_HOLD_STIFFNESS,
+        "depth_hold_damping": DEPTH_HOLD_DAMPING,
         "xlb_grid_dims": XLB_GRID_DIMS,
+        "xlb_domain_min": XLB_DOMAIN_MIN.tolist(),
+        "xlb_domain_max": XLB_DOMAIN_MAX.tolist(),
+        "xlb_flow_direction_y": XLB_FLOW_DIRECTION_Y,
         "xlb_obstacle_count": len(XLB_OBSTACLE_SPECS),
+        "robot_start_position": ROBOT_START_POSITION.tolist(),
+        "robot_start_orientation_xyzw": ROBOT_START_ORIENTATION_XYZW.tolist(),
         "prescribed_swim_joint_count": len(PRESCRIBED_SWIM_MOTION),
         "prescribed_swim_frequency": SWIM_STROKE_FREQUENCY,
         "show_underwater_environment": SHOW_UNDERWATER_ENVIRONMENT,

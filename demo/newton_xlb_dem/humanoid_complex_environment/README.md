@@ -68,9 +68,9 @@ interactive object shapes and counts.
 
 `demo_humanoid_swimming.py` demonstrates a deliberately simplified underwater
 G1 concept. Newton advances the articulated robot with a scripted swimming
-stroke and analytic buoyancy, drag, and propulsion forces. XLB simulates and
-visualizes flow around ten axis-aligned boxes that follow the torso, pelvis,
-and moving arm and leg links.
+stroke and analytic neutral buoyancy, depth hold, drag, and propulsion forces.
+XLB simulates and visualizes flow around ten axis-aligned boxes that follow the
+torso, pelvis, and moving arm and leg links.
 
 The prescribed stroke is defined in the `PRESCRIBED_SWIM_MOTION` configuration
 block. Each entry controls one joint's pose offset, amplitude, and phase, making
