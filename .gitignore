@@ -74,3 +74,4 @@ __pycache__/
 
 # Demo outputs
 /output/
+imgui.ini
