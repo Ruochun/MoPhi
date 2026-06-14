@@ -94,25 +94,4 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_
 Generated files are written to
 `<repository-root>/output/demo_humanoid_swimming/`.
 
-## Many articulated hands demo
-
-`demo_many_flexible_hands.py` adapts Newton's public Allegro-hand example into
-a MoPhi-style scaling demo. It replicates 64 fixed-base, contact-capable hands
-and independently drives all 16 finger joints on every hand. Each hand receives
-a phase offset so the array demonstrates distinct concurrent motion rather than
-one duplicated animation.
-
-This first stage uses articulated rigid finger links, not deformable solids,
-and intentionally omits grasped objects. The imported hand collision geometry
-is retained so later stages can add contact-heavy grasping workloads.
-
-Run from the repository root:
-
-```bash
-PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_many_flexible_hands.py
-```
-
-Generated files are written to
-`<repository-root>/output/demo_many_flexible_hands/`.
-
 [newton-policy]: https://github.com/newton-physics/newton/blob/v1.0.0/newton/examples/robot/example_robot_policy.py

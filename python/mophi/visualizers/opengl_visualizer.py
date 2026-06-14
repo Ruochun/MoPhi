@@ -78,6 +78,10 @@ class OpenGLVisualizer:
         """
         self._viewer.set_camera(pos=pos, pitch=pitch, yaw=yaw)
 
+    def update_shape_colors(self, shape_colors) -> None:
+        """Set display colors for selected Newton model shapes."""
+        self._viewer.update_shape_colors(shape_colors)
+
     # ── Per-frame rendering ────────────────────────────────────────────────────
 
     def begin_frame(self, sim_time: float) -> None:

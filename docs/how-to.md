@@ -188,7 +188,7 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_
 # Run the Newton + XLB humanoid swimming idea demo
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 # Run many independently animated, contact-ready Allegro hands
-PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_many_flexible_hands.py
+PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
 ```
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
@@ -224,11 +224,17 @@ The underwater sandbed, rocks, vegetation, and background colors are
 renderer-only decorations. Set `SHOW_UNDERWATER_ENVIRONMENT = False` to hide
 them.
 
-The many-hands demo uses Newton's downloadable `wonik_allegro` asset and
-replication support to simulate 64 fixed-base Allegro hands. Every hand keeps
-16 independently driven finger joints and contact-capable collision geometry.
-The first run downloads the public asset automatically; this first stage
-focuses on concurrent finger motion and intentionally omits grasped objects.
+The many-hands demo uses Newton's downloadable `wonik_allegro` and
+`manipulation_objects/cup` assets to simulate 64 fixed-base Allegro hands
+handling 64 enlarged dynamic contact cups. Each cup combines the open cup mesh
+with a visible, contact-enabled rounded handle. Every hand keeps 16
+independently driven finger joints. Four repeating grasp profiles vary finger
+closure, motion, cup placement, and tilt so some hands retain their cups while
+others drop them. Cups spawn clear of the fingers, and each handle uses the
+same display color as its bowl. The first run downloads both public assets
+automatically. The renderer-only laboratory adds a tiled floor, paneled walls,
+work benches, instruments, ceiling light panels, and bright neutral lighting.
+Set `SHOW_LABORATORY_ENVIRONMENT = False` to hide it.
 
 To download the G1 assets before launching the demo and print their cache
 location:

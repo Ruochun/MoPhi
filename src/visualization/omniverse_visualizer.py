@@ -157,6 +157,9 @@ class OmniverseVisualizer:
             yaw:   Horizontal rotation in degrees (ignored).
         """
 
+    def update_shape_colors(self, shape_colors) -> None:
+        """No-op for the USD backend; accepted for API compatibility."""
+
     # ── Per-frame rendering ────────────────────────────────────────────────────
 
     def begin_frame(self, sim_time: float) -> None:

@@ -18,6 +18,12 @@ def _set_newton_sky_colors(visualizer, upper, lower) -> None:
         viewer.renderer.background_color = tuple(upper)
 
 
+def _set_newton_light_color(visualizer, color) -> None:
+    viewer = _get_newton_viewer(visualizer)
+    if hasattr(viewer, "renderer"):
+        viewer.renderer._light_color = tuple(color)
+
+
 def _log_box_instances(visualizer, name: str, centers, half_extents, colors) -> None:
     """Log non-physical decorative boxes through Newton's instanced renderer."""
     import newton
@@ -154,6 +160,88 @@ def log_warehouse_environment(
     colors = np.tile(np.array([[0.24, 0.26, 0.28]], dtype=np.float32), (len(starts), 1))
     visualizer.log_lines(
         f"{name_prefix}_floor_grid",
+        wp.array(starts, dtype=wp.vec3),
+        wp.array(ends, dtype=wp.vec3),
+        wp.array(colors, dtype=wp.vec3),
+    )
+
+
+def log_laboratory_environment(
+    visualizer,
+    *,
+    room_center=(0.0, 0.0, 0.0),
+    room_half_extents=(5.0, 5.0, 1.8),
+    name_prefix: str = "laboratory_environment",
+) -> None:
+    """Log a bright decorative laboratory with tiled surfaces and fixtures."""
+    import warp as wp
+
+    center = np.asarray(room_center, dtype=np.float32)
+    half_extents = np.asarray(room_half_extents, dtype=np.float32)
+    x_min, x_max = center[0] - half_extents[0], center[0] + half_extents[0]
+    y_min, y_max = center[1] - half_extents[1], center[1] + half_extents[1]
+    room_height = 2.0 * half_extents[2]
+
+    _set_newton_sky_colors(visualizer, (0.48, 0.56, 0.64), (0.20, 0.24, 0.28))
+    _set_newton_light_color(visualizer, (1.6, 1.7, 1.8))
+
+    box_centers = [(center[0], center[1], -0.035)]
+    box_extents = [(half_extents[0], half_extents[1], 0.035)]
+    box_colors = [(0.34, 0.40, 0.44)]
+
+    # Leave the negative-Y side open for the camera while enclosing the work area.
+    wall_panel_width = 0.7
+    for x in np.arange(x_min + 0.5 * wall_panel_width, x_max, wall_panel_width):
+        panel_is_light = int(round((x - x_min) / wall_panel_width)) % 2
+        panel_color = (0.66, 0.70, 0.73) if panel_is_light else (0.55, 0.62, 0.67)
+        box_centers.append((float(x), y_max, half_extents[2]))
+        box_extents.append((0.48 * wall_panel_width, 0.05, half_extents[2]))
+        box_colors.append(panel_color)
+    # Keep the positive-X side open as well, matching the demo's camera angle.
+    for side_x in (x_min,):
+        for y in np.arange(y_min + 0.5 * wall_panel_width, y_max, wall_panel_width):
+            box_centers.append((side_x, float(y), half_extents[2]))
+            box_extents.append((0.05, 0.48 * wall_panel_width, half_extents[2]))
+            box_colors.append((0.58, 0.64, 0.68))
+
+    # Work benches, lower cabinets, instruments, and ceiling light panels.
+    for side_x in (x_min + 0.32, x_max - 0.32):
+        for y in np.linspace(y_min + 0.65, y_max - 0.65, 4):
+            box_centers.extend(
+                [
+                    (side_x, float(y), 0.47),
+                    (side_x, float(y), 0.18),
+                    (side_x, float(y), 0.77),
+                ]
+            )
+            box_extents.extend([(0.30, 0.55, 0.05), (0.27, 0.50, 0.24), (0.18, 0.18, 0.22)])
+            box_colors.extend([(0.20, 0.48, 0.58), (0.68, 0.73, 0.76), (0.12, 0.20, 0.25)])
+    for x in np.linspace(x_min + 0.7, x_max - 0.7, 4):
+        for y in np.linspace(center[1] + 0.8, y_max - 0.8, 2):
+            box_centers.append((float(x), float(y), room_height - 0.05))
+            box_extents.append((0.38, 0.16, 0.025))
+            box_colors.append((0.88, 0.84, 0.62))
+
+    _log_box_instances(visualizer, f"{name_prefix}_fixtures", box_centers, box_extents, box_colors)
+
+    # Fine tile seams and blue wall datum lines make the surfaces read as a lab.
+    starts = []
+    ends = []
+    colors = []
+    for x in np.arange(x_min, x_max + 0.01, 0.35):
+        starts.append((float(x), y_min, 0.004))
+        ends.append((float(x), y_max, 0.004))
+        colors.append((0.22, 0.29, 0.33))
+    for y in np.arange(y_min, y_max + 0.01, 0.35):
+        starts.append((x_min, float(y), 0.004))
+        ends.append((x_max, float(y), 0.004))
+        colors.append((0.22, 0.29, 0.33))
+    for z in (0.75, 2.4):
+        starts.append((x_min, y_max - 0.06, z))
+        ends.append((x_max, y_max - 0.06, z))
+        colors.append((0.12, 0.48, 0.68))
+    visualizer.log_lines(
+        f"{name_prefix}_surface_seams",
         wp.array(starts, dtype=wp.vec3),
         wp.array(ends, dtype=wp.vec3),
         wp.array(colors, dtype=wp.vec3),

@@ -11,7 +11,7 @@
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
-#   python demo/newton_xlb_dem/humanoid_complex_environment/demo_many_flexible_hands.py
+#   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
 #
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
@@ -89,7 +89,7 @@ add_custom_target(demo_humanoid_swimming
 #   cmake --build <build-dir> --target demo_many_flexible_hands
 add_custom_target(demo_many_flexible_hands
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/humanoid_complex_environment/demo_many_flexible_hands.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/flexible_hand_manipulation/demo_many_flexible_hands.py"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Running many independently animated Allegro hands demo"
     VERBATIM
@@ -123,7 +123,13 @@ install(
     FILES
         humanoid_complex_environment/demo_humanoid_complex_environment.py
         humanoid_complex_environment/demo_humanoid_swimming.py
-        humanoid_complex_environment/demo_many_flexible_hands.py
         humanoid_complex_environment/README.md
     DESTINATION demo/newton_xlb_dem/humanoid_complex_environment
+)
+
+install(
+    FILES
+        flexible_hand_manipulation/demo_many_flexible_hands.py
+        flexible_hand_manipulation/README.md
+    DESTINATION demo/newton_xlb_dem/flexible_hand_manipulation
 )
