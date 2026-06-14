@@ -187,6 +187,8 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_ne
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 # Run the Newton + XLB humanoid swimming idea demo
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
+# Run many independently animated, contact-ready Allegro hands
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_many_flexible_hands.py
 ```
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
@@ -221,6 +223,12 @@ XLB does not yet calculate forces that feed back into Newton.
 The underwater sandbed, rocks, vegetation, and background colors are
 renderer-only decorations. Set `SHOW_UNDERWATER_ENVIRONMENT = False` to hide
 them.
+
+The many-hands demo uses Newton's downloadable `wonik_allegro` asset and
+replication support to simulate 64 fixed-base Allegro hands. Every hand keeps
+16 independently driven finger joints and contact-capable collision geometry.
+The first run downloads the public asset automatically; this first stage
+focuses on concurrent finger motion and intentionally omits grasped objects.
 
 To download the G1 assets before launching the demo and print their cache
 location:
