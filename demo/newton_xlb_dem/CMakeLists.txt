@@ -12,6 +12,7 @@
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
+#   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
 #
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
@@ -95,6 +96,15 @@ add_custom_target(demo_many_flexible_hands
     VERBATIM
 )
 
+# ── Custom target: flexible hands grasping loose cubes ────────────────────────
+add_custom_target(demo_flexible_hands_granular_grasp
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running downward-facing flexible hands grasping loose Newton cubes"
+    VERBATIM
+)
+
 # ── Installation ───────────────────────────────────────────────────────────────
 # newton_xlb_dem_utils.py is a pre-existing helper module imported by
 # demo_anymal_robot_multiphysics.py; it is included here so that the install tree is
@@ -130,6 +140,7 @@ install(
 install(
     FILES
         flexible_hand_manipulation/demo_many_flexible_hands.py
+        flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
         flexible_hand_manipulation/README.md
     DESTINATION demo/newton_xlb_dem/flexible_hand_manipulation
 )

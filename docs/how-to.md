@@ -189,6 +189,8 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 # Run many independently animated, contact-ready Allegro hands
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
+# Run downward-facing Allegro hands grasping loose Newton cubes
+PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
 ```
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
@@ -235,6 +237,15 @@ same display color as its bowl. The first run downloads both public assets
 automatically. The renderer-only laboratory adds a tiled floor, paneled walls,
 work benches, instruments, ceiling light panels, and bright neutral lighting.
 Set `SHOW_LABORATORY_ENVIRONMENT = False` to hide it.
+
+The flexible-hands granular-grasp groundwork demo places 64 downward-facing
+Allegro hands in an 8-by-8 laboratory-scale array over individual shallow trays
+containing loose Newton cubes. Four repeating finger-motion profiles close and
+rake through the cubes differently. After grasping, every hand follows a
+prescribed upward wrist trajectory to emulate grasp-and-lift manipulation. Cube
+creation is isolated in `_add_newton_cube_bed()` so a later stage can replace
+the Newton cubes with DEME-managed ellipsoidal clumps and add Newton-DEME
+contact coupling.
 
 To download the G1 assets before launching the demo and print their cache
 location:

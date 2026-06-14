@@ -85,6 +85,7 @@ Every visualizer backend must implement the following methods:
 |--------|-----------|-------|
 | `is_running` | `() → bool` | `False` when the user closes the window (OpenGL) or `close()` is called (USD) |
 | `set_camera` | `(pos, pitch, yaw)` | No-op is acceptable if the backend has no interactive camera |
+| `set_world_offsets` | `(spacing)` | Set additional viewer-only spacing between replicated worlds; no-op is acceptable if unsupported |
 | `update_shape_colors` | `(shape_colors)` | Override selected Newton shape colors; no-op is acceptable if unsupported |
 | `set_mesh_shapes` | `(mesh_descriptors)` | Register static mesh-shape descriptors; bakes `UsdGeom.Mesh` prims under body xforms; no-op if `pxr` not available |
 | `begin_frame` | `(sim_time: float)` | Called once per simulation step before any `log_*` calls |

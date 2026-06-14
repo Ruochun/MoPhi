@@ -157,6 +157,9 @@ class OmniverseVisualizer:
             yaw:   Horizontal rotation in degrees (ignored).
         """
 
+    def set_world_offsets(self, spacing) -> None:
+        """No-op for the USD backend; accepted for API compatibility."""
+
     def update_shape_colors(self, shape_colors) -> None:
         """No-op for the USD backend; accepted for API compatibility."""
 
