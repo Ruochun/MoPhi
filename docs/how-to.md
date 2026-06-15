@@ -189,7 +189,7 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 # Run many independently animated, contact-ready Allegro hands
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
-# Run downward-facing Allegro hands grasping loose Newton cubes
+# Run downward-facing Allegro hands grasping DEME ellipsoidal clumps
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
 ```
 
@@ -238,14 +238,18 @@ automatically. The renderer-only laboratory adds a tiled floor, paneled walls,
 work benches, instruments, ceiling light panels, and bright neutral lighting.
 Set `SHOW_LABORATORY_ENVIRONMENT = False` to hide it.
 
-The flexible-hands granular-grasp groundwork demo places 64 downward-facing
-Allegro hands in an 8-by-8 laboratory-scale array over individual shallow trays
-containing loose Newton cubes. Four repeating finger-motion profiles close and
-rake through the cubes differently. After grasping, every hand follows a
-prescribed upward wrist trajectory to emulate grasp-and-lift manipulation. Cube
-creation is isolated in `_add_newton_cube_bed()` so a later stage can replace
-the Newton cubes with DEME-managed ellipsoidal clumps and add Newton-DEME
-contact coupling.
+The flexible-hands granular-grasp demo places 64 downward-facing Allegro hands
+in an 8-by-8 laboratory-scale array over individual shallow trays. By default,
+DEME's HCP sampler fills a box above every tray location with ellipsoidal
+clumps. Small reproducible random initial velocities disturb the HCP packing as
+the particles fall and settle into piles on one infinite ground plane. There
+are no side or tray-divider planes, so particles can spread freely. Each hand
+follows a prescribed finger-motion and upward wrist trajectory. For the current
+runtime test, `ENABLE_DEME_HAND_MESH_PROXIES = False` by default, so DEME does
+not load hand meshes and the clumps do not contact the hands. Enable the flag
+to load and synchronize the hand visual meshes as kinematic DEME contact
+proxies. This stage does not feed DEME forces back into Newton. Set
+`USE_DEME_CLUMPS = False` in the demo configuration to use Newton cubes instead.
 
 To download the G1 assets before launching the demo and print their cache
 location:
