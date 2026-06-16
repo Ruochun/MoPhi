@@ -1,10 +1,7 @@
-"""Many downward-facing articulated hands attempting to grasp granular material.
+"""Many downward-facing articulated hands attempting to grasp loose Newton cubes.
 
-The default backend uses DEME-managed ellipsoidal clumps and kinematic copies
-of Newton's Allegro convex contact meshes. Mesh-clump contact is disabled while
-the clumps settle, then enabled before Newton begins driving the hands. Set
-``ENABLE_DEME_HAND_MESH_PROXIES = False`` to skip hand contact, or set
-``USE_DEME_CLUMPS = False`` to retain the earlier Newton-cube workload.
+This demo keeps the scalable 64-hand Newton-only path. For the smaller
+one-hand DEME clump version, run ``demo_flexible_hand_deme.py``.
 """
 
 import json
@@ -18,7 +15,6 @@ import warp as wp
 import mophi
 import newton
 import newton.utils
-import DEME
 from newton import JointTargetMode
 
 # =============================================================================
@@ -29,7 +25,6 @@ from newton import JointTargetMode
 # -- Timing -------------------------------------------------------------------
 RENDER_FPS = 25
 NEWTON_DT = 1.0 / 200.0
-DEME_DT = 5.0e-5
 SIM_DURATION_SECONDS = 5.0
 
 # -- Hand replication ---------------------------------------------------------
@@ -49,30 +44,7 @@ HAND_LIFT_START_SECONDS = 3.0
 HAND_LIFT_DURATION_SECONDS = 1.5
 HAND_LIFT_HEIGHT = 0.65
 
-# -- Granular backend ---------------------------------------------------------
-USE_DEME_CLUMPS = True
-ENABLE_DEME_HAND_MESH_PROXIES = True
-DEME_SETTLE_TIME = 1.0
-DEME_CLUMP_SCALE = 0.025
-DEME_HCP_SAMPLE_CENTER = (0.0, 0.12, 0.35)
-DEME_HCP_SAMPLE_HALF_EXTENTS = (0.28, 0.28, 0.0)  # 0.22
-DEME_HCP_SAMPLE_SPACING = 0.12
-DEME_INITIAL_VELOCITY_RANDOM_SEED = 20260615
-DEME_INITIAL_VELOCITY_MIN = (-0.08, -0.08, -0.12)
-DEME_INITIAL_VELOCITY_MAX = (0.08, 0.08, 0.02)
-DEME_PARTICLE_DENSITY = 1800.0
-DEME_PARTICLE_FAMILY = 0
-DEME_HAND_PROXY_SLEEP_FAMILY = 20
-DEME_HAND_PROXY_ACTIVE_FAMILY = 21
-DEME_DOMAIN_Z_MAX = 3.0
-DEME_MATERIAL_YOUNGS_MODULUS = 1.0e4
-DEME_MATERIAL_POISSON_RATIO = 0.3
-DEME_MATERIAL_RESTITUTION = 0.25
-DEME_MATERIAL_FRICTION = 0.7
-DEME_CLUMP_COLOR = (0.76, 0.60, 0.42)
-DEME_HAND_PROXY_DIRECTORY_NAME = "deme_hand_contact_meshes"
-
-# -- Newton cube fallback -----------------------------------------------------
+# -- Newton cube bed ----------------------------------------------------------
 CUBE_GRID_X = (-0.065, 0.065)
 CUBE_GRID_Y = (0.075, 0.205)
 CUBE_LAYER_Z = (0.075, 0.155)
@@ -153,7 +125,7 @@ LABORATORY_ROOM_HALF_EXTENTS = (6.0, 6.0, 1.8)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
 SAVE_MOVIE = True
-MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_flexible_hands_granular_grasp.mp4"
+MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "demo_flexible_hand_newton.mp4"
 MOVIE_FPS = RENDER_FPS
 SAVE_FINAL_STATE = True
 FINAL_STATE_OUTPUT_PATH = OUTPUT_DIRECTORY / "final_state.npz"
@@ -164,27 +136,8 @@ FRAME_DT = 1.0 / RENDER_FPS
 NUM_FRAMES = int(round(SIM_DURATION_SECONDS / FRAME_DT))
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 CUBES_PER_HAND = len(CUBE_GRID_X) * len(CUBE_GRID_Y) * len(CUBE_LAYER_Z)
-DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
-DEME_CLUMP_SPHERE_RADII = np.array([1.00, 0.88, 0.64, 0.88, 0.64], dtype=np.float32) * DEME_CLUMP_SCALE
-DEME_CLUMP_SPHERE_OFFSETS = (
-    np.array(
-        [[0.0, 0.0, 0.00], [0.0, 0.0, 0.86], [0.0, 0.0, 1.44], [0.0, 0.0, -0.86], [0.0, 0.0, -1.44]],
-        dtype=np.float32,
-    )
-    * DEME_CLUMP_SCALE
-)
 if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
-if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
-    raise ValueError("NEWTON_DT must be an integer multiple of DEME_DT.")
-if DEME_SETTLE_TIME < 0.0:
-    raise ValueError("DEME_SETTLE_TIME must be non-negative.")
-if DEME_HCP_SAMPLE_SPACING <= 0.0:
-    raise ValueError("DEME_HCP_SAMPLE_SPACING must be positive.")
-if np.any(np.asarray(DEME_HCP_SAMPLE_HALF_EXTENTS) < 0.0):
-    raise ValueError("DEME_HCP_SAMPLE_HALF_EXTENTS must be non-negative.")
-if np.any(np.asarray(DEME_INITIAL_VELOCITY_MAX) < np.asarray(DEME_INITIAL_VELOCITY_MIN)):
-    raise ValueError("Every DEME_INITIAL_VELOCITY_MAX component must be >= DEME_INITIAL_VELOCITY_MIN.")
 
 
 @wp.kernel
@@ -236,167 +189,6 @@ def _update_hand_root_lift(
     joint_qd[qd_start + 5] = 0.0
 
 
-def _replicated_world_offsets() -> np.ndarray:
-    """Return the centered physical XY offsets used by ``ModelBuilder.replicate``."""
-    side_length = int(np.ceil(np.sqrt(HAND_COUNT)))
-    offsets = []
-    for hand_idx in range(HAND_COUNT):
-        offsets.append(
-            (
-                (hand_idx // side_length) * HAND_SPACING[0],
-                (hand_idx % side_length) * HAND_SPACING[1],
-                0.0,
-            )
-        )
-    offsets = np.asarray(offsets, dtype=np.float32)
-    offsets[:, :2] -= 0.5 * (offsets[:, :2].min(axis=0) + offsets[:, :2].max(axis=0))
-    return offsets
-
-
-def _rotate_points_by_quat_xyzw(points: np.ndarray, quat_xyzw) -> np.ndarray:
-    """Rotate an ``(N, 3)`` point array by an xyzw quaternion."""
-    quat = np.asarray(quat_xyzw, dtype=np.float32)
-    q_xyz = quat[:3]
-    q_w = quat[3]
-    q_xyz_batch = np.broadcast_to(q_xyz, points.shape)
-    cross = np.cross(q_xyz_batch, points)
-    return points + 2.0 * (q_w * cross + np.cross(q_xyz_batch, cross))
-
-
-def _export_hand_contact_mesh_proxies(hand: newton.ModelBuilder, directory: Path) -> list[tuple[int, Path]]:
-    """Bake each Newton Allegro convex contact mesh into body-local OBJ coordinates for DEME."""
-    directory.mkdir(parents=True, exist_ok=True)
-    proxies = []
-    for shape_idx, shape_type in enumerate(hand.shape_type):
-        if shape_type != newton.GeoType.CONVEX_MESH:
-            continue
-        flags = hand.shape_flags[shape_idx]
-        if not (flags & newton.ShapeFlags.COLLIDE_SHAPES):
-            continue
-        body_idx = int(hand.shape_body[shape_idx])
-        if body_idx < 0:
-            continue
-
-        mesh = hand.shape_source[shape_idx]
-        vertices = np.asarray(mesh.vertices, dtype=np.float32).reshape(-1, 3)
-        scale = np.asarray(hand.shape_scale[shape_idx], dtype=np.float32)
-        local_xform = hand.shape_transform[shape_idx]
-        vertices = vertices * scale
-        vertices = _rotate_points_by_quat_xyzw(vertices, local_xform.q)
-        vertices += np.asarray(local_xform.p, dtype=np.float32)
-        indices = np.asarray(mesh.indices, dtype=np.int64).reshape(-1, 3) + 1
-
-        obj_path = directory / f"hand_body_{body_idx:02d}_shape_{shape_idx:02d}.obj"
-        lines = [f"v {v[0]:.9g} {v[1]:.9g} {v[2]:.9g}\n" for v in vertices]
-        lines.extend(f"f {tri[0]} {tri[1]} {tri[2]}\n" for tri in indices)
-        obj_path.write_text("".join(lines), encoding="ascii")
-        proxies.append((body_idx, obj_path))
-    return proxies
-
-
-def _build_deme_granular_system(hand: newton.ModelBuilder, model):
-    """Create DEME clumps, a shared ground plane, and kinematic hand mesh proxies."""
-    deme_solver = DEME.DEMSolver()
-    deme_solver.UseFrictionalHertzianModel()
-    deme_solver.SetVerbosity("INFO")
-    wall_material = deme_solver.LoadMaterial(
-        {
-            "E": DEME_MATERIAL_YOUNGS_MODULUS,
-            "nu": DEME_MATERIAL_POISSON_RATIO,
-            "CoR": DEME_MATERIAL_RESTITUTION,
-            "mu": DEME_MATERIAL_FRICTION,
-        }
-    )
-    particle_material = deme_solver.LoadMaterial(
-        {
-            "E": DEME_MATERIAL_YOUNGS_MODULUS,
-            "nu": DEME_MATERIAL_POISSON_RATIO,
-            "CoR": DEME_MATERIAL_RESTITUTION,
-            "mu": DEME_MATERIAL_FRICTION,
-        }
-    )
-    deme_solver.SetMaterialPropertyPair("CoR", wall_material, particle_material, DEME_MATERIAL_RESTITUTION)
-    deme_solver.SetMaterialPropertyPair("mu", wall_material, particle_material, DEME_MATERIAL_FRICTION)
-
-    world_offsets = _replicated_world_offsets()
-    floor_height = TRAY_FLOOR_CENTER[2] + TRAY_FLOOR_HALF_EXTENTS[2]
-    deme_solver.AddBCPlane([0.0, 0.0, floor_height], [0.0, 0.0, 1.0], wall_material)
-    x_low = world_offsets[:, 0].min() - 1.5 * HAND_SPACING[0]
-    x_high = world_offsets[:, 0].max() + 1.5 * HAND_SPACING[0]
-    y_low = world_offsets[:, 1].min() - 1.5 * HAND_SPACING[1]
-    y_high = world_offsets[:, 1].max() + 1.5 * HAND_SPACING[1]
-    z_low = 0.0 - 1.5 * HAND_SPACING[0]
-    deme_solver.InstructBoxDomainDimension([x_low, x_high], [y_low, y_high], [z_low, DEME_DOMAIN_Z_MAX])
-
-    template_mass = DEME_PARTICLE_DENSITY * (4.0 / 3.0 * np.pi * 2.0 * 1.0 * 1.0)
-    template_moi = [
-        1.0 / 5.0 * template_mass * (1.0**2 + 2.0**2),
-        1.0 / 5.0 * template_mass * (1.0**2 + 2.0**2),
-        1.0 / 5.0 * template_mass * (1.0**2 + 1.0**2),
-    ]
-    particle_template = deme_solver.LoadClumpType(
-        template_mass,
-        template_moi,
-        DEME.GetDEMEDataFile("clumps/ellipsoid_2_1_1.csv"),
-        particle_material,
-    )
-    particle_template.Scale(DEME_CLUMP_SCALE)
-    hcp_sampler = DEME.HCPSampler(DEME_HCP_SAMPLE_SPACING)
-    sample_center_offset = np.asarray(DEME_HCP_SAMPLE_CENTER, dtype=np.float32)
-    clump_positions = []
-    for world_offset in world_offsets:
-        sample_center = (world_offset + sample_center_offset).tolist()
-        clump_positions.extend(hcp_sampler.SampleBox(sample_center, DEME_HCP_SAMPLE_HALF_EXTENTS))
-    clumps = deme_solver.AddClumps(particle_template, clump_positions)
-    clumps.SetFamily(DEME_PARTICLE_FAMILY)
-    velocity_rng = np.random.default_rng(DEME_INITIAL_VELOCITY_RANDOM_SEED)
-    initial_velocities = velocity_rng.uniform(
-        low=np.asarray(DEME_INITIAL_VELOCITY_MIN, dtype=np.float32),
-        high=np.asarray(DEME_INITIAL_VELOCITY_MAX, dtype=np.float32),
-        size=(len(clump_positions), 3),
-    ).astype(np.float32)
-    clumps.SetVel(initial_velocities.tolist())
-    clump_tracker = deme_solver.Track(clumps)
-
-    hand_proxy_trackers = []
-    if ENABLE_DEME_HAND_MESH_PROXIES:
-        proxy_directory = OUTPUT_DIRECTORY / DEME_HAND_PROXY_DIRECTORY_NAME
-        local_proxy_meshes = _export_hand_contact_mesh_proxies(hand, proxy_directory)
-        if not local_proxy_meshes:
-            mophi.fatal("No Newton convex hand contact meshes were found for DEME proxy creation.")
-        initial_state = model.state()
-        newton.eval_fk(model, model.joint_q, model.joint_qd, initial_state)
-        initial_body_q = initial_state.body_q.numpy()
-        for hand_idx in range(HAND_COUNT):
-            body_offset = hand_idx * hand.body_count
-            for local_body_idx, obj_path in local_proxy_meshes:
-                body_idx = body_offset + local_body_idx
-                mesh_owner = deme_solver.AddWavefrontMeshObject(str(obj_path), wall_material, False)
-                mesh_owner.SetInitPos(initial_body_q[body_idx, :3].tolist())
-                mesh_owner.SetInitQuat(initial_body_q[body_idx, 3:7].tolist())
-                mesh_owner.SetFamily(DEME_HAND_PROXY_SLEEP_FAMILY)
-                hand_proxy_trackers.append((body_idx, deme_solver.Track(mesh_owner)))
-        deme_solver.SetFamilyFixed(DEME_HAND_PROXY_SLEEP_FAMILY)
-        deme_solver.SetFamilyFixed(DEME_HAND_PROXY_ACTIVE_FAMILY)
-        deme_solver.DisableContactBetweenFamilies(DEME_PARTICLE_FAMILY, DEME_HAND_PROXY_SLEEP_FAMILY)
-    deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
-    deme_solver.SetInitTimeStep(DEME_DT)
-    deme_solver.SetErrorOutAvgContacts(50)
-    deme_solver.SetInitBinNumTarget(500000)
-    deme_solver.DisableAdaptiveBinSize()
-    deme_solver.Initialize()
-    print(f"[DEME] Initialized {len(clump_positions)} ellipsoidal clumps and one shared ground plane.")
-    print(f"[DEME] Hand mesh contact proxies loaded: {len(hand_proxy_trackers)}.")
-    return deme_solver, clump_tracker, hand_proxy_trackers, len(clump_positions)
-
-
-def _sync_deme_hand_proxy_poses(hand_proxy_trackers, body_q: np.ndarray) -> None:
-    """Update every fixed DEME hand mesh owner from its Newton body transform."""
-    for body_idx, tracker in hand_proxy_trackers:
-        tracker.SetPos(body_q[body_idx, :3].tolist())
-        tracker.SetOriQ(body_q[body_idx, 3:7].tolist())
-
-
 def _add_static_tray(builder: newton.ModelBuilder) -> list[int]:
     """Add one non-moving shallow tray and return its shape indices."""
     hx, hy, hz = TRAY_FLOOR_HALF_EXTENTS
@@ -442,7 +234,7 @@ def _add_static_tray(builder: newton.ModelBuilder) -> list[int]:
 
 
 def _add_newton_cube_bed(builder: newton.ModelBuilder) -> tuple[list[int], list[int]]:
-    """Add loose Newton cubes for the flag-off fallback path."""
+    """Add loose Newton cubes."""
     cube_cfg = newton.ModelBuilder.ShapeConfig(
         density=CUBE_DENSITY,
         ke=SHAPE_CONTACT_STIFFNESS,
@@ -476,7 +268,7 @@ def _add_newton_cube_bed(builder: newton.ModelBuilder) -> tuple[list[int], list[
 
 
 def _configure_hand_template():
-    """Load one downward-facing hand, tray, and optional Newton cube bed."""
+    """Load one downward-facing hand, tray, and loose Newton cube bed."""
     hand = newton.ModelBuilder(up_axis=newton.Axis.Z)
     newton.solvers.SolverMuJoCo.register_custom_attributes(hand)
     hand.default_shape_cfg.ke = SHAPE_CONTACT_STIFFNESS
@@ -531,7 +323,7 @@ def _configure_hand_template():
         hand.joint_armature[dof_idx] = FINGER_JOINT_ARMATURE
 
     tray_shape_indices = _add_static_tray(hand)
-    cube_body_indices, cube_shape_indices = ([], []) if USE_DEME_CLUMPS else _add_newton_cube_bed(hand)
+    cube_body_indices, cube_shape_indices = _add_newton_cube_bed(hand)
     return (
         hand,
         np.asarray(finger_dof_indices, dtype=np.int32),
@@ -599,29 +391,22 @@ def _write_run_metadata(
     completed_frames: int,
     elapsed_wall_seconds: float,
     controlled_dof_count: int,
-    granular_object_count: int,
-    lifted_granular_count: int,
-    displaced_granular_count: int,
-    deme_hand_proxy_count: int,
+    cube_count: int,
+    lifted_cube_count: int,
+    displaced_cube_count: int,
     profile_names: list[str],
 ) -> None:
     completed_sim_seconds = completed_frames * FRAME_DT
     metadata = {
-        "demo": "flexible_hands_granular_grasp",
+        "demo": "flexible_hand_newton",
         "baseline": "Newton example_robot_allegro_hand.py",
         "asset_path": str(asset_path),
         "hand_count": HAND_COUNT,
-        "granular_backend": "DEME ellipsoidal clumps" if USE_DEME_CLUMPS else "Newton cubes",
-        "granular_objects_per_hand": granular_object_count // HAND_COUNT if USE_DEME_CLUMPS else CUBES_PER_HAND,
-        "granular_object_count": granular_object_count,
-        "lifted_granular_count": lifted_granular_count,
-        "displaced_granular_count": displaced_granular_count,
-        "deme_hand_proxy_count": deme_hand_proxy_count,
-        "deme_hand_proxy_geometry": "Newton convex contact meshes" if ENABLE_DEME_HAND_MESH_PROXIES else None,
-        "deme_hand_mesh_proxies_enabled": ENABLE_DEME_HAND_MESH_PROXIES,
-        "deme_settle_time": DEME_SETTLE_TIME if USE_DEME_CLUMPS else None,
-        "deme_hcp_sample_spacing": DEME_HCP_SAMPLE_SPACING,
-        "deme_initial_velocity_random_seed": DEME_INITIAL_VELOCITY_RANDOM_SEED,
+        "granular_backend": "Newton cubes",
+        "cubes_per_hand": CUBES_PER_HAND,
+        "cube_count": cube_count,
+        "lifted_cube_count": lifted_cube_count,
+        "displaced_cube_count": displaced_cube_count,
         "grasp_profiles": sorted(set(profile_names)),
         "hand_lift_start_seconds": HAND_LIFT_START_SECONDS,
         "hand_lift_duration_seconds": HAND_LIFT_DURATION_SECONDS,
@@ -634,7 +419,6 @@ def _write_run_metadata(
         "completed_sim_seconds": completed_sim_seconds,
         "elapsed_wall_seconds": elapsed_wall_seconds,
         "newton_dt": NEWTON_DT,
-        "deme_dt": DEME_DT if USE_DEME_CLUMPS else None,
         "render_fps": RENDER_FPS,
     }
     RUN_METADATA_OUTPUT_PATH.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
@@ -693,26 +477,9 @@ def main() -> None:
         ls_iterations=SOLVER_LINE_SEARCH_ITERATIONS,
         use_mujoco_contacts=False,
     )
-    deme_solver = None
-    deme_clump_tracker = None
-    deme_hand_proxy_trackers = []
-    granular_object_count = HAND_COUNT * CUBES_PER_HAND
-    if USE_DEME_CLUMPS:
-        deme_solver, deme_clump_tracker, deme_hand_proxy_trackers, granular_object_count = _build_deme_granular_system(
-            hand,
-            model,
-        )
+    cube_count = HAND_COUNT * CUBES_PER_HAND
     coupler = mophi.NewtonXLBDEMCoupler()
-    coupler.initialize(model, solver, None, deme_solver, NEWTON_DT)
-    if USE_DEME_CLUMPS:
-        print(f"[DEME] Settling clumps for {DEME_SETTLE_TIME:.2f} s with hand contact disabled.")
-        deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
-        if ENABLE_DEME_HAND_MESH_PROXIES:
-            _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
-            deme_solver.ChangeFamily(DEME_HAND_PROXY_SLEEP_FAMILY, DEME_HAND_PROXY_ACTIVE_FAMILY)
-            print("[DEME] Settling complete; hand mesh contact enabled.")
-        else:
-            print("[DEME] Settling complete; hand mesh contact remains disabled.")
+    coupler.initialize(model, solver, None, None, NEWTON_DT)
 
     device = wp.get_device()
     target_indices_wp = wp.array(target_indices, dtype=wp.int32, device=device)
@@ -760,33 +527,14 @@ def main() -> None:
         ],
         dtype=np.int32,
     )
-    if USE_DEME_CLUMPS:
-        initial_granular_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32).copy()
-        deme_clump_colors_wp = wp.array(
-            np.tile(np.asarray(DEME_CLUMP_COLOR, dtype=np.float32), (granular_object_count, 1)),
-            dtype=wp.vec3,
-            device=device,
-        )
-    else:
-        initial_granular_positions = coupler.newton_state_0.body_q.numpy()[cube_body_indices, :3].copy()
-        deme_clump_colors_wp = None
+    initial_cube_positions = coupler.newton_state_0.body_q.numpy()[cube_body_indices, :3].copy()
     movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS) if SAVE_MOVIE else None
     completed_frames = 0
     final_body_q = None
     final_joint_q = None
-    final_granular_positions = None
     start_wall_time = time.perf_counter()
     print(f"[Hands] Simulating {HAND_COUNT} downward-facing Allegro hands.")
-    if USE_DEME_CLUMPS:
-        print(
-            f"[Granular stage] Added {granular_object_count} DEME ellipsoidal clumps and "
-            f"{len(deme_hand_proxy_trackers)} kinematic hand mesh proxies."
-        )
-        if not ENABLE_DEME_HAND_MESH_PROXIES:
-            print("[Granular stage] DEME hand contact is disabled for this runtime test.")
-        print(f"[Granular stage] Advancing DEME with {DEME_SUBSTEPS} substeps per Newton step.")
-    else:
-        print(f"[Granular stage] Added {granular_object_count} loose Newton cubes in shallow trays.")
+    print(f"[Granular stage] Added {cube_count} loose Newton cubes in shallow trays.")
     print(
         f"[Lift] Raising the hands by {HAND_LIFT_HEIGHT:.2f} m after " f"{HAND_LIFT_START_SECONDS:.2f} s of grasping."
     )
@@ -839,29 +587,9 @@ def main() -> None:
                     coupler.newton_state_0,
                 )
                 coupler.step_newton()
-                if USE_DEME_CLUMPS and ENABLE_DEME_HAND_MESH_PROXIES:
-                    _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
-                if USE_DEME_CLUMPS:
-                    for _ in range(DEME_SUBSTEPS):
-                        coupler.step_deme()
 
             vis.begin_frame(sim_time)
             vis.log_state(coupler.newton_state_0)
-            if USE_DEME_CLUMPS:
-                vis.log_clumps(
-                    "deme_granular_material",
-                    wp.array(
-                        np.asarray(deme_clump_tracker.Positions(), dtype=np.float32), dtype=wp.vec3, device=device
-                    ),
-                    wp.array(
-                        np.asarray(deme_clump_tracker.OrientationQuaternions(), dtype=np.float32),
-                        dtype=wp.vec4,
-                        device=device,
-                    ),
-                    DEME_CLUMP_SPHERE_RADII,
-                    DEME_CLUMP_SPHERE_OFFSETS,
-                    colors=deme_clump_colors_wp,
-                )
             vis.end_frame()
             completed_frames = frame + 1
             if movie_writer is not None:
@@ -869,10 +597,7 @@ def main() -> None:
     finally:
         elapsed_wall_seconds = time.perf_counter() - start_wall_time
         final_body_q = coupler.newton_state_0.body_q.numpy()
-        if USE_DEME_CLUMPS:
-            final_granular_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32).copy()
-        else:
-            final_granular_positions = final_body_q[cube_body_indices, :3].copy()
+        final_cube_positions = final_body_q[cube_body_indices, :3].copy()
         if SAVE_FINAL_STATE:
             final_joint_q = coupler.newton_state_0.joint_q.numpy()
         if movie_writer is not None:
@@ -885,31 +610,30 @@ def main() -> None:
             FINAL_STATE_OUTPUT_PATH,
             body_q=final_body_q,
             joint_q=final_joint_q,
-            granular_positions=final_granular_positions,
+            cube_positions=final_cube_positions,
         )
-    lifted_granular_count = int(
-        np.count_nonzero(final_granular_positions[:, 2] > initial_granular_positions[:, 2] + GRANULAR_LIFT_THRESHOLD)
+    lifted_cube_count = int(
+        np.count_nonzero(final_cube_positions[:, 2] > initial_cube_positions[:, 2] + GRANULAR_LIFT_THRESHOLD)
     )
-    granular_displacements = np.linalg.norm(final_granular_positions - initial_granular_positions, axis=1)
-    displaced_granular_count = int(np.count_nonzero(granular_displacements > GRANULAR_DISPLACEMENT_THRESHOLD))
+    cube_displacements = np.linalg.norm(final_cube_positions - initial_cube_positions, axis=1)
+    displaced_cube_count = int(np.count_nonzero(cube_displacements > GRANULAR_DISPLACEMENT_THRESHOLD))
     _write_run_metadata(
         model,
         asset_path,
         completed_frames,
         elapsed_wall_seconds,
         controlled_dof_count,
-        granular_object_count,
-        lifted_granular_count,
-        displaced_granular_count,
-        len(deme_hand_proxy_trackers),
+        cube_count,
+        lifted_cube_count,
+        displaced_cube_count,
         profile_names,
     )
     completed_sim_seconds = completed_frames * FRAME_DT
     realtime_factor = completed_sim_seconds / elapsed_wall_seconds if elapsed_wall_seconds > 0.0 else 0.0
     print(f"[Performance] Simulated {completed_sim_seconds:.2f} s in {elapsed_wall_seconds:.2f} wall-clock s.")
     print(f"[Performance] Aggregate realtime factor: {realtime_factor:.2f}x.")
-    print(f"[Granular objects] Lifted above threshold at final frame: {lifted_granular_count}.")
-    print(f"[Granular objects] Displaced beyond threshold at final frame: {displaced_granular_count}.")
+    print(f"[Cubes] Lifted above threshold at final frame: {lifted_cube_count}.")
+    print(f"[Cubes] Displaced beyond threshold at final frame: {displaced_cube_count}.")
     print(f"[Output] Saved run metadata to '{RUN_METADATA_OUTPUT_PATH}'.")
 
 

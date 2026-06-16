@@ -187,10 +187,10 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_ne
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 # Run the Newton + XLB humanoid swimming idea demo
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
-# Run many independently animated, contact-ready Allegro hands
-PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
-# Run downward-facing Allegro hands grasping DEME ellipsoidal clumps
-PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
+# Run 64 downward-facing Allegro hands grasping loose Newton cubes
+PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
+# Run one downward-facing Allegro hand interacting with DEME ellipsoidal clumps
+PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
 ```
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
@@ -226,32 +226,15 @@ The underwater sandbed, rocks, vegetation, and background colors are
 renderer-only decorations. Set `SHOW_UNDERWATER_ENVIRONMENT = False` to hide
 them.
 
-The many-hands demo uses Newton's downloadable `wonik_allegro` and
-`manipulation_objects/cup` assets to simulate 64 fixed-base Allegro hands
-handling 64 enlarged dynamic contact cups. Each cup combines the open cup mesh
-with a visible, contact-enabled rounded handle. Every hand keeps 16
-independently driven finger joints. Four repeating grasp profiles vary finger
-closure, motion, cup placement, and tilt so some hands retain their cups while
-others drop them. Cups spawn clear of the fingers, and each handle uses the
-same display color as its bowl. The first run downloads both public assets
-automatically. The renderer-only laboratory adds a tiled floor, paneled walls,
-work benches, instruments, ceiling light panels, and bright neutral lighting.
-Set `SHOW_LABORATORY_ENVIRONMENT = False` to hide it.
-
-The flexible-hands granular-grasp demo places 64 downward-facing Allegro hands
-in an 8-by-8 laboratory-scale array over individual shallow trays. By default,
-DEME's HCP sampler fills a box above every tray location with ellipsoidal
-clumps. Small reproducible random initial velocities disturb the HCP packing as
-the particles fall and settle into piles on one infinite ground plane. There
-are no side or tray-divider planes, so particles can spread freely. Each hand
-follows a prescribed finger-motion and upward wrist trajectory. For the current
-configuration, DEME reuses Newton's simplified convex hand contact meshes
-rather than the fine visual meshes. These proxies have clump contact disabled
-during a blocking DEME settling phase. Once settling completes, the meshes are
-synchronized from Newton and switched into an active-contact family. This stage
-does not feed DEME forces back into Newton. Set
-`ENABLE_DEME_HAND_MESH_PROXIES = False` to run without hand contact, or set
-`USE_DEME_CLUMPS = False` to use Newton cubes instead.
+The flexible-hand Newton demo places 64 downward-facing
+Allegro hands in an 8-by-8 laboratory-scale array over individual shallow trays
+filled with loose Newton cubes. The flexible-hand DEME demo runs one hand/tray
+instance instead, using DEME's HCP sampler to place ellipsoidal clumps above
+the tray with small reproducible random initial velocities. DEME reuses
+Newton's simplified convex hand contact meshes rather than the fine visual
+meshes. These proxies have clump contact disabled during a blocking DEME
+settling phase, then switch into an active-contact family for the hand motion.
+This stage does not feed DEME forces back into Newton.
 
 To download the G1 assets before launching the demo and print their cache
 location:

@@ -1,64 +1,42 @@
 # Flexible-hand manipulation demos
 
-This folder hosts scalable articulated-hand manipulation and contact demos.
-The current first stage uses Newton rigid-link Allegro hands; later stages can
-replace their collision representation with DEM-Engine-style clump spheres
-and add more challenging object shapes and counts.
+This folder hosts articulated-hand manipulation demos that compare a Newton-only
+contact workload with a smaller Newton-DEME contact prototype.
 
-## Many articulated hands demo
+## Flexible Hand Newton
 
-`demo_many_flexible_hands.py` adapts Newton's public Allegro-hand example and
-`manipulation_objects/cup` asset into a MoPhi-style contact scaling demo. It
-replicates 64 fixed-base hands, 64 enlarged dynamic cups with contact-enabled
-rounded handles, and independently drives all 16 finger joints on every hand.
-
-Four repeating grasp profiles vary closure strength, motion amplitude, cup
-placement, and cup tilt. Some hands cradle their cups while overclosed,
-pulsing, or deliberately open hands can knock down or drop theirs. Cups begin
-just outside the fingers to avoid initial penetration, and each compound
-handle shares its bowl's display color.
-
-The viewer adds a decorative laboratory with a tiled floor, paneled walls,
-work benches, instruments, ceiling light panels, and bright neutral lighting.
-These objects exist only in the renderer and do not participate in contact.
-Set `SHOW_LABORATORY_ENVIRONMENT = False` to hide them.
+`demo_flexible_hand_newton.py` replicates 64 downward-facing Allegro hands.
+Each hand closes and rakes through loose Newton cubes inside a shallow tray.
+Four repeating grasp profiles vary closure strength, motion amplitude, and
+phase. After the grasp phase, prescribed kinematic wrist motion raises every
+hand along the world Z axis to demonstrate a grasp-and-lift workload.
 
 Run from the repository root:
 
 ```bash
-PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
-```
-
-Newton downloads the public `wonik_allegro` and `manipulation_objects/cup`
-assets automatically on first run. Generated files are written to
-`<repository-root>/output/demo_many_flexible_hands/`.
-
-## Granular-grasp demo
-
-`demo_flexible_hands_granular_grasp.py` replicates 64 downward-facing Allegro
-hands. By default, DEME's HCP sampler fills a box above every tray location
-with ellipsoidal clumps. Small reproducible random initial velocities disturb
-the HCP packing as the particles fall and settle into piles. Four repeating
-grasp profiles vary closure strength, motion amplitude, and phase. After the
-grasp phase, prescribed kinematic wrist motion raises every hand along the
-world Z axis to demonstrate a grasp-and-lift workload.
-
-DEME uses one shared infinite ground plane, allowing particles to spread freely
-between the visually rendered trays. DEME reuses Newton's simplified convex
-Allegro contact meshes rather than the fine visual meshes. These proxies are
-enabled by default, but initially belong to a fixed sleep family whose contact
-with clumps is disabled. After the blocking settling phase, the meshes are
-synchronized from Newton and switched to a fixed active-contact family. This
-coupling remains one-way: DEME contact forces are not fed back into Newton. Set
-`ENABLE_DEME_HAND_MESH_PROXIES = False` to run without hand contact, or set
-`USE_DEME_CLUMPS = False` to use the Newton-cube fallback. The default DEME path
-requires the `deme` Python package and a DEME-compatible CUDA GPU.
-
-Run from the repository root:
-
-```bash
-PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
+PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
 ```
 
 Generated files are written to
-`<repository-root>/output/demo_flexible_hands_granular_grasp/`.
+`<repository-root>/output/demo_flexible_hand_newton/`.
+
+## Flexible Hand DEME
+
+`demo_flexible_hand_deme.py` keeps the same laboratory scene and downward-facing
+Allegro hand motion, but runs only one hand/tray instance so the DEME contact
+path can be debugged. DEME's HCP sampler places ellipsoidal clumps above the
+tray location with small reproducible random initial velocities. DEME reuses
+Newton's simplified convex Allegro contact meshes rather than the fine visual
+meshes. These proxies start in a fixed sleep family with clump contact disabled
+during settling, then switch to an active-contact family for the main hand
+motion. This coupling remains one-way: DEME contact forces are not fed back
+into Newton.
+
+Run from the repository root:
+
+```bash
+PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
+```
+
+Generated files are written to
+`<repository-root>/output/demo_flexible_hand_deme/`.

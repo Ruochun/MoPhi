@@ -11,8 +11,8 @@
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
-#   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_many_flexible_hands.py
-#   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
+#   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
+#   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
 #
 # Prerequisites:
 #   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
@@ -85,23 +85,21 @@ add_custom_target(demo_humanoid_swimming
     VERBATIM
 )
 
-# ── Custom target: many articulated hands demo ────────────────────────────────
-# Adds a `demo_many_flexible_hands` build target.  Run with:
-#   cmake --build <build-dir> --target demo_many_flexible_hands
-add_custom_target(demo_many_flexible_hands
+# ── Custom target: flexible hand Newton cube demo ─────────────────────────────
+add_custom_target(demo_flexible_hand_newton
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/flexible_hand_manipulation/demo_many_flexible_hands.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/flexible_hand_manipulation/demo_flexible_hand_newton.py"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Running many independently animated Allegro hands demo"
+    COMMENT "Running downward-facing flexible hands grasping loose Newton cubes"
     VERBATIM
 )
 
-# ── Custom target: flexible hands grasping loose cubes ────────────────────────
-add_custom_target(demo_flexible_hands_granular_grasp
+# ── Custom target: flexible hand DEME clump demo ──────────────────────────────
+add_custom_target(demo_flexible_hand_deme
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/flexible_hand_manipulation/demo_flexible_hand_deme.py"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Running downward-facing flexible hands grasping loose Newton cubes"
+    COMMENT "Running one flexible hand interacting with DEME clumps"
     VERBATIM
 )
 
@@ -139,8 +137,8 @@ install(
 
 install(
     FILES
-        flexible_hand_manipulation/demo_many_flexible_hands.py
-        flexible_hand_manipulation/demo_flexible_hands_granular_grasp.py
+        flexible_hand_manipulation/demo_flexible_hand_newton.py
+        flexible_hand_manipulation/demo_flexible_hand_deme.py
         flexible_hand_manipulation/README.md
     DESTINATION demo/newton_xlb_dem/flexible_hand_manipulation
 )
