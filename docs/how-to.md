@@ -245,11 +245,13 @@ clumps. Small reproducible random initial velocities disturb the HCP packing as
 the particles fall and settle into piles on one infinite ground plane. There
 are no side or tray-divider planes, so particles can spread freely. Each hand
 follows a prescribed finger-motion and upward wrist trajectory. For the current
-runtime test, `ENABLE_DEME_HAND_MESH_PROXIES = False` by default, so DEME does
-not load hand meshes and the clumps do not contact the hands. Enable the flag
-to load and synchronize the hand visual meshes as kinematic DEME contact
-proxies. This stage does not feed DEME forces back into Newton. Set
-`USE_DEME_CLUMPS = False` in the demo configuration to use Newton cubes instead.
+configuration, DEME reuses Newton's simplified convex hand contact meshes
+rather than the fine visual meshes. These proxies have clump contact disabled
+during a blocking DEME settling phase. Once settling completes, the meshes are
+synchronized from Newton and switched into an active-contact family. This stage
+does not feed DEME forces back into Newton. Set
+`ENABLE_DEME_HAND_MESH_PROXIES = False` to run without hand contact, or set
+`USE_DEME_CLUMPS = False` to use Newton cubes instead.
 
 To download the G1 assets before launching the demo and print their cache
 location:

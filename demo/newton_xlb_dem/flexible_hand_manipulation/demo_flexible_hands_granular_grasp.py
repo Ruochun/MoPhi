@@ -1,9 +1,10 @@
 """Many downward-facing articulated hands attempting to grasp granular material.
 
-The default backend uses DEME-managed ellipsoidal clumps without loading hand
-meshes into DEME. Newton still drives the articulated Allegro hands, but the
-clumps do not contact them unless ``ENABLE_DEME_HAND_MESH_PROXIES`` is enabled.
-Set ``USE_DEME_CLUMPS = False`` to retain the earlier Newton-cube workload.
+The default backend uses DEME-managed ellipsoidal clumps and kinematic copies
+of Newton's Allegro convex contact meshes. Mesh-clump contact is disabled while
+the clumps settle, then enabled before Newton begins driving the hands. Set
+``ENABLE_DEME_HAND_MESH_PROXIES = False`` to skip hand contact, or set
+``USE_DEME_CLUMPS = False`` to retain the earlier Newton-cube workload.
 """
 
 import json
@@ -50,7 +51,8 @@ HAND_LIFT_HEIGHT = 0.65
 
 # -- Granular backend ---------------------------------------------------------
 USE_DEME_CLUMPS = True
-ENABLE_DEME_HAND_MESH_PROXIES = False
+ENABLE_DEME_HAND_MESH_PROXIES = True
+DEME_SETTLE_TIME = 1.0
 DEME_CLUMP_SCALE = 0.025
 DEME_HCP_SAMPLE_CENTER = (0.0, 0.12, 0.35)
 DEME_HCP_SAMPLE_HALF_EXTENTS = (0.28, 0.28, 0.0)  # 0.22
@@ -59,15 +61,16 @@ DEME_INITIAL_VELOCITY_RANDOM_SEED = 20260615
 DEME_INITIAL_VELOCITY_MIN = (-0.08, -0.08, -0.12)
 DEME_INITIAL_VELOCITY_MAX = (0.08, 0.08, 0.02)
 DEME_PARTICLE_DENSITY = 1800.0
-DEME_HAND_PROXY_FAMILY = 20
 DEME_PARTICLE_FAMILY = 0
+DEME_HAND_PROXY_SLEEP_FAMILY = 20
+DEME_HAND_PROXY_ACTIVE_FAMILY = 21
 DEME_DOMAIN_Z_MAX = 3.0
 DEME_MATERIAL_YOUNGS_MODULUS = 1.0e4
 DEME_MATERIAL_POISSON_RATIO = 0.3
 DEME_MATERIAL_RESTITUTION = 0.25
 DEME_MATERIAL_FRICTION = 0.7
 DEME_CLUMP_COLOR = (0.76, 0.60, 0.42)
-DEME_HAND_PROXY_DIRECTORY_NAME = "deme_hand_proxy_meshes"
+DEME_HAND_PROXY_DIRECTORY_NAME = "deme_hand_contact_meshes"
 
 # -- Newton cube fallback -----------------------------------------------------
 CUBE_GRID_X = (-0.065, 0.065)
@@ -174,6 +177,8 @@ if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
 if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("NEWTON_DT must be an integer multiple of DEME_DT.")
+if DEME_SETTLE_TIME < 0.0:
+    raise ValueError("DEME_SETTLE_TIME must be non-negative.")
 if DEME_HCP_SAMPLE_SPACING <= 0.0:
     raise ValueError("DEME_HCP_SAMPLE_SPACING must be positive.")
 if np.any(np.asarray(DEME_HCP_SAMPLE_HALF_EXTENTS) < 0.0):
@@ -258,15 +263,15 @@ def _rotate_points_by_quat_xyzw(points: np.ndarray, quat_xyzw) -> np.ndarray:
     return points + 2.0 * (q_w * cross + np.cross(q_xyz_batch, cross))
 
 
-def _export_hand_visual_mesh_proxies(hand: newton.ModelBuilder, directory: Path) -> list[tuple[int, Path]]:
-    """Bake each Allegro visual mesh into body-local OBJ coordinates for DEME."""
+def _export_hand_contact_mesh_proxies(hand: newton.ModelBuilder, directory: Path) -> list[tuple[int, Path]]:
+    """Bake each Newton Allegro convex contact mesh into body-local OBJ coordinates for DEME."""
     directory.mkdir(parents=True, exist_ok=True)
     proxies = []
     for shape_idx, shape_type in enumerate(hand.shape_type):
-        if shape_type != newton.GeoType.MESH:
+        if shape_type != newton.GeoType.CONVEX_MESH:
             continue
         flags = hand.shape_flags[shape_idx]
-        if not (flags & newton.ShapeFlags.VISIBLE) or flags & newton.ShapeFlags.COLLIDE_SHAPES:
+        if not (flags & newton.ShapeFlags.COLLIDE_SHAPES):
             continue
         body_idx = int(hand.shape_body[shape_idx])
         if body_idx < 0:
@@ -356,7 +361,9 @@ def _build_deme_granular_system(hand: newton.ModelBuilder, model):
     hand_proxy_trackers = []
     if ENABLE_DEME_HAND_MESH_PROXIES:
         proxy_directory = OUTPUT_DIRECTORY / DEME_HAND_PROXY_DIRECTORY_NAME
-        local_proxy_meshes = _export_hand_visual_mesh_proxies(hand, proxy_directory)
+        local_proxy_meshes = _export_hand_contact_mesh_proxies(hand, proxy_directory)
+        if not local_proxy_meshes:
+            mophi.fatal("No Newton convex hand contact meshes were found for DEME proxy creation.")
         initial_state = model.state()
         newton.eval_fk(model, model.joint_q, model.joint_qd, initial_state)
         initial_body_q = initial_state.body_q.numpy()
@@ -367,13 +374,15 @@ def _build_deme_granular_system(hand: newton.ModelBuilder, model):
                 mesh_owner = deme_solver.AddWavefrontMeshObject(str(obj_path), wall_material, False)
                 mesh_owner.SetInitPos(initial_body_q[body_idx, :3].tolist())
                 mesh_owner.SetInitQuat(initial_body_q[body_idx, 3:7].tolist())
-                mesh_owner.SetFamily(DEME_HAND_PROXY_FAMILY)
+                mesh_owner.SetFamily(DEME_HAND_PROXY_SLEEP_FAMILY)
                 hand_proxy_trackers.append((body_idx, deme_solver.Track(mesh_owner)))
-        deme_solver.SetFamilyFixed(DEME_HAND_PROXY_FAMILY)
+        deme_solver.SetFamilyFixed(DEME_HAND_PROXY_SLEEP_FAMILY)
+        deme_solver.SetFamilyFixed(DEME_HAND_PROXY_ACTIVE_FAMILY)
+        deme_solver.DisableContactBetweenFamilies(DEME_PARTICLE_FAMILY, DEME_HAND_PROXY_SLEEP_FAMILY)
     deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
     deme_solver.SetInitTimeStep(DEME_DT)
     deme_solver.SetErrorOutAvgContacts(50)
-    deme_solver.SetInitBinNumTarget(50000)
+    deme_solver.SetInitBinNumTarget(500000)
     deme_solver.DisableAdaptiveBinSize()
     deme_solver.Initialize()
     print(f"[DEME] Initialized {len(clump_positions)} ellipsoidal clumps and one shared ground plane.")
@@ -608,7 +617,9 @@ def _write_run_metadata(
         "lifted_granular_count": lifted_granular_count,
         "displaced_granular_count": displaced_granular_count,
         "deme_hand_proxy_count": deme_hand_proxy_count,
+        "deme_hand_proxy_geometry": "Newton convex contact meshes" if ENABLE_DEME_HAND_MESH_PROXIES else None,
         "deme_hand_mesh_proxies_enabled": ENABLE_DEME_HAND_MESH_PROXIES,
+        "deme_settle_time": DEME_SETTLE_TIME if USE_DEME_CLUMPS else None,
         "deme_hcp_sample_spacing": DEME_HCP_SAMPLE_SPACING,
         "deme_initial_velocity_random_seed": DEME_INITIAL_VELOCITY_RANDOM_SEED,
         "grasp_profiles": sorted(set(profile_names)),
@@ -693,6 +704,15 @@ def main() -> None:
         )
     coupler = mophi.NewtonXLBDEMCoupler()
     coupler.initialize(model, solver, None, deme_solver, NEWTON_DT)
+    if USE_DEME_CLUMPS:
+        print(f"[DEME] Settling clumps for {DEME_SETTLE_TIME:.2f} s with hand contact disabled.")
+        deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
+        if ENABLE_DEME_HAND_MESH_PROXIES:
+            _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
+            deme_solver.ChangeFamily(DEME_HAND_PROXY_SLEEP_FAMILY, DEME_HAND_PROXY_ACTIVE_FAMILY)
+            print("[DEME] Settling complete; hand mesh contact enabled.")
+        else:
+            print("[DEME] Settling complete; hand mesh contact remains disabled.")
 
     device = wp.get_device()
     target_indices_wp = wp.array(target_indices, dtype=wp.int32, device=device)

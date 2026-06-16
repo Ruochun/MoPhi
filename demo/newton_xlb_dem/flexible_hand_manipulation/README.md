@@ -44,15 +44,15 @@ grasp phase, prescribed kinematic wrist motion raises every hand along the
 world Z axis to demonstrate a grasp-and-lift workload.
 
 DEME uses one shared infinite ground plane, allowing particles to spread freely
-between the visually rendered trays. For the current runtime test,
-`ENABLE_DEME_HAND_MESH_PROXIES = False` by default, so no hand meshes are
-exported or loaded into DEME and the clumps do not contact the hands. Enabling
-that flag exports the Allegro visual meshes as body-local DEME contact proxies
-and synchronizes them from Newton after each Newton step. This coupling remains
-one-way: DEME contact forces are not fed back into Newton. Set
-`USE_DEME_CLUMPS = False` to use the earlier Newton-cube fallback instead. The
-default DEME path requires the `deme` Python package and a DEME-compatible CUDA
-GPU.
+between the visually rendered trays. DEME reuses Newton's simplified convex
+Allegro contact meshes rather than the fine visual meshes. These proxies are
+enabled by default, but initially belong to a fixed sleep family whose contact
+with clumps is disabled. After the blocking settling phase, the meshes are
+synchronized from Newton and switched to a fixed active-contact family. This
+coupling remains one-way: DEME contact forces are not fed back into Newton. Set
+`ENABLE_DEME_HAND_MESH_PROXIES = False` to run without hand contact, or set
+`USE_DEME_CLUMPS = False` to use the Newton-cube fallback. The default DEME path
+requires the `deme` Python package and a DEME-compatible CUDA GPU.
 
 Run from the repository root:
 
