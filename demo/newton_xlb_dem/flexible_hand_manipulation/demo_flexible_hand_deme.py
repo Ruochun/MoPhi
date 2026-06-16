@@ -315,13 +315,13 @@ def _build_deme_granular_system(hand: newton.ModelBuilder, model):
     world_offsets = _replicated_world_offsets()
     floor_height = TRAY_FLOOR_CENTER[2] + TRAY_FLOOR_HALF_EXTENTS[2]
     deme_solver.AddBCPlane([0.0, 0.0, floor_height], [0.0, 0.0, 1.0], wall_material)
+    print(f"DEME's floor is at z={floor_height}")
     x_low = world_offsets[:, 0].min() - 1.5 * HAND_SPACING[0]
     x_high = world_offsets[:, 0].max() + 1.5 * HAND_SPACING[0]
     y_low = world_offsets[:, 1].min() - 1.5 * HAND_SPACING[1]
     y_high = world_offsets[:, 1].max() + 1.5 * HAND_SPACING[1]
     z_low = 0.0 - 1.5 * HAND_SPACING[0]
     deme_solver.InstructBoxDomainDimension([x_low, x_high], [y_low, y_high], [z_low, DEME_DOMAIN_Z_MAX])
-    deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_material)
 
     template_mass = DEME_PARTICLE_DENSITY * (4.0 / 3.0 * np.pi * 2.0 * 1.0 * 1.0)
     template_moi = [
