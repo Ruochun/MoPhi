@@ -26,23 +26,26 @@ from newton import JointTargetMode
 
 # -- Timing -------------------------------------------------------------------
 RENDER_FPS = 25
-NEWTON_DT = 1.0 / 200.0
-DEME_DT = 2e-4
+NEWTON_DT = 1.0 / 1000.0
+DEME_DT = 5e-5
 SIM_DURATION_SECONDS = 5.0
 
 # -- Hand replication ---------------------------------------------------------
 HAND_COUNT = 1
 HAND_SPACING = (1.4, 1.4, 0.0)
-HAND_BASE_HEIGHT = 0.75
+HAND_BASE_HEIGHT = 0.85
 HAND_DOWNWARD_ROTATION_RPY = (np.pi, 0.0, 0.0)
 HAND_ASSET_NAME = "wonik_allegro"
 HAND_ASSET_RELATIVE_PATH = Path("usd") / "allegro_left_hand_with_cube.usda"
 HAND_ASSET_IGNORE_PATHS = [".*Dummy", ".*CollisionPlane", ".*DexCube", ".*root_joint"]
 ENABLE_HAND_SELF_COLLISIONS = False
 
-# -- Prescribed grasp-and-lift motion -----------------------------------------
-# Keep the hand near the cube bed while the fingers close, then smoothly raise
-# its kinematic root while maintaining the varied finger motions.
+# -- Prescribed descend-grasp-lift motion -------------------------------------
+# Move the kinematic hand root into the clump pile before lifting it back upward,
+# while maintaining the varied finger motions.
+HAND_DESCEND_START_SECONDS = 0.05
+HAND_DESCEND_DURATION_SECONDS = 1.5
+HAND_DESCEND_DEPTH = 0.175
 HAND_LIFT_START_SECONDS = 3.0
 HAND_LIFT_DURATION_SECONDS = 1.5
 HAND_LIFT_HEIGHT = 0.65
@@ -61,10 +64,10 @@ DEME_PARTICLE_FAMILY = 0
 DEME_HAND_PROXY_SLEEP_FAMILY = 20
 DEME_HAND_PROXY_ACTIVE_FAMILY = 21
 DEME_DOMAIN_Z_MAX = 3.0
-DEME_MATERIAL_YOUNGS_MODULUS = 1.0e4
+DEME_MATERIAL_YOUNGS_MODULUS = 2.0e5
 DEME_MATERIAL_POISSON_RATIO = 0.3
-DEME_MATERIAL_RESTITUTION = 0.25
-DEME_MATERIAL_FRICTION = 0.7
+DEME_MATERIAL_RESTITUTION = 0.05
+DEME_MATERIAL_FRICTION = 0.9
 DEME_CLUMP_COLOR = (0.76, 0.60, 0.42)
 DEME_HAND_PROXY_DIRECTORY_NAME = "deme_hand_contact_meshes"
 TRAY_FRICTION = 0.9
@@ -129,6 +132,7 @@ VIEWER_WORLD_SPACING = (0.0, 0.0, 0.0)
 REFERENCE_AXIS_ORIGIN = (-0.9, -0.9, 0.02)
 REFERENCE_SCALE_BAR_CENTER = (-0.3, -0.9, 0.06)
 SHOW_LABORATORY_ENVIRONMENT = True
+RENDER_SETTLING_PHASE = False
 LABORATORY_ROOM_CENTER = (0.0, 0.0, 0.0)
 LABORATORY_ROOM_HALF_EXTENTS = (2.0, 2.0, 1.8)
 
@@ -147,6 +151,7 @@ FRAME_DT = 1.0 / RENDER_FPS
 NUM_FRAMES = int(round(SIM_DURATION_SECONDS / FRAME_DT))
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
+SETTLING_TIME_EPSILON = 1.0e-9
 DEME_CLUMP_SPHERE_RADII = np.array([1.00, 0.88, 0.64, 0.88, 0.64], dtype=np.float32) * DEME_CLUMP_SCALE
 DEME_CLUMP_SPHERE_OFFSETS = (
     np.array(
@@ -189,11 +194,14 @@ def _update_finger_targets(
 
 
 @wp.kernel
-def _update_hand_root_lift(
+def _update_hand_root_descend_lift(
     root_q_starts: wp.array(dtype=wp.int32),
     root_qd_starts: wp.array(dtype=wp.int32),
     initial_root_heights: wp.array(dtype=wp.float32),
     sim_time: float,
+    descend_start: float,
+    descend_duration: float,
+    descend_depth: float,
     lift_start: float,
     lift_duration: float,
     lift_height: float,
@@ -203,16 +211,22 @@ def _update_hand_root_lift(
     hand_idx = wp.tid()
     q_start = root_q_starts[hand_idx]
     qd_start = root_qd_starts[hand_idx]
-    lift_fraction = wp.clamp((sim_time - lift_start) / lift_duration, 0.0, 1.0)
-    smooth_fraction = lift_fraction * lift_fraction * (3.0 - 2.0 * lift_fraction)
-    smooth_velocity = 6.0 * lift_fraction * (1.0 - lift_fraction) * lift_height / lift_duration
-    if sim_time <= lift_start or sim_time >= lift_start + lift_duration:
-        smooth_velocity = 0.0
+    descend_fraction = wp.clamp((sim_time - descend_start) / descend_duration, 0.0, 1.0)
+    descend_smooth = descend_fraction * descend_fraction * (3.0 - 2.0 * descend_fraction)
+    descend_velocity = 6.0 * descend_fraction * (1.0 - descend_fraction) * descend_depth / descend_duration
+    if sim_time <= descend_start or sim_time >= descend_start + descend_duration:
+        descend_velocity = 0.0
 
-    joint_q[q_start + 2] = initial_root_heights[hand_idx] + lift_height * smooth_fraction
+    lift_fraction = wp.clamp((sim_time - lift_start) / lift_duration, 0.0, 1.0)
+    lift_smooth = lift_fraction * lift_fraction * (3.0 - 2.0 * lift_fraction)
+    lift_velocity = 6.0 * lift_fraction * (1.0 - lift_fraction) * lift_height / lift_duration
+    if sim_time <= lift_start or sim_time >= lift_start + lift_duration:
+        lift_velocity = 0.0
+
+    joint_q[q_start + 2] = initial_root_heights[hand_idx] - descend_depth * descend_smooth + lift_height * lift_smooth
     joint_qd[qd_start + 0] = 0.0
     joint_qd[qd_start + 1] = 0.0
-    joint_qd[qd_start + 2] = smooth_velocity
+    joint_qd[qd_start + 2] = -descend_velocity + lift_velocity
     joint_qd[qd_start + 3] = 0.0
     joint_qd[qd_start + 4] = 0.0
     joint_qd[qd_start + 5] = 0.0
@@ -376,7 +390,8 @@ def _build_deme_granular_system(hand: newton.ModelBuilder, model):
     deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
     deme_solver.SetInitTimeStep(DEME_DT)
     deme_solver.SetErrorOutAvgContacts(150)
-    deme_solver.SetInitBinNumTarget(100)
+    deme_solver.SetErrorOutVelocity(150)
+    deme_solver.SetInitBinNumTarget(1000)
     # deme_solver.DisableAdaptiveBinSize()
     deme_solver.Initialize()
     print(f"[DEME] Initialized {len(clump_positions)} ellipsoidal clumps and one shared ground plane.")
@@ -578,6 +593,9 @@ def _write_run_metadata(
         "deme_hcp_sample_spacing": DEME_HCP_SAMPLE_SPACING,
         "deme_initial_velocity_random_seed": DEME_INITIAL_VELOCITY_RANDOM_SEED,
         "grasp_profiles": sorted(set(profile_names)),
+        "hand_descend_start_seconds": HAND_DESCEND_START_SECONDS,
+        "hand_descend_duration_seconds": HAND_DESCEND_DURATION_SECONDS,
+        "hand_descend_depth": HAND_DESCEND_DEPTH,
         "hand_lift_start_seconds": HAND_LIFT_START_SECONDS,
         "hand_lift_duration_seconds": HAND_LIFT_DURATION_SECONDS,
         "hand_lift_height": HAND_LIFT_HEIGHT,
@@ -585,6 +603,7 @@ def _write_run_metadata(
         "bodies": model.body_count,
         "joints": model.joint_count,
         "show_laboratory_environment": SHOW_LABORATORY_ENVIRONMENT,
+        "render_settling_phase": RENDER_SETTLING_PHASE,
         "completed_frames": completed_frames,
         "completed_sim_seconds": completed_sim_seconds,
         "elapsed_wall_seconds": elapsed_wall_seconds,
@@ -649,13 +668,6 @@ def main() -> None:
     deme_solver, deme_clump_tracker, deme_hand_proxy_trackers, clump_count = _build_deme_granular_system(hand, model)
     coupler = mophi.NewtonXLBDEMCoupler()
     coupler.initialize(model, solver, None, deme_solver, NEWTON_DT)
-    print(f"[DEME] Settling clumps for {DEME_SETTLE_TIME:.2f} s with hand contact disabled.")
-    deme_solver.DoDynamicsThenSync(DEME_SETTLE_TIME)
-    settled_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32)
-    print(_format_clump_position_bounds("[DEME] Bounds after settling", settled_clump_positions))
-    _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
-    deme_solver.ChangeFamily(DEME_HAND_PROXY_SLEEP_FAMILY, DEME_HAND_PROXY_ACTIVE_FAMILY)
-    print("[DEME] Settling complete; hand mesh contact enabled.")
 
     device = wp.get_device()
     target_indices_wp = wp.array(target_indices, dtype=wp.int32, device=device)
@@ -692,7 +704,6 @@ def main() -> None:
         scale_bar_center=REFERENCE_SCALE_BAR_CENTER,
     )
 
-    initial_clump_positions = settled_clump_positions.copy()
     deme_clump_colors_wp = wp.array(
         np.tile(np.asarray(DEME_CLUMP_COLOR, dtype=np.float32), (clump_count, 1)),
         dtype=wp.vec3,
@@ -710,10 +721,49 @@ def main() -> None:
     )
     print(f"[Granular stage] Advancing DEME with {DEME_SUBSTEPS} substeps per Newton step.")
     print(
-        f"[Lift] Raising the hands by {HAND_LIFT_HEIGHT:.2f} m after " f"{HAND_LIFT_START_SECONDS:.2f} s of grasping."
+        f"[Root motion] Descending {HAND_DESCEND_DEPTH:.2f} m, then lifting "
+        f"{HAND_LIFT_HEIGHT:.2f} m after {HAND_LIFT_START_SECONDS:.2f} s."
     )
 
     try:
+        print(f"[DEME] Settling clumps for {DEME_SETTLE_TIME:.2f} s with hand contact disabled.")
+        if RENDER_SETTLING_PHASE:
+            settling_time = 0.0
+            settling_frame_count = 0
+            while settling_time < DEME_SETTLE_TIME - SETTLING_TIME_EPSILON:
+                if not vis.is_running():
+                    print(f"[Viewer] Window closed during settling after {settling_frame_count} frame(s).")
+                    break
+                settling_dt = min(FRAME_DT, DEME_SETTLE_TIME - settling_time)
+                deme_solver.DoDynamics(settling_dt)
+                settling_time += settling_dt
+                settling_frame_count += 1
+
+                vis.begin_frame(settling_time - DEME_SETTLE_TIME)
+                vis.log_state(coupler.newton_state_0)
+                settling_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32)
+                settling_clump_orientations = np.asarray(deme_clump_tracker.OrientationQuaternions(), dtype=np.float32)
+                vis.log_clumps(
+                    "deme_granular_material",
+                    wp.array(settling_clump_positions, dtype=wp.vec3),
+                    wp.array(settling_clump_orientations, dtype=wp.vec4),
+                    DEME_CLUMP_SPHERE_RADII,
+                    DEME_CLUMP_SPHERE_OFFSETS,
+                    colors=deme_clump_colors_wp,
+                )
+                vis.end_frame()
+                if movie_writer is not None:
+                    movie_writer.append_data(vis.get_frame().numpy())
+        else:
+            deme_solver.DoDynamics(DEME_SETTLE_TIME)
+
+        settled_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32)
+        print(_format_clump_position_bounds("[DEME] Bounds after settling", settled_clump_positions))
+        initial_clump_positions = settled_clump_positions.copy()
+        _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
+        deme_solver.ChangeFamily(DEME_HAND_PROXY_SLEEP_FAMILY, DEME_HAND_PROXY_ACTIVE_FAMILY)
+        print("[DEME] Settling complete; hand mesh contact enabled.")
+
         for frame in range(NUM_FRAMES):
             if not vis.is_running():
                 break
@@ -737,13 +787,16 @@ def main() -> None:
             for substep in range(SIM_SUBSTEPS):
                 substep_time = sim_time + substep * NEWTON_DT
                 wp.launch(
-                    _update_hand_root_lift,
+                    _update_hand_root_descend_lift,
                     dim=HAND_COUNT,
                     inputs=[
                         root_q_starts_wp,
                         root_qd_starts_wp,
                         initial_root_heights_wp,
                         substep_time,
+                        HAND_DESCEND_START_SECONDS,
+                        HAND_DESCEND_DURATION_SECONDS,
+                        HAND_DESCEND_DEPTH,
                         HAND_LIFT_START_SECONDS,
                         HAND_LIFT_DURATION_SECONDS,
                         HAND_LIFT_HEIGHT,

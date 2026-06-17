@@ -37,9 +37,12 @@ HAND_ASSET_RELATIVE_PATH = Path("usd") / "allegro_left_hand_with_cube.usda"
 HAND_ASSET_IGNORE_PATHS = [".*Dummy", ".*CollisionPlane", ".*DexCube", ".*root_joint"]
 ENABLE_HAND_SELF_COLLISIONS = False
 
-# -- Prescribed grasp-and-lift motion -----------------------------------------
-# Keep the hand near the cube bed while the fingers close, then smoothly raise
-# its kinematic root while maintaining the varied finger motions.
+# -- Prescribed descend-grasp-lift motion -------------------------------------
+# Move the kinematic hand root into the cube bed before lifting it back upward,
+# while maintaining the varied finger motions.
+HAND_DESCEND_START_SECONDS = 0.25
+HAND_DESCEND_DURATION_SECONDS = 1.0
+HAND_DESCEND_DEPTH = 0.12
 HAND_LIFT_START_SECONDS = 3.0
 HAND_LIFT_DURATION_SECONDS = 1.5
 HAND_LIFT_HEIGHT = 0.65
@@ -51,6 +54,8 @@ CUBE_LAYER_Z = (0.075, 0.155)
 CUBE_HALF_EXTENT = 0.035
 CUBE_DENSITY = 450.0
 CUBE_FRICTION = 0.9
+CUBE_CONTACT_STIFFNESS = 5.0e3
+CUBE_CONTACT_DAMPING = 3.0e2
 GRANULAR_LIFT_THRESHOLD = 0.08
 GRANULAR_DISPLACEMENT_THRESHOLD = 0.03
 CUBE_COLORS = (
@@ -160,11 +165,14 @@ def _update_finger_targets(
 
 
 @wp.kernel
-def _update_hand_root_lift(
+def _update_hand_root_descend_lift(
     root_q_starts: wp.array(dtype=wp.int32),
     root_qd_starts: wp.array(dtype=wp.int32),
     initial_root_heights: wp.array(dtype=wp.float32),
     sim_time: float,
+    descend_start: float,
+    descend_duration: float,
+    descend_depth: float,
     lift_start: float,
     lift_duration: float,
     lift_height: float,
@@ -174,16 +182,22 @@ def _update_hand_root_lift(
     hand_idx = wp.tid()
     q_start = root_q_starts[hand_idx]
     qd_start = root_qd_starts[hand_idx]
-    lift_fraction = wp.clamp((sim_time - lift_start) / lift_duration, 0.0, 1.0)
-    smooth_fraction = lift_fraction * lift_fraction * (3.0 - 2.0 * lift_fraction)
-    smooth_velocity = 6.0 * lift_fraction * (1.0 - lift_fraction) * lift_height / lift_duration
-    if sim_time <= lift_start or sim_time >= lift_start + lift_duration:
-        smooth_velocity = 0.0
+    descend_fraction = wp.clamp((sim_time - descend_start) / descend_duration, 0.0, 1.0)
+    descend_smooth = descend_fraction * descend_fraction * (3.0 - 2.0 * descend_fraction)
+    descend_velocity = 6.0 * descend_fraction * (1.0 - descend_fraction) * descend_depth / descend_duration
+    if sim_time <= descend_start or sim_time >= descend_start + descend_duration:
+        descend_velocity = 0.0
 
-    joint_q[q_start + 2] = initial_root_heights[hand_idx] + lift_height * smooth_fraction
+    lift_fraction = wp.clamp((sim_time - lift_start) / lift_duration, 0.0, 1.0)
+    lift_smooth = lift_fraction * lift_fraction * (3.0 - 2.0 * lift_fraction)
+    lift_velocity = 6.0 * lift_fraction * (1.0 - lift_fraction) * lift_height / lift_duration
+    if sim_time <= lift_start or sim_time >= lift_start + lift_duration:
+        lift_velocity = 0.0
+
+    joint_q[q_start + 2] = initial_root_heights[hand_idx] - descend_depth * descend_smooth + lift_height * lift_smooth
     joint_qd[qd_start + 0] = 0.0
     joint_qd[qd_start + 1] = 0.0
-    joint_qd[qd_start + 2] = smooth_velocity
+    joint_qd[qd_start + 2] = -descend_velocity + lift_velocity
     joint_qd[qd_start + 3] = 0.0
     joint_qd[qd_start + 4] = 0.0
     joint_qd[qd_start + 5] = 0.0
@@ -237,8 +251,8 @@ def _add_newton_cube_bed(builder: newton.ModelBuilder) -> tuple[list[int], list[
     """Add loose Newton cubes."""
     cube_cfg = newton.ModelBuilder.ShapeConfig(
         density=CUBE_DENSITY,
-        ke=SHAPE_CONTACT_STIFFNESS,
-        kd=SHAPE_CONTACT_DAMPING,
+        ke=CUBE_CONTACT_STIFFNESS,
+        kd=CUBE_CONTACT_DAMPING,
         mu=CUBE_FRICTION,
         margin=SHAPE_CONTACT_MARGIN,
         gap=SHAPE_CONTACT_GAP,
@@ -408,9 +422,14 @@ def _write_run_metadata(
         "lifted_cube_count": lifted_cube_count,
         "displaced_cube_count": displaced_cube_count,
         "grasp_profiles": sorted(set(profile_names)),
+        "hand_descend_start_seconds": HAND_DESCEND_START_SECONDS,
+        "hand_descend_duration_seconds": HAND_DESCEND_DURATION_SECONDS,
+        "hand_descend_depth": HAND_DESCEND_DEPTH,
         "hand_lift_start_seconds": HAND_LIFT_START_SECONDS,
         "hand_lift_duration_seconds": HAND_LIFT_DURATION_SECONDS,
         "hand_lift_height": HAND_LIFT_HEIGHT,
+        "cube_contact_stiffness": CUBE_CONTACT_STIFFNESS,
+        "cube_contact_damping": CUBE_CONTACT_DAMPING,
         "controlled_finger_dofs": controlled_dof_count,
         "bodies": model.body_count,
         "joints": model.joint_count,
@@ -536,7 +555,8 @@ def main() -> None:
     print(f"[Hands] Simulating {HAND_COUNT} downward-facing Allegro hands.")
     print(f"[Granular stage] Added {cube_count} loose Newton cubes in shallow trays.")
     print(
-        f"[Lift] Raising the hands by {HAND_LIFT_HEIGHT:.2f} m after " f"{HAND_LIFT_START_SECONDS:.2f} s of grasping."
+        f"[Root motion] Descending {HAND_DESCEND_DEPTH:.2f} m, then lifting "
+        f"{HAND_LIFT_HEIGHT:.2f} m after {HAND_LIFT_START_SECONDS:.2f} s."
     )
 
     try:
@@ -563,13 +583,16 @@ def main() -> None:
             for substep in range(SIM_SUBSTEPS):
                 substep_time = sim_time + substep * NEWTON_DT
                 wp.launch(
-                    _update_hand_root_lift,
+                    _update_hand_root_descend_lift,
                     dim=HAND_COUNT,
                     inputs=[
                         root_q_starts_wp,
                         root_qd_starts_wp,
                         initial_root_heights_wp,
                         substep_time,
+                        HAND_DESCEND_START_SECONDS,
+                        HAND_DESCEND_DURATION_SECONDS,
+                        HAND_DESCEND_DEPTH,
                         HAND_LIFT_START_SECONDS,
                         HAND_LIFT_DURATION_SECONDS,
                         HAND_LIFT_HEIGHT,
