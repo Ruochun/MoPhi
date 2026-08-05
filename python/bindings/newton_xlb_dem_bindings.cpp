@@ -7,7 +7,7 @@
 // PyNewtonXLBDEMCoupler (defined in src/couplers/newton_xlb_dem/PyNewtonXLBDEMCoupler.h)
 // bridges all three solvers: Newton drives a walking robot in Python, XLB provides
 // a real LBM fluid solver in Python, and DEME is a Python discrete-element solver
-// (pip install deme) imported at runtime via pybind11.
+// (provided by the configured Python distribution) used at runtime via pybind11.
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
     #include "PyNewtonXLBDEMCoupler.h"  // src/couplers/newton_xlb_dem/
 #endif
@@ -27,24 +27,26 @@ void register_newton_xlb_dem(py::module_& m) {
 #ifdef MOPHI_HAS_NEWTON_XLB_DEM_COUPLER
     // Three-way co-simulation coupler: Newton (walking robot, Python GPU),
     // XLB (LBM fluid solver, Python GPU), and DEME (Python discrete-element solver,
-    // pip install deme).  Newton drives the articulated robot, XLB advances a
+    // configured Python provider).  Newton drives the articulated robot, XLB advances a
     // fluid solve in Python, and DEME advances live granular/contact physics.
     // PyNewtonXLBDEMCoupler is defined in src/couplers/newton_xlb_dem/.
     py::class_<PyNewtonXLBDEMCoupler>(m, "NewtonXLBDEMCoupler",
                                       "Three-way co-simulation coupler coupling Newton (articulated rigid-body "
                                       "physics), XLB (lattice-Boltzmann fluid solver), and DEME (Python "
-                                      "discrete-element solver, pip install deme).\n\n"
+                                      "discrete-element solver, supplied by a configurable Python provider).\n\n"
                                       "Newton drives a walking robot and produces a spatial representation "
                                       "(body transforms) at every step.  XLB advances fluid physics in "
                                       "Python, and DEME advances live discrete-element physics.\n\n"
                                       "Usage::\n\n"
-                                      "    import mophi, newton, warp as wp, deme\n"
+                                      "    import mophi, newton, warp as wp\n"
+                                      "    from mophi.utils.package_provider import load_package_provider\n"
+                                      "    DEME = load_package_provider('deme')\n"
                                       "    wp.init()\n"
                                       "    builder = newton.ModelBuilder()\n"
                                       "    # ... build walking robot ...\n"
                                       "    model  = builder.finalize()\n"
                                       "    solver = newton.solvers.SolverXPBD(model)\n"
-                                      "    dem = deme.DEMSolver(1)\n"
+                                      "    dem = DEME.DEMSolver(1)\n"
                                       "    coupler = mophi.NewtonXLBDEMCoupler()\n"
                                       "    coupler.set_verbosity(mophi.VERBOSITY_INFO)\n"
                                       "    coupler.initialize(newton_model=model, newton_solver=solver,\n"

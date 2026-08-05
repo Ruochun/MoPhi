@@ -38,7 +38,7 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
                                        double dt) {
     MOPHI_INFO("PyNewtonXLBDEMCoupler: initializing ...");
 
-    // ── DEME (Python, pip install deme) ───────────────────────────────────────
+    // ── DEME (Python API supplied by the configured provider) ─────────────────
     // Accept a pre-built deme.DEMSolver instance from the Python caller.
     // The Python side owns DEME configuration; StepDEME() advances it via
     // DoStepDynamics().

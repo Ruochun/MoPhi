@@ -80,13 +80,23 @@ DEME) can still be installed at configure time for local developer
 convenience, but wheel builds use `pyproject.toml` dependency metadata
 instead. Control which ones are fetched with the following options:
 
+Python developer builds and packaging builds intentionally have different
+output locations. A normal CMake build writes the ABI-tagged `mophi_core`
+extension into `python/mophi/` for `PYTHONPATH=python` usage; use a separate
+`build-py<version>/` directory for each CPython minor version. A PEP 517 wheel
+build sets `MOPHI_PYTHON_PACKAGING_BUILD=ON`, keeps its extension in the build
+tree, and packages it into an ABI-specific wheel. The configured
+`cibuildwheel` matrix repeats that packaging build for CPython 3.11–3.14.
+See [the Python build workflows](how-to.md#python-build-workflows) for commands,
+verification, and ABI troubleshooting.
+
 | Option | Default | Effect |
 |--------|---------|--------|
 | `-DMOPHI_FETCH_FERIS=ON` | OFF | Download FERIS FEA solver |
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
 | `-DMOPHI_FETCH_NEWTON=ON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
 | `-DMOPHI_FETCH_XLB=ON` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
-| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install DEME Python package (`pip install deme`) during CMake configure |
+| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install the configured DEME provider (`deme3` by default) during CMake configure |
 
 ### Adding a new external solver
 
@@ -177,11 +187,13 @@ backends.
 | `MOPHI_FETCH_DEMENGINE` | OFF | Download DEM-Engine into `external/DEMEngine/` |
 | `MOPHI_FETCH_NEWTON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
 | `MOPHI_FETCH_XLB` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
-| `MOPHI_FETCH_DEME` | OFF | Developer convenience: install DEME Python package (`pip install deme`) during CMake configure |
+| `MOPHI_FETCH_DEME` | OFF | Developer convenience: install the configured DEME provider during CMake configure |
+| `MOPHI_PACKAGE_DEME_DISTRIBUTION` | `deme3` | Pip distribution supplying the DEME-compatible API |
+| `MOPHI_PACKAGE_DEME_IMPORT_MODULE` | `deme` | Python module exporting that API |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
-| `MOPHI_PYTHON_PACKAGING_BUILD` | OFF | Configure the Linux Python wheel path (Python bindings ON, Newton+XLB+DEME ON, FERIS OFF, demos OFF, no configure-time pip installs) |
+| `MOPHI_PYTHON_PACKAGING_BUILD` | OFF | Internal packaging mode used by scikit-build-core (Python bindings ON, Newton+XLB+DEME ON, FERIS OFF, demos OFF, build-tree extension output, no configure-time pip installs) |
 
 ---
 
@@ -193,4 +205,4 @@ backends.
 | DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM | C++ / CUDA (CMake) |
 | Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
 | XLB | https://github.com/Autodesk/XLB | GPU lattice-Boltzmann fluid | Pure Python / JAX (pip) |
-| DEME | https://pypi.org/project/deme/ | Python discrete-element solver | Pure Python (pip) |
+| DEME | https://pypi.org/project/deme3/ | Python discrete-element solver provider | Python extension (pip) |

@@ -25,7 +25,7 @@ for the repository map and code-organization notes.
 |------|----------------|
 | CMake | 3.18 |
 | C++ compiler | C++17 (GCC 9 / Clang 10 / MSVC 2019) |
-| Python (optional) | 3.11 — for the packaged Linux wheel path |
+| Python (optional) | 3.11–3.14 — for the packaged Linux wheel path |
 | Git | any recent version — for fetching externals |
 
 ---
@@ -36,10 +36,15 @@ Start with the quick-start workflow in
 [docs/how-to.md#quick-start](docs/how-to.md#quick-start), which covers cloning,
 configuring, building, and running a first demo.
 
-### Linux Python 3.11 wheel (Newton + XLB + DEME, no FERIS)
+For Python development and distribution, see
+[docs/how-to.md#python-build-workflows](docs/how-to.md#python-build-workflows).
+It distinguishes per-interpreter source-tree CMake builds from single-wheel
+and `cibuildwheel` matrix builds, including ABI troubleshooting and verification.
+
+### Linux Python 3.11–3.14 wheels (Newton + XLB + DEME, no FERIS)
 
 For the packaged distribution path, see
-[docs/how-to.md#linux-python-311-wheel-newton--xlb--deme-no-feris](docs/how-to.md#linux-python-311-wheel-newton--xlb--deme-no-feris).
+[docs/how-to.md#linux-python-311314-wheels](docs/how-to.md#linux-python-311314-wheels).
 That guide covers wheel building, `auditwheel` repair, and the default runtime
 dependency set for Newton + XLB + DEME without FERIS.
 

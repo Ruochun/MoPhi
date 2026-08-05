@@ -10,6 +10,12 @@ set(MOPHI_REQUIRED_NEWTON_VERSION "1.0.0" CACHE INTERNAL "Required Newton Python
 set(MOPHI_REQUIRED_WARP_VERSION "1.12.1" CACHE INTERNAL "Required Warp Python package version")
 set(MOPHI_REQUIRED_MUJOCO_VERSION "3.6.0" CACHE INTERNAL "Required MuJoCo Python package version")
 
+# Keep the installable distribution name separate from the Python import name.
+# Compatible DEME providers can therefore be selected without changing coupler
+# or demo code (for example: -DMOPHI_PACKAGE_DEME_DISTRIBUTION=deme).
+set(MOPHI_PACKAGE_DEME_DISTRIBUTION "deme3" CACHE STRING "Python distribution providing the DEME API")
+set(MOPHI_PACKAGE_DEME_IMPORT_MODULE "deme" CACHE STRING "Python module exposing the DEME API")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: external project fetching
 #
@@ -22,7 +28,7 @@ option(MOPHI_FETCH_FERIS     "Download/update the FERIS external project"     OF
 option(MOPHI_FETCH_DEMENGINE "Download/update the DEM-Engine external project" OFF)
 option(MOPHI_FETCH_NEWTON    "Install required Newton + Warp + MuJoCo Python packages (newton==${MOPHI_REQUIRED_NEWTON_VERSION}, warp-lang==${MOPHI_REQUIRED_WARP_VERSION}, mujoco==${MOPHI_REQUIRED_MUJOCO_VERSION})" OFF)
 option(MOPHI_FETCH_XLB       "Install the XLB Python package (pip install \"xlb[cuda]\")"       OFF)
-option(MOPHI_FETCH_DEME      "Install the DEME Python package (pip install deme)"     OFF)
+option(MOPHI_FETCH_DEME      "Install the configured DEME Python provider (${MOPHI_PACKAGE_DEME_DISTRIBUTION})" OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: co-simulation solvers to build
@@ -55,7 +61,7 @@ if(MOPHI_PYTHON_PACKAGING_BUILD)
     set(MOPHI_FETCH_DEMENGINE OFF CACHE BOOL "Download/update the DEM-Engine external project" FORCE)
     set(MOPHI_FETCH_NEWTON OFF CACHE BOOL "Install required Newton + Warp + MuJoCo Python packages (newton==${MOPHI_REQUIRED_NEWTON_VERSION}, warp-lang==${MOPHI_REQUIRED_WARP_VERSION}, mujoco==${MOPHI_REQUIRED_MUJOCO_VERSION})" FORCE)
     set(MOPHI_FETCH_XLB OFF CACHE BOOL "Install the XLB Python package (pip install \"xlb[cuda]\")" FORCE)
-    set(MOPHI_FETCH_DEME OFF CACHE BOOL "Install the DEME Python package (pip install deme)" FORCE)
+    set(MOPHI_FETCH_DEME OFF CACHE BOOL "Install the configured DEME Python provider" FORCE)
     set(MOPHI_BUILD_FERIS_NEWTON OFF CACHE BOOL "Build the FERIS + Newton co-simulation coupler" FORCE)
     set(MOPHI_BUILD_NEWTON_XLB_DEM ON CACHE BOOL "Build the Newton + XLB + DEM-Engine three-way co-simulation coupler" FORCE)
     set(MOPHI_BUILD_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings via pybind11" FORCE)

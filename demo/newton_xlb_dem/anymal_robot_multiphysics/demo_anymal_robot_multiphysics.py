@@ -15,7 +15,7 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                bc_mask and missing_mask are updated in-place without rebuilding
                the stepper, keeping per-frame overhead to a GPU upload of the
                two mask arrays (~21 MB) instead of a full JIT re-compilation.
-  • DEME     — a real discrete-element solver (pip install deme).  A
+  • DEME     — a real discrete-element solver (pip install deme3).  A
                deme.DEMSolver is created in Python, populated with particles and
                contact proxies, stepped every substep, and its live particle
                positions are visualized each frame.
@@ -35,7 +35,7 @@ Prerequisites
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
   • pip install --upgrade newton warp-lang mujoco==3.6.0 torch
   • pip install "xlb[cuda]"                (XLB LBM solver)
-  • pip install deme                        (DEME discrete-element solver)
+  • pip install deme3                       (DEME discrete-element solver)
 
 Running
 -------
@@ -99,10 +99,10 @@ import newton_xlb_dem_utils as demo_utils  # noqa: E402
 # ─── Import XLB + DEME (required for this three-way demo) ──────────────────
 if find_spec("xlb") is None:
     mophi.fatal('XLB is required for this demo.\nInstall with:  pip install "xlb[cuda]"')
-if find_spec("DEME") is None:
-    mophi.fatal("DEME is required for this demo.\nInstall with:  pip install deme")
 import xlb
-import DEME
+from mophi.utils.package_provider import load_package_provider
+
+DEME = load_package_provider("deme")
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
 

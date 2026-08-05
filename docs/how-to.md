@@ -47,12 +47,13 @@ cd MoPhi
 # If you already cloned without --recurse-submodules, initialise the submodule manually:
 #   git submodule update --init
 
-# 2. Configure with the desired co-simulation coupler enabled
-cmake -B build \
+# 2. Configure with the desired co-simulation coupler and active Python
+cmake -B build-py311 \
+      -DPython3_EXECUTABLE="$(python3 -c 'import sys; print(sys.executable)')" \
       -DMOPHI_FETCH_FERIS=ON \
       -DMOPHI_FETCH_NEWTON=ON \
       -DMOPHI_BUILD_FERIS_NEWTON=ON
-cmake --build build
+cmake --build build-py311
 
 # 3. Run a demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
@@ -60,11 +61,82 @@ PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
 
 ---
 
-## Linux Python 3.11 wheel (Newton + XLB + DEME, no FERIS)
+## Python build workflows
+
+MoPhi has two distinct Python build workflows. Choose the source-tree workflow
+for normal development and the wheel workflow only when producing an
+installable or distributable artifact.
+
+| Workflow | Command | Output | Intended use |
+|----------|---------|--------|--------------|
+| Source-tree developer build | `cmake -B build-py<version> ...` followed by `cmake --build` | `python/mophi/mophi_core.cpython-<version>-<platform>.so` | Editing code and running demos with `PYTHONPATH=python` |
+| Single-interpreter wheel | `python -m build --wheel` | One ABI-specific wheel under `dist/` | Testing or distributing one Python version |
+| Linux wheel matrix | `python -m cibuildwheel` | `cp311`–`cp314` repaired wheels under `wheelhouse/` | Release artifacts and compatibility testing |
+
+`mophi_core` is a CPython extension. A module built for one Python minor
+version cannot be imported by another; for example, Python 3.12 cannot load a
+`cpython-311` module.
+
+### Source-tree developer builds
+
+Use one CMake build directory per Python minor version. Activate the intended
+environment first and pass its interpreter explicitly:
+
+```bash
+# Example: Python 3.12 developer build.
+python --version
+cmake -B build-py312 \
+      -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
+      -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
+cmake --build build-py312
+```
+
+A non-packaging developer build places the compiled extension beside the
+source package. Verify both the selected interpreter and loaded ABI:
+
+```bash
+PYTHONPATH=python python -c \
+  "import sys, mophi; print(sys.version); print(mophi.mophi_core.__file__)"
+```
+
+The output should contain the matching version, such as:
+
+```text
+python/mophi/mophi_core.cpython-312-x86_64-linux-gnu.so
+```
+
+Multiple compatible extensions can coexist in `python/mophi/`; CPython chooses
+the file matching the running interpreter. Keep the CMake state separate:
+
+```text
+build-py311/    # configured with Python 3.11
+build-py312/    # configured with Python 3.12
+build-py313/    # configured with Python 3.13
+build-py314/    # configured with Python 3.14
+```
+
+Do not reuse one of these directories for another Python minor version. CMake
+caches interpreter discovery, and changing conda environments does not rewrite
+an existing cache automatically.
+
+When a source-tree import fails, inspect the interpreter and available modules:
+
+```bash
+python -c "import sys; print(sys.executable); print(sys.version)"
+find python/mophi -maxdepth 1 -name 'mophi_core*.so' -print
+```
+
+If the matching extension is absent, configure and build the corresponding
+`build-py<version>` directory. A misleading “partially initialized module” or
+“circular import” message usually means no compatible `mophi_core` extension
+was found; MoPhi's package initializer now augments this with the detected ABI
+details and rebuild instructions.
+
+### Linux Python 3.11–3.14 wheels
 
 MoPhi has a standard PEP 517 packaging entry point in `pyproject.toml`
 using `scikit-build-core`. The supported packaged distribution path currently
-targets **Linux + Python 3.11** and enables:
+targets **Linux + CPython 3.11 through 3.14** and enables:
 
 - Python bindings: **ON**
 - Newton + XLB + DEME coupler: **ON**
@@ -77,7 +149,7 @@ supported distributed install experience:
 - `newton==1.0.0`
 - `warp-lang==1.12.1`
 - `mujoco==3.6.0`
-- `deme`
+- `deme3>=3.0.1,<4`
 - `xlb[cuda]`
 - `torch`
 - `GitPython`
@@ -88,7 +160,10 @@ supported distributed install experience:
 - `imageio`
 - `imageio-ffmpeg`
 
-Build a wheel from a checkout with submodules initialized:
+#### Build one wheel for the active interpreter
+
+Build from a checkout with submodules initialized. Replace `python3.11` with
+the desired interpreter:
 
 ```bash
 git clone --recurse-submodules https://github.com/Ruochun/MoPhi.git
@@ -97,26 +172,60 @@ python3.11 -m pip install --upgrade build
 python3.11 -m build --wheel
 ```
 
-For Linux release distribution, repair the wheel after the build so bundled
-native dependencies satisfy manylinux policy:
+`python -m build` invokes scikit-build-core, which configures CMake internally
+with `MOPHI_PYTHON_PACKAGING_BUILD=ON`. It does not use or update the developer
+extension under `python/mophi/`.
+
+For Linux distribution, repair this single wheel so bundled native libraries
+satisfy manylinux policy:
 
 ```bash
 python3.11 -m pip install --upgrade auditwheel
-auditwheel repair dist/mophi-*.whl -w dist/
+auditwheel repair dist/mophi-*.whl -w wheelhouse/
 ```
 
-Then install the repaired wheel with pip; its metadata will pull in Newton,
-Warp, MuJoCo, XLB, DEME, and the current MoPhi Python workflow dependencies
-automatically:
+Test the repaired artifact in a clean environment without `PYTHONPATH=python`,
+which would otherwise override the installed wheel with the source checkout:
 
 ```bash
-python3.11 -m pip install dist/mophi-*.whl
+python3.11 -m venv /tmp/mophi-wheel-test
+/tmp/mophi-wheel-test/bin/python -m pip install wheelhouse/mophi-*.whl
+cd /tmp
+/tmp/mophi-wheel-test/bin/python -c \
+  "import sys, mophi; print(sys.version); print(mophi.mophi_core.__file__)"
 ```
+
+#### Build the Python-version matrix
+
+The matrix in `pyproject.toml` targets Linux `cp311`, `cp312`, `cp313`, and
+`cp314`. Build it with `cibuildwheel` from a Linux host with Docker available:
+
+```bash
+python -m pip install --upgrade cibuildwheel
+python -m cibuildwheel --output-dir wheelhouse
+```
+
+Python 3.11 and 3.12 are the primary validation targets. Python 3.13 and 3.14
+are enabled on a best-effort basis because availability may still be limited
+by solver dependency wheels rather than MoPhi itself.
+
+`cibuildwheel` builds in manylinux containers, repairs each wheel, and runs the
+configured import smoke test. Install a wheel matching the target interpreter;
+its metadata pulls in Newton, Warp, MuJoCo, XLB, DEME, and the other runtime
+dependencies automatically:
+
+```bash
+python3.12 -m pip install wheelhouse/mophi-*-cp312-*.whl
+```
+
+Building or installing any wheel does not update the developer extensions in
+the source checkout. Likewise, running with `PYTHONPATH=python` tests the source
+package, not a wheel installed in the active environment.
 
 Installing from the wheel does **not** build MoPhi from source locally, but the
 wheel is **not** a fully self-contained offline installer. `pip` still needs to
 resolve the wheel's declared runtime dependencies (`newton`, `warp-lang`,
-`mujoco`, `deme`, `xlb[cuda]`, `torch`, `GitPython`, `PyYAML`, `pycollada`,
+`mujoco`, `deme3`, `xlb[cuda]`, `torch`, `GitPython`, `PyYAML`, `pycollada`,
 `mujoco_warp`, `pyglet`, `imageio`, and `imageio-ffmpeg`) from either the
 internet or a local wheelhouse.
 
@@ -124,7 +233,7 @@ For an offline installation, pre-download the MoPhi wheel plus all required
 dependency wheels, then install from a local wheelhouse:
 
 ```bash
-python3.11 -m pip install --no-index --find-links /path/to/wheelhouse mophi
+python -m pip install --no-index --find-links /path/to/wheelhouse mophi
 ```
 
 ---
@@ -133,11 +242,12 @@ python3.11 -m pip install --no-index --find-links /path/to/wheelhouse mophi
 
 ```bash
 # Configure: fetch FERIS, install Newton via pip, and build the coupler
-cmake -B build \
+cmake -B build-py311 \
+      -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_FETCH_FERIS=ON \
       -DMOPHI_FETCH_NEWTON=ON \
       -DMOPHI_BUILD_FERIS_NEWTON=ON
-cmake --build build
+cmake --build build-py311
 
 # Run the FERIS + Newton demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
@@ -167,13 +277,14 @@ pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 
 ```bash
 # Install the required Python packages first
-pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme \
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme3 \
     torch GitPython PyYAML pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
 
 # Configure and build the coupler
-cmake -B build \
+cmake -B build-py311 \
+      -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
-cmake --build build
+cmake --build build-py311
 
 # Run the Python demo (walking robot + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
@@ -271,7 +382,7 @@ Keep `NEWTON_CACHE_PATH` set when running the demo.
 - **XLB** — a JAX-based LBM fluid solver that advances each frame. The robot is
   represented as a prescribed moving obstacle whose boundary-condition masks are
   updated directly on the GPU.
-- **DEME** — a Python discrete-element solver (pip install deme) that advances a
+- **DEME** — a Python discrete-element solver (provided by `pip install deme3`) that advances a
   live particle simulation alongside the robot.
 
 ```python
@@ -313,9 +424,54 @@ use the developer-convenience CMake fetch option:
 pip install "xlb[cuda]"
 ```
 
-Likewise, the packaged wheel declares `deme` as a runtime dependency. For
+Likewise, the packaged wheel declares `deme3` as a runtime dependency. For
 source-tree developer builds, you can install it manually:
 
 ```bash
-pip install deme
+pip install deme3
 ```
+
+The DEME distribution and import module are intentionally configurable. The
+default `deme3` distribution exposes the `deme` module. To test another
+API-compatible distribution during CMake configuration, set both names as
+needed:
+
+```bash
+cmake -B build-py311 \
+      -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
+      -DMOPHI_PACKAGE_DEME_DISTRIBUTION=deme \
+      -DMOPHI_PACKAGE_DEME_IMPORT_MODULE=deme \
+      -DMOPHI_FETCH_DEME=ON
+```
+
+At runtime, Python dependencies are described by the general provider registry
+in `mophi.utils.package_provider`. It covers every runtime dependency declared
+in `pyproject.toml` and keeps each pip distribution name separate from its
+Python import module. The default mappings include `warp-lang` to `warp`,
+`PyYAML` to `yaml`, `GitPython` to `git`, and `deme3` to `deme`.
+
+Every provider accepts the same environment overrides:
+
+```bash
+MOPHI_PACKAGE_<NAME>_DISTRIBUTION=<pip-requirement>
+MOPHI_PACKAGE_<NAME>_IMPORT_MODULE=<python-module>
+```
+
+For example, a DEME-compatible provider with a different module name can be
+selected with:
+
+```bash
+MOPHI_PACKAGE_DEME_IMPORT_MODULE=another_module python demo/...
+```
+
+Python code resolves a provider uniformly:
+
+```python
+from mophi.utils.package_provider import load_package_provider
+
+DEME = load_package_provider("deme")
+```
+
+Changing the dependency installed with a packaged wheel remains a one-line
+change to the corresponding dependency entry in `pyproject.toml`; update the
+matching default in `DEFAULT_PACKAGE_PROVIDERS` at the same time.

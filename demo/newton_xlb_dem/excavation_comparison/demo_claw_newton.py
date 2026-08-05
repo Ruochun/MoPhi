@@ -46,7 +46,7 @@ Prerequisites
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
   • pip install --upgrade newton warp-lang mujoco==3.6.0
-  • pip install deme               (DEME discrete-element solver — required)
+  • pip install deme3              (DEME discrete-element solver — required)
 
 Running
 -------
@@ -68,6 +68,9 @@ import numpy as np
 # Required: build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON and ensure
 # python/ is on PYTHONPATH (the build tree puts the .so next to the package).
 import mophi
+from mophi.utils.package_provider import load_package_provider
+
+DEME = load_package_provider("deme")
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
     mophi.fatal("mophi.NewtonXLBDEMCoupler is not available.\n" "Re-build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON.")
@@ -78,9 +81,6 @@ import warp as wp
 import mujoco
 from newton import JointTargetMode
 from newton.selection import ArticulationView
-
-# Required: pip install deme
-import DEME
 
 mophi.check_newton_warp_mujoco_versions(
     mophi.REQUIRED_NEWTON_VERSION,

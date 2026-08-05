@@ -16,8 +16,10 @@ import warp as wp
 import mophi
 import newton
 import newton.utils
-import DEME
+from mophi.utils.package_provider import load_package_provider
 from newton import JointTargetMode
+
+DEME = load_package_provider("deme")
 
 # =============================================================================
 # Simulation configuration

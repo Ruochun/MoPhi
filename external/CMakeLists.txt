@@ -159,15 +159,16 @@ else()
 endif()
 
 # ── DEME (Python package) ─────────────────────────────────────────────────────
-# DEME is a pure Python discrete-element solver — it has no CMake build system
+# The DEME provider is a Python distribution — it has no CMake build system
 # and cannot be handled with mophi_fetch_external.  When MOPHI_FETCH_DEME=ON,
-# MoPhi installs DEME via pip at configure time so that it is immediately
-# importable in the Python coupler.
+# MoPhi installs the configured distribution via pip.  Its distribution and
+# import names are deliberately separate so API-compatible providers are easy
+# to substitute.
 if(MOPHI_FETCH_DEME AND NOT MOPHI_PYTHON_PACKAGING_BUILD)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    message(STATUS "MoPhi: Installing DEME Python package via pip ...")
+    message(STATUS "MoPhi: Installing DEME provider '${MOPHI_PACKAGE_DEME_DISTRIBUTION}' via pip ...")
     execute_process(
-        COMMAND           ${Python3_EXECUTABLE} -m pip install deme
+        COMMAND           ${Python3_EXECUTABLE} -m pip install ${MOPHI_PACKAGE_DEME_DISTRIBUTION}
         RESULT_VARIABLE   _deme_install_result
         OUTPUT_VARIABLE   _deme_install_output
         ERROR_VARIABLE    _deme_install_error
@@ -175,15 +176,15 @@ if(MOPHI_FETCH_DEME AND NOT MOPHI_PYTHON_PACKAGING_BUILD)
         ERROR_STRIP_TRAILING_WHITESPACE
     )
     if(_deme_install_result EQUAL 0)
-        message(STATUS "MoPhi: DEME Python package installed successfully")
+        message(STATUS "MoPhi: DEME provider installed successfully")
         set(MOPHI_EXTERNAL_DEME_AVAILABLE TRUE
             CACHE INTERNAL "DEME Python package available")
     else()
         message(WARNING
-            "MoPhi: pip install deme failed (exit code ${_deme_install_result}):\n"
+            "MoPhi: pip install ${MOPHI_PACKAGE_DEME_DISTRIBUTION} failed (exit code ${_deme_install_result}):\n"
             "${_deme_install_error}\n"
             "DEME will not be available for the coupler.  "
-            "Install it manually with:  pip install deme")
+            "Install it manually with:  pip install ${MOPHI_PACKAGE_DEME_DISTRIBUTION}")
     endif()
 else()
     if(MOPHI_FETCH_DEME AND MOPHI_PYTHON_PACKAGING_BUILD)
@@ -194,7 +195,7 @@ else()
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_FOUND)
         execute_process(
-            COMMAND         ${Python3_EXECUTABLE} -c "import deme"
+            COMMAND         ${Python3_EXECUTABLE} -c "import importlib; importlib.import_module('${MOPHI_PACKAGE_DEME_IMPORT_MODULE}')"
             RESULT_VARIABLE _deme_check_result
             OUTPUT_QUIET
             ERROR_QUIET

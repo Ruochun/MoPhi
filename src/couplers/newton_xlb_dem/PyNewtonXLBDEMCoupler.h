@@ -12,7 +12,7 @@
 // PyNewtonXLBDEMCoupler — three-way co-simulation coupler bridging
 //   • Newton (Python GPU rigid-body / articulation physics via NVIDIA Warp)
 //   • XLB    (Python GPU lattice-Boltzmann fluid solver via JAX)
-//   • DEME   (Python discrete-element solver, pip install deme)
+//   • DEME   (Python discrete-element solver, provided by the configured distribution)
 //
 // Newton is the primary physics solver in this coupler.  It drives an
 // articulated walking robot and produces a spatial representation of the robot
@@ -25,7 +25,7 @@
 //
 // DEME is an active discrete-element solver in this setup: a Python
 // deme.DEMSolver object is provided by the caller, retained by the coupler,
-// and advanced during StepDEME().  DEME is used via pip install deme so that
+// and advanced during StepDEME().  DEME is used via its Python API so that
 // no C++ build of DEM-Engine is required for this coupler.
 //
 // Per-solver stepping methods (no whole-sale stepper):

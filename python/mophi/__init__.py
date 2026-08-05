@@ -14,9 +14,26 @@ Example usage (requires -DMOPHI_BUILD_FERIS_NEWTON=ON at CMake configure time)::
     coupler.finalize()
 """
 
+from importlib import import_module as _import_module
+from pathlib import Path as _Path
 import sys as _sys
 
-from . import mophi_core  # noqa: F401 — make the C++ module accessible
+try:
+    mophi_core = _import_module(".mophi_core", __name__)
+except ImportError as _mophi_core_error:
+    _package_directory = _Path(__file__).resolve().parent
+    _available_extensions = sorted(path.name for path in _package_directory.glob("mophi_core.*"))
+    _available_text = ", ".join(_available_extensions) if _available_extensions else "none"
+    raise ImportError(
+        f"MoPhi could not load a mophi_core extension for CPython "
+        f"{_sys.version_info.major}.{_sys.version_info.minor}. "
+        f"Extensions present in {_package_directory}: {_available_text}. "
+        "For a source-tree developer build, configure a separate build directory "
+        "for this interpreter with "
+        "-DPython3_EXECUTABLE=$(python -c 'import sys; print(sys.executable)'), "
+        "then run cmake --build on that directory. "
+        f"Original import error: {_mophi_core_error}"
+    ) from _mophi_core_error
 
 __all__ = []
 

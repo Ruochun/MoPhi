@@ -9,7 +9,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Locate or fetch pybind11 ──────────────────────────────────────────────────
-find_package(pybind11 CONFIG QUIET)
+# Modern FindPython mode keeps the interpreter, headers, and extension ABI from
+# the same Python installation when several CPython versions are present.
+set(PYBIND11_FINDPYTHON ON)
+if(Python3_EXECUTABLE AND NOT Python_EXECUTABLE)
+    set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "Python interpreter used for MoPhi bindings")
+endif()
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+find_package(pybind11 3.0 CONFIG QUIET)
 
 if(NOT pybind11_FOUND)
     message(STATUS "MoPhi: pybind11 not found on the system — fetching via FetchContent ...")
@@ -17,7 +24,7 @@ if(NOT pybind11_FOUND)
     FetchContent_Declare(
         pybind11
         GIT_REPOSITORY "https://github.com/pybind/pybind11"
-        GIT_TAG        "v2.13.6"
+        GIT_TAG        "v3.0.4"
         GIT_SHALLOW    TRUE
     )
     FetchContent_MakeAvailable(pybind11)
