@@ -19,4 +19,5 @@ endif()
 # ── Newton + XLB + DEM-Engine three-way co-simulation demo ────────────────────
 if(MOPHI_BUILD_NEWTON_XLB_DEM)
     add_subdirectory(newton_xlb_dem)
+    add_subdirectory(newton_dem)
 endif()

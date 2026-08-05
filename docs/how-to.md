@@ -302,7 +302,43 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
 # Run one downward-facing Allegro hand interacting with DEME ellipsoidal clumps
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
+# Run the robotic 3D-printing machine stage (Newton arm and print head only)
+PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
 ```
+
+### Robotic 3D printing: Newton machine stage
+
+`demo_robotic_3d_printing.py` is the first stage of a Newton + DEME/DFC
+additive-manufacturing demo. Newton downloads its public Universal Robots UR10
+asset on first use, then the script attaches the hollow
+`data/mesh/funnel.obj` print-head mesh to the wrist. A static build plate and
+support frame complete the machine. The arm repeatedly approaches the plate, traces a closed
+small XY-plane printing sweep, and returns to its center pose.
+
+The printing material is intentionally absent in this stage. The script records
+the nozzle outlet in end-effector-local coordinates as
+`NOZZLE_OUTLET_LOCAL`; a later DEME-managed DFC implementation can use that
+point as its material source and add force exchange without rebuilding the
+Newton machine assembly. The generated movie, USD (when selected), and run
+metadata are written beneath `output/demo_robotic_3d_printing/`.
+
+Build and run it directly or through its CMake target:
+
+```bash
+cmake -B build-py311 \
+      -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
+      -DMOPHI_BUILD_NEWTON_XLB_DEM=ON \
+      -DMOPHI_BUILD_DEMOS=ON
+cmake --build build-py311
+PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
+
+# Equivalent convenience target (opens the interactive viewer):
+cmake --build build-py311 --target demo_robotic_3d_printing
+```
+
+Prerequisites are the same Newton, Warp, MuJoCo, imageio, and
+imageio-ffmpeg packages listed above. DEME/`deme3` is not instantiated by this
+machine-only stage; it becomes active when the DFC material phase is added.
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
 runtime; it keeps the walking-policy setup on flat ground and adds only a few
