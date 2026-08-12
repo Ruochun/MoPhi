@@ -25,7 +25,7 @@ DEME = load_package_provider("deme")
 # ── User configuration ────────────────────────────────────────────────────────────────────────
 WORLD_COUNT = 1
 NEWTON_DT = 1.0 / 500.0
-DEME_DT = 1.0 / 6000.0
+DEME_DT = 1.0 / 12000.0
 NEWTON_GRAVITY = (0.0, 0.0, 0.0)
 RENDER_FPS = 50
 PRINT_MOTION_SECONDS = 5.0
@@ -46,9 +46,7 @@ BUILD_PLATE_HALF_EXTENTS = (0.55, 0.55, 0.06)
 BUILD_FRAME_POST_HALF_EXTENTS = (0.035, 0.035, 0.36)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FUNNEL_OBJ_PATH = REPOSITORY_ROOT / "data" / "mesh" / "funnel.obj"
-COHESION_FORCE_MODEL_PATH = (
-    REPOSITORY_ROOT / "data" / "force_models" / "ForceModelWithCohesion.cu"
-)
+COHESION_FORCE_MODEL_PATH = REPOSITORY_ROOT / "data" / "force_models" / "ForceModelWithCohesion.cu"
 FUNNEL_MESH_SCALE = 0.001
 FUNNEL_MESH_COLOR = (0.18, 0.20, 0.23)
 FUNNEL_MESH_LOCAL_ROTATION_AXIS = (0.0, 1.0, 0.0)
@@ -289,24 +287,18 @@ initial_funnel_focus = initial_funnel_position + _quat_rotate_xyzw(
 )
 camera_to_funnel = initial_funnel_focus - np.asarray(CAMERA_POSITION)
 camera_yaw = np.degrees(np.arctan2(camera_to_funnel[1], camera_to_funnel[0]))
-camera_pitch = np.degrees(
-    np.arctan2(camera_to_funnel[2], np.hypot(camera_to_funnel[0], camera_to_funnel[1]))
-)
+camera_pitch = np.degrees(np.arctan2(camera_to_funnel[2], np.hypot(camera_to_funnel[0], camera_to_funnel[1])))
 
 print("[DEME] Creating granular material and the matching funnel contact proxy ...")
 if not COHESION_FORCE_MODEL_PATH.is_file():
     mophi.fatal(f"Required DEME cohesion force model is missing: {COHESION_FORCE_MODEL_PATH}")
 deme_solver = DEME.DEMSolver([device.ordinal])
 if device.ordinal not in deme_solver.GetGPUDeviceIDs():
-    mophi.fatal(
-        f"DEME workers {deme_solver.GetGPUDeviceIDs()} do not share Warp CUDA device {device.ordinal}."
-    )
+    mophi.fatal(f"DEME workers {deme_solver.GetGPUDeviceIDs()} do not share Warp CUDA device {device.ordinal}.")
 cohesion_force_model = deme_solver.ReadContactForceModel(str(COHESION_FORCE_MODEL_PATH))
 cohesion_force_model.SetMustHaveMatProp({"E", "nu", "CoR", "mu", "Crr", "Cohesion"})
 cohesion_force_model.SetMustPairwiseMatProp({"CoR", "mu", "Crr", "Cohesion"})
-cohesion_force_model.SetPerContactWildcards(
-    {"delta_time", "delta_tan_x", "delta_tan_y", "delta_tan_z"}
-)
+cohesion_force_model.SetPerContactWildcards({"delta_time", "delta_tan_x", "delta_tan_y", "delta_tan_z"})
 # deme_solver.SetVerbosity("ERROR")
 wall_material = deme_solver.LoadMaterial(DEME_WALL_MATERIAL)
 particle_material = deme_solver.LoadMaterial(DEME_PARTICLE_MATERIAL)
