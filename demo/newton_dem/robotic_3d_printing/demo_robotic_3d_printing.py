@@ -28,24 +28,14 @@ NEWTON_DT = 1.0 / 500.0
 DEME_DT = 1.0 / 6000.0
 NEWTON_GRAVITY = (0.0, 0.0, 0.0)
 RENDER_FPS = 50
-MOTION_SEGMENT_SECONDS = 0.8
+PRINT_MOTION_SECONDS = 5.0
 WARMUP_SECONDS = 0.5
 RENDER_SETTLING_PHASE = True
-PRINT_CYCLES = 2
 
-# These adjacent targets define one complete machine trajectory: hold a stable
-# printing posture, make a slight base-joint XY sweep, then return to center.
-APPROACH_Q = np.array([0.50 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0], dtype=np.float32)
-PRINT_PATH_Q = np.array(
-    [
-        [0.49 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0],
-        [0.51 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0],
-        [0.49 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0],
-        [0.50 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0],
-    ],
-    dtype=np.float32,
-)
-RETRACT_Q = np.array([0.50 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0], dtype=np.float32)
+# These adjacent targets define the complete one-way printing trajectory. Only
+# the base joint changes, producing a small, nearly straight lateral trail.
+PRINT_START_Q = np.array([0.50 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0], dtype=np.float32)
+PRINT_END_Q = np.array([0.40 * np.pi, 0.80, -0.90, -1.47, -0.50 * np.pi, 0.0], dtype=np.float32)
 JOINT_TARGET_STIFFNESS = 500.0
 JOINT_TARGET_DAMPING = 50.0
 
@@ -56,12 +46,16 @@ BUILD_PLATE_HALF_EXTENTS = (0.55, 0.55, 0.06)
 BUILD_FRAME_POST_HALF_EXTENTS = (0.035, 0.035, 0.36)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FUNNEL_OBJ_PATH = REPOSITORY_ROOT / "data" / "mesh" / "funnel.obj"
+COHESION_FORCE_MODEL_PATH = (
+    REPOSITORY_ROOT / "data" / "force_models" / "ForceModelWithCohesion.cu"
+)
 FUNNEL_MESH_SCALE = 0.001
 FUNNEL_MESH_COLOR = (0.18, 0.20, 0.23)
 FUNNEL_MESH_LOCAL_ROTATION_AXIS = (0.0, 1.0, 0.0)
 FUNNEL_MESH_LOCAL_ROTATION_ANGLE = -0.5 * np.pi
-# End-effector-local outlet used as the future DFC material injection point.
-NOZZLE_OUTLET_LOCAL = (0.55, 0.0, 0.0)
+# The wrist orientation maps its local +X direction downward. Extending this
+# mount offset lowers the funnel while preserving the arm's lateral trajectory.
+NOZZLE_OUTLET_LOCAL = (0.65, 0.0, 0.0)
 
 DEME_PARTICLE_RADIUS = 0.002
 DEME_PARTICLE_VISUAL_RADIUS = 0.002
@@ -74,14 +68,33 @@ DEME_FUNNEL_FAMILY = 10
 ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK = False
 DEME_DOMAIN_X = (-0.75, 0.75)
 DEME_DOMAIN_Y = (0.25, 1.55)
-DEME_DOMAIN_Z = (0.12, 1.20)
+# Keep the box bottom below the explicit build-plate plane so the two
+# analytical boundaries are not coincident.
+DEME_DOMAIN_Z = (0.0, 1.20)
 # This funnel-local box stays within the bowl's inner volume. Its points are
 # transformed to world space through the initial Newton-derived funnel pose.
 DEME_PARTICLE_SAMPLE_BOX_CENTER_LOCAL = (0.0, 0.0, 0.10)
 DEME_PARTICLE_SAMPLE_BOX_HALF_EXTENTS = (0.045, 0.045, 0.040)
 DEME_PARTICLE_GRID_SPACING = DEME_PARTICLE_RADIUS * 2.1
-DEME_WALL_MATERIAL = {"E": 5.0e5, "nu": 0.3, "CoR": 0.25, "mu": 0.45}
-DEME_PARTICLE_MATERIAL = {"E": 5.0e5, "nu": 0.3, "CoR": 0.25, "mu": 0.45}
+# Keep cohesion disabled while isolating the custom force-model kernel from
+# subsequent material and domain changes.
+DEME_COHESION = 350.0
+DEME_WALL_MATERIAL = {
+    "E": 5.0e5,
+    "nu": 0.3,
+    "CoR": 0.25,
+    "mu": 0.45,
+    "Crr": 0.0,
+    "Cohesion": DEME_COHESION,
+}
+DEME_PARTICLE_MATERIAL = {
+    "E": 5.0e5,
+    "nu": 0.3,
+    "CoR": 0.25,
+    "mu": 0.45,
+    "Crr": 0.0,
+    "Cohesion": DEME_COHESION,
+}
 
 USE_OMNIVERSE_VISUALIZATION = False
 SAVE_MOVIE = True
@@ -99,9 +112,7 @@ MOVIE_FPS = RENDER_FPS
 FRAME_DT = 1.0 / RENDER_FPS
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
-MOTION_WAYPOINTS = np.vstack((APPROACH_Q, PRINT_PATH_Q, RETRACT_Q, APPROACH_Q))
-MOTION_SEGMENT_COUNT = len(MOTION_WAYPOINTS) - 1
-NUM_FRAMES = int(round(PRINT_CYCLES * MOTION_SEGMENT_COUNT * MOTION_SEGMENT_SECONDS / FRAME_DT))
+NUM_FRAMES = int(round(PRINT_MOTION_SECONDS / FRAME_DT))
 WARMUP_STEPS = int(round(WARMUP_SECONDS / NEWTON_DT))
 
 
@@ -134,12 +145,9 @@ def _smoothstep(value: float) -> float:
 
 
 def _motion_target(sim_time: float) -> np.ndarray:
-    """Interpolate the cyclic, low-amplitude XY sweep program."""
-    cycle_duration = MOTION_SEGMENT_COUNT * MOTION_SEGMENT_SECONDS
-    cycle_time = sim_time % cycle_duration
-    segment = min(int(cycle_time / MOTION_SEGMENT_SECONDS), MOTION_SEGMENT_COUNT - 1)
-    phase = _smoothstep((cycle_time - segment * MOTION_SEGMENT_SECONDS) / MOTION_SEGMENT_SECONDS)
-    return (1.0 - phase) * MOTION_WAYPOINTS[segment] + phase * MOTION_WAYPOINTS[segment + 1]
+    """Interpolate once from the starting posture to the lateral endpoint."""
+    phase = _smoothstep(sim_time / PRINT_MOTION_SECONDS)
+    return (1.0 - phase) * PRINT_START_Q + phase * PRINT_END_Q
 
 
 def _quat_multiply_xyzw(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -231,9 +239,9 @@ for joint_index in range(len(robot_builder.joint_target_ke)):
     robot_builder.joint_target_ke[joint_index] = JOINT_TARGET_STIFFNESS
     robot_builder.joint_target_kd[joint_index] = JOINT_TARGET_DAMPING
     robot_builder.joint_target_mode[joint_index] = int(JointTargetMode.POSITION)
-if len(robot_builder.joint_q) < len(APPROACH_Q):
-    mophi.fatal(f"UR10 exposes only {len(robot_builder.joint_q)} joint coordinates; expected {len(APPROACH_Q)}.")
-robot_builder.joint_q[: len(APPROACH_Q)] = APPROACH_Q.tolist()
+if len(robot_builder.joint_q) < len(PRINT_START_Q):
+    mophi.fatal(f"UR10 exposes only {len(robot_builder.joint_q)} joint coordinates; expected {len(PRINT_START_Q)}.")
+robot_builder.joint_q[: len(PRINT_START_Q)] = PRINT_START_Q.tolist()
 
 builder = newton.ModelBuilder()
 builder.replicate(robot_builder, WORLD_COUNT, spacing=(2.0, 2.0, 0.0))
@@ -286,17 +294,27 @@ camera_pitch = np.degrees(
 )
 
 print("[DEME] Creating granular material and the matching funnel contact proxy ...")
+if not COHESION_FORCE_MODEL_PATH.is_file():
+    mophi.fatal(f"Required DEME cohesion force model is missing: {COHESION_FORCE_MODEL_PATH}")
 deme_solver = DEME.DEMSolver([device.ordinal])
 if device.ordinal not in deme_solver.GetGPUDeviceIDs():
     mophi.fatal(
         f"DEME workers {deme_solver.GetGPUDeviceIDs()} do not share Warp CUDA device {device.ordinal}."
     )
-deme_solver.UseFrictionalHertzianModel()
+cohesion_force_model = deme_solver.ReadContactForceModel(str(COHESION_FORCE_MODEL_PATH))
+cohesion_force_model.SetMustHaveMatProp({"E", "nu", "CoR", "mu", "Crr", "Cohesion"})
+cohesion_force_model.SetMustPairwiseMatProp({"CoR", "mu", "Crr", "Cohesion"})
+cohesion_force_model.SetPerContactWildcards(
+    {"delta_time", "delta_tan_x", "delta_tan_y", "delta_tan_z"}
+)
 # deme_solver.SetVerbosity("ERROR")
 wall_material = deme_solver.LoadMaterial(DEME_WALL_MATERIAL)
 particle_material = deme_solver.LoadMaterial(DEME_PARTICLE_MATERIAL)
 deme_solver.SetMaterialPropertyPair("CoR", wall_material, particle_material, DEME_PARTICLE_MATERIAL["CoR"])
 deme_solver.SetMaterialPropertyPair("mu", wall_material, particle_material, DEME_PARTICLE_MATERIAL["mu"])
+deme_solver.SetMaterialPropertyPair("Crr", wall_material, particle_material, DEME_PARTICLE_MATERIAL["Crr"])
+deme_solver.SetMaterialPropertyPair("Cohesion", particle_material, particle_material, DEME_COHESION)
+deme_solver.SetMaterialPropertyPair("Cohesion", wall_material, particle_material, DEME_COHESION)
 particle_mass = DEME_PARTICLE_DENSITY * (4.0 / 3.0) * np.pi * DEME_PARTICLE_RADIUS**3
 particle_template = deme_solver.LoadSphereType(particle_mass, DEME_PARTICLE_RADIUS, particle_material)
 
@@ -324,8 +342,10 @@ deme_funnel.SetFamily(DEME_FUNNEL_FAMILY)
 deme_solver.SetFamilyFixed(DEME_FUNNEL_FAMILY)
 funnel_tracker = deme_solver.Track(deme_funnel)
 
+# These explicit XYZ ranges define the six analytical enclosure walls. The
+# separate build-plate plane below remains the printing surface inside the box.
 deme_solver.InstructBoxDomainDimension(DEME_DOMAIN_X, DEME_DOMAIN_Y, DEME_DOMAIN_Z)
-# Keep the analytical build-plate plane without artificial domain side walls.
+# deme_solver.InstructBoxDomainBoundingBC("all", wall_material)
 build_plate_top = BUILD_PLATE_CENTER[2] + BUILD_PLATE_HALF_EXTENTS[2]
 deme_solver.AddBCPlane(
     [BUILD_PLATE_CENTER[0], BUILD_PLATE_CENTER[1], build_plate_top],
@@ -334,7 +354,8 @@ deme_solver.AddBCPlane(
 )
 deme_solver.SetGravitationalAcceleration([0.0, 0.0, -9.81])
 deme_solver.SetInitTimeStep(DEME_DT)
-deme_solver.DisableAdaptiveBinSize()
+deme_solver.SetErrorOutAvgContacts(1000)
+# deme_solver.DisableAdaptiveBinSize()
 deme_solver.Initialize()
 print(f"[DEME] Initialized {deme_particle_count} spheres and a {deme_funnel.GetNumTriangles()}-triangle funnel.")
 
@@ -367,7 +388,7 @@ if arm_view.count != WORLD_COUNT:
     mophi.fatal(f"Expected {WORLD_COUNT} UR10 articulation, found {arm_view.count}.")
 
 joint_values = arm_view.get_attribute("joint_q", coupler.newton_state_0).numpy()
-controlled_dofs = min(arm_view.joint_dof_count, len(APPROACH_Q))
+controlled_dofs = min(arm_view.joint_dof_count, len(PRINT_START_Q))
 
 
 def _set_joint_target(target: np.ndarray, set_state: bool = False) -> None:
@@ -457,7 +478,7 @@ def _render_scene(frame_time: float) -> None:
 
 
 try:
-    _set_joint_target(APPROACH_Q, set_state=True)
+    _set_joint_target(PRINT_START_Q, set_state=True)
     _sync_newton_funnel_pose_to_deme()
     for warmup_step in range(WARMUP_STEPS):
         coupler.step_newton()
@@ -514,7 +535,8 @@ METADATA_OUTPUT_PATH.write_text(
             "render_fps": RENDER_FPS,
             "nozzle_outlet_local": NOZZLE_OUTLET_LOCAL,
             "deme_particle_count": deme_particle_count,
-            "deme_dfc_material_enabled": False,
+            "deme_contact_model": "ForceModelWithCohesion.cu",
+            "deme_cohesion": DEME_COHESION,
             "deme_funnel_proxy_enabled": True,
             "newton_to_deme_pose_coupling_enabled": True,
             "deme_to_newton_force_feedback_enabled": ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK,

@@ -24,3 +24,8 @@ install(
     FILES "${CMAKE_SOURCE_DIR}/data/mesh/funnel.obj"
     DESTINATION data/mesh
 )
+
+install(
+    FILES "${CMAKE_SOURCE_DIR}/data/force_models/ForceModelWithCohesion.cu"
+    DESTINATION data/force_models
+)

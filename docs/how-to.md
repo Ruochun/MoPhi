@@ -149,7 +149,7 @@ supported distributed install experience:
 - `newton==1.0.0`
 - `warp-lang==1.12.1`
 - `mujoco==3.6.0`
-- `deme3>=3.0.1,<4`
+- `deme3>=3.0.5,<4`
 - `xlb[cuda]`
 - `torch`
 - `GitPython`
@@ -309,7 +309,10 @@ PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_pr
 ### Robotic 3D printing: Newton/DEME co-simulation
 
 `demo_robotic_3d_printing.py` is a Newton + DEME additive-manufacturing demo
-whose small sphere population is a stand-in for the future DFC material model.
+whose sphere population currently exercises DEME's custom
+`ForceModelWithCohesion.cu` kernel with `DEME_COHESION = 0.0`. This isolates
+the custom-kernel path before cohesion or domain changes are enabled. The model
+is stored under `data/force_models/` and loaded explicitly by the demo.
 DEME's regular-grid sampler derives that population from a configurable
 funnel-local box contained within the bowl. The initial Newton funnel transform
 maps those sampled points into world space, rather than relying on an unrelated
@@ -317,9 +320,12 @@ global center or a fixed particle count.
 Newton downloads its public Universal Robots UR10
 asset on first use, then the script attaches the hollow
 `data/mesh/funnel.obj` print-head mesh to the wrist. A static build plate and
-support frame complete the machine. The arm repeatedly approaches the plate, traces a closed
-small XY-plane printing sweep, and returns to its center pose. DEME initializes
-a small sphere cloud and an analytical ground plane at the build-plate height.
+support frame complete the machine. After settling, the arm moves once from its
+starting posture toward a modest lateral endpoint, leaving a nearly straight
+particle trail without reversing direction. DEME initializes
+a small sphere cloud, six analytical box walls from explicit XYZ ranges, and a
+separate analytical plane at the build-plate height. The box's lower Z wall is
+below the build plate, avoiding coincident contact boundaries.
 Newton's machine stage uses zero gravity so its prescribed arm posture does not
 sag during warm-up; DEME retains its own downward gravity for particle settling.
 The DEME funnel is always an externally driven contact proxy. It starts at the
