@@ -201,16 +201,10 @@ struct PyNewtonXLBDEMCoupler {
     /// @p ext_forces_wp must be a wp.array of shape (body_count,) with dtype
     /// wp.spatial_vector.  Each entry is [fx, fy, fz, tx, ty, tz] in world space.
     ///
-    /// StepNewton() adds the forces to \c newton_state_0.body_f after
-    /// clear_forces() and collide() but before step().  The stored array is
-    /// replaced every time this method is called; pass \c None to disable force
-    /// injection for subsequent steps.
+    /// StepNewton() copies the forces directly between device arrays into \c newton_state_0.body_f after
+    /// clear_forces() and collide() but before step().  The stored array is replaced every time this method is called;
+    /// pass \c None to disable force injection for subsequent steps.
     ///
-    /// Typical usage (once per Newton substep):
-    /// @code
-    ///   forces_np = np.zeros((model.body_count, 6), dtype=np.float32)
-    ///   forces_np[ee_link_body_idx, :3] = deme_tracker.Mass() * np.asarray(deme_tracker.ContactAcc())
-    ///   coupler.set_newton_body_forces(wp.array(forces_np, dtype=wp.spatial_vector))
-    /// @endcode
+    /// The caller may populate the array directly from another CUDA solver.
     void SetNewtonBodyForces(pybind11::object ext_forces_wp);
 };

@@ -149,7 +149,7 @@ supported distributed install experience:
 - `newton==1.0.0`
 - `warp-lang==1.12.1`
 - `mujoco==3.6.0`
-- `deme3>=3.0.1,<4`
+- `deme3>=3.0.5,<4`
 - `xlb[cuda]`
 - `torch`
 - `GitPython`
@@ -302,7 +302,73 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
 # Run one downward-facing Allegro hand interacting with DEME ellipsoidal clumps
 PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
+# Run the robotic 3D-printing co-simulation (Newton arm + DEME spheres)
+PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
 ```
+
+### Robotic 3D printing: Newton/DEME co-simulation
+
+`demo_robotic_3d_printing.py` is a Newton + DEME additive-manufacturing demo
+whose sphere population currently exercises DEME's custom
+`ForceModelWithCohesion.cu` kernel with `DEME_COHESION = 0.0`. This isolates
+the custom-kernel path before cohesion or domain changes are enabled. The model
+is stored under `data/force_models/` and loaded explicitly by the demo.
+DEME's regular-grid sampler derives that population from a configurable
+funnel-local box contained within the bowl. The initial Newton funnel transform
+maps those sampled points into world space, rather than relying on an unrelated
+global center or a fixed particle count.
+Newton downloads its public Universal Robots UR10
+asset on first use, then the script attaches the hollow
+`data/mesh/funnel.obj` print-head mesh to the wrist. A static build plate and
+support frame complete the machine. After settling, the arm moves once from its
+starting posture toward a modest lateral endpoint, leaving a nearly straight
+particle trail without reversing direction. DEME initializes
+a small sphere cloud, six analytical box walls from explicit XYZ ranges, and a
+separate analytical plane at the build-plate height. The box's lower Z wall is
+below the build plate, avoiding coincident contact boundaries.
+Newton's machine stage uses zero gravity so its prescribed arm posture does not
+sag during warm-up; DEME retains its own downward gravity for particle settling.
+The DEME funnel is always an externally driven contact proxy. It starts at the
+Newton funnel's configured initial pose, and every Newton substep updates its
+DEME tracker pose before DEME advances. There is no independent DEME funnel
+trajectory or conditional pose-coupling mode. DEME-to-Newton force feedback is
+controlled separately by `ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK` and defaults to
+`False`, so particles do not disturb the prescribed Newton arm motion. When
+enabled, DEME writes its contact acceleration, angular acceleration, mass,
+inertia, and orientation into caller-owned Warp CUDA arrays. A Warp kernel
+forms the world-space wrench in Newton's external body-force array, which the
+coupler copies device-to-device into Newton before integration. The code marks
+a pending correction to shift torque from the DEME funnel frame to the Newton
+end-effector frame before force feedback is used for quantitative studies. Particle
+positions are likewise copied directly into a Warp array for rendering. In
+deme3 3.0.1, `Tracker.SetPos` and `Tracker.SetOriQ` are still host-only, so the
+Newton-to-DEME proxy pose update is the one host-staged physics boundary; the
+code marks the precise replacement point for future device pose setters. The
+generated movie, USD (when selected), and run metadata are written beneath
+`output/demo_robotic_3d_printing/`.
+
+The initial settling interval advances both Newton and DEME. With the default
+`RENDER_SETTLING_PHASE = True`, it is rendered and recorded at `RENDER_FPS`
+before the arm begins its printing trajectory; disabling that flag keeps the
+same physics warm-up but omits its frames from the output.
+
+Build and run it directly or through its CMake target:
+
+```bash
+cmake -B build-py311 \
+      -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
+      -DMOPHI_BUILD_NEWTON_XLB_DEM=ON \
+      -DMOPHI_BUILD_DEMOS=ON
+cmake --build build-py311
+PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
+
+# Equivalent convenience target (opens the interactive viewer):
+cmake --build build-py311 --target demo_robotic_3d_printing
+```
+
+Prerequisites are the Newton, Warp, MuJoCo, `deme3`, imageio, and
+imageio-ffmpeg packages listed above. Newton and both DEME workers must use the
+same logical CUDA device for the direct pointer exchange.
 
 The Newton-only ANYmal baseline demo does not instantiate XLB or DEME at
 runtime; it keeps the walking-policy setup on flat ground and adds only a few

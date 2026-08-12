@@ -106,28 +106,8 @@ void PyNewtonXLBDEMCoupler::StepNewton() {
     // Apply external body forces registered by the caller (e.g. DEME contact forces)
     // after the internal force clear so they are visible to the integrator.
     if (!newton_ext_body_forces.is_none()) {
-        namespace py = pybind11;
-        py::module_ np = py::module_::import("numpy");
-        py::module_ wp = py::module_::import("warp");
-
-        // body_f is a wp.array of shape (body_count,) dtype=wp.spatial_vector.
-        // numpy() returns a (body_count, 6) float32 ndarray (force + torque per body).
-        py::object body_f = newton_state_0.attr("body_f");
-        py::object body_f_np = body_f.attr("numpy")();
-        py::object ext_np = newton_ext_body_forces.attr("numpy")();
-
-        // Accumulate: body_f += ext_forces.
-        // The GPU→CPU→GPU round-trip is intentional: Warp does not yet expose an
-        // in-place scatter-add kernel through pybind11, and the body_count for a
-        // single UR10 arm (~20 bodies) is small enough that the copy cost is
-        // negligible compared with the DEME micro-steps executed per Newton substep.
-        py::object summed_np = np.attr("add")(body_f_np, ext_np);
-
-        // Write the summed array back into the device-resident wp.array.
-        py::object device = body_f.attr("device");
-        py::object new_body_f =
-            wp.attr("array")(summed_np, py::arg("dtype") = wp.attr("spatial_vector"), py::arg("device") = device);
-        wp.attr("copy")(body_f, new_body_f);
+        pybind11::object body_f = newton_state_0.attr("body_f");
+        pybind11::module_::import("warp").attr("copy")(body_f, newton_ext_body_forces);
     }
 
     newton_solver.attr("step")(newton_state_0, newton_state_1, newton_control, newton_contacts,
