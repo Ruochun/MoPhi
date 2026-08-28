@@ -17,18 +17,19 @@ MoPhi/
 │   ├── ExternalProjects.cmake   # ← add new solver URLs here
 │   └── CMakeLists.txt           # Fetches selected external projects
 ├── src/
-│   ├── couplers/                # Multi-physics co-simulation couplers
-│   │   └── feris_newton/        # FERIS (C++) + Newton (Python) coupling
-│   └── visualization/           # Backend-agnostic visualization layer (pure Python)
-│       ├── README.md            # ← design philosophy and API contract
-│       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
-│       └── omniverse_visualizer.py # Offline USD export backend
+│   └── couplers/                # Multi-physics co-simulation couplers
+│       └── feris_newton/        # FERIS (C++) + Newton (Python) coupling
+├── docs/
+│   ├── python-package.md        # Python source/package architecture
+│   └── visualization.md         # Visualizer design and API contract
 └── python/
     ├── CMakeLists.txt           # pybind11 module — fetched automatically
     ├── bindings/
     │   └── mophi_bindings.cpp   # pybind11 entry point
-    └── mophi/
-        └── __init__.py          # Python package
+    └── mophi/                   # Canonical installable Python source
+        ├── __init__.py          # Public package entry point
+        ├── utils/               # Solver-independent Python helpers
+        └── visualizers/         # Visualization backends
 ```
 
 ---
@@ -144,6 +145,9 @@ configure time with instructions on how to resolve the problem.
 Python bindings are built automatically when `MOPHI_BUILD_PYTHON_BINDINGS=ON`
 (the default). pybind11 is fetched automatically if not already available.
 
+See [`python-package.md`](python-package.md) for the canonical Python source
+layout and the reason Python modules are not duplicated under `src/`.
+
 After building, add the `python/` directory to your `PYTHONPATH`:
 
 ```bash
@@ -159,7 +163,8 @@ The `mophi` package uses a graceful `try/except ImportError` pattern so that
 
 ## Visualization
 
-MoPhi ships a backend-agnostic visualization layer in `src/visualization/`.
+MoPhi ships a backend-agnostic visualization layer whose canonical
+implementations live in `python/mophi/visualizers/`.
 Two backends are provided out of the box:
 
 | Class | Backend | Output |
@@ -173,7 +178,7 @@ simulation loop is identical for both.
 If you are using WSL and the OpenGL window does not appear, verify that WSLg GUI
 support is installed and working in your environment before debugging MoPhi itself.
 
-See [`../src/visualization/README.md`](../src/visualization/README.md) for the full
+See [`visualization.md`](visualization.md) for the full
 design philosophy, the public API contract, and instructions for adding new
 backends.
 

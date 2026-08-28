@@ -41,6 +41,9 @@ For Python development and distribution, see
 It distinguishes per-interpreter source-tree CMake builds from single-wheel
 and `cibuildwheel` matrix builds, including ABI troubleshooting and verification.
 
+For the solver-independent G-code parser used by printing workflows, see
+[docs/gcode.md](docs/gcode.md).
+
 ### Linux Python 3.11–3.14 wheels (Newton + XLB + DEME, no FERIS)
 
 For the packaged distribution path, see
@@ -84,14 +87,16 @@ for the solver option matrix and extension checklist.
 ## Python bindings
 
 See [docs/design.md#python-bindings](docs/design.md#python-bindings) for the
-binding build/import model and source-tree import guidance.
+binding build/import model and source-tree import guidance. See
+[docs/python-package.md](docs/python-package.md) for the canonical package
+source layout.
 
 ---
 
 ## Visualization
 
 See [docs/design.md#visualization](docs/design.md#visualization) for the
-summary, and [`src/visualization/README.md`](src/visualization/README.md) for
+summary, and [docs/visualization.md](docs/visualization.md) for
 the visualization API contract and backend details.
 
 ---

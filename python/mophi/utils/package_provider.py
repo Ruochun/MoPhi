@@ -26,7 +26,7 @@ DEFAULT_PACKAGE_PROVIDERS = {
     "newton": PackageProvider("newton==1.0.0", "newton"),
     "warp": PackageProvider("warp-lang==1.12.1", "warp"),
     "mujoco": PackageProvider("mujoco==3.6.0", "mujoco"),
-    "deme": PackageProvider("deme3>=3.0.1,<4", "deme"),
+    "deme": PackageProvider("deme3>=3.0.5,<4", "deme"),
     "xlb": PackageProvider("xlb[cuda]", "xlb"),
     "torch": PackageProvider("torch", "torch"),
     "gitpython": PackageProvider("GitPython", "git"),

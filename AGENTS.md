@@ -42,17 +42,13 @@ MoPhi/
 │   │       ├── CMakeLists.txt
 │   │       ├── PyFERISNewtonCoupler.cpp # Implementation (compiled into mophi_core)
 │   │       └── PyFERISNewtonCoupler.h   # Python-facing wrapper (compiled into mophi_core)
-│   └── visualization/           # Backend-agnostic visualization layer (pure Python)
-│       ├── README.md            # Design philosophy, API contract, extension guide
-│       ├── opengl_visualizer.py # Real-time OpenGL backend (via Newton's ViewerGL)
-│       └── omniverse_visualizer.py # Offline USD export backend
 ├── python/
 │   ├── CMakeLists.txt           # pybind11 extension (fetched automatically)
 │   ├── bindings/
 │   │   └── mophi_bindings.cpp   # pybind11 entry point — register every coupler class here
 │   └── mophi/
 │       ├── __init__.py          # Python package — re-exports classes with try/except
-│       ├── visualizers/         # Visualizer backends (mirrored from src/visualization/)
+│       ├── visualizers/         # Canonical pure-Python visualizer backends
 │       │   ├── __init__.py
 │       │   ├── opengl_visualizer.py
 │       │   └── omniverse_visualizer.py
@@ -206,9 +202,9 @@ mophi::Logger::GetInstance().SetVerbosity(mophi::VERBOSITY_INFO);
 ## Visualization layer
 
 MoPhi provides a backend-agnostic Python visualization layer in
-`src/visualization/`.  The full design philosophy, public API contract, and
-instructions for adding new backends are documented in
-[`src/visualization/README.md`](src/visualization/README.md).
+`python/mophi/visualizers/`. The full design philosophy, public API contract,
+and instructions for adding new backends are documented in
+[`docs/visualization.md`](docs/visualization.md).
 
 Key rules for agents:
 
@@ -221,8 +217,8 @@ Key rules for agents:
   solver-agnostic.
 - **Both backends share the same public interface** — demos switch backends
   with a single constructor change; the simulation loop body is identical.
-- The files in `src/visualization/` are **mirrored** to `python/mophi/visualizers/`
-  (they must be kept in sync).
+- `python/mophi/` is the single canonical location for installable Python code.
+  Do not create mirrored Python sources under `src/`.
 
 ---
 
@@ -234,8 +230,15 @@ Key rules for agents:
   and agents and must have discoverable names.
 - New utility modules shared across multiple backends belong in
   `python/mophi/utils/`.
-- New visualizer backends belong in `python/mophi/visualizers/` and must also
-  have a mirrored copy in `src/visualization/`.
+- New visualizer backends belong in `python/mophi/visualizers/`.
+- When adding a new public or reusable utility module under
+  `python/mophi/utils/`, add concise documentation under `docs/` in the same
+  change. The document must identify the code it describes and cover the
+  utility's purpose, design boundaries, basic usage, supported behavior,
+  current limitations, and relevant test commands. Link the document from an
+  appropriate existing documentation overview so users can discover it.
+  Trivial implementation helpers that are private to an already-documented
+  module do not require a separate document.
 
 ---
 
@@ -650,8 +653,8 @@ paragraph concise and qualitative; detailed change lists should live in the
 linked documentation files instead.
 
 If the new coupler introduces a new visualization backend, update
-`src/visualization/README.md` instead of adding visualization detail to the
-main README.
+`docs/visualization.md` instead of adding visualization detail to the main
+README.
 
 ---
 
