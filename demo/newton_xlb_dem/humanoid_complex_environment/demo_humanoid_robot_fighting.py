@@ -1,9 +1,9 @@
-"""Newton-only Unitree G1 robot-fighting groundwork demo.
+"""Configurable Unitree G1 robot-fighting contact demo.
 
 Two instances of the learned locomotion policy drive G1 robots toward each
-other. Newton's policy-trained coarse collision shapes handle ground and
-robot-to-robot contact. High-resolution visual mesh objects are retained and
-validated, but deliberately do not participate in contact yet.
+other. Newton always manages articulated dynamics and ground contact. Select
+either DEME proxy-mesh contact with wrench feedback or Newton's original coarse
+robot-to-robot collision shapes.
 """
 
 from pathlib import Path
@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 import demo_humanoid_complex_environment as humanoid_demo
+from mophi.utils import load_package_provider
 
 # =============================================================================
 # Simulation configuration
@@ -20,7 +21,9 @@ import demo_humanoid_complex_environment as humanoid_demo
 # -- Timing -------------------------------------------------------------------
 RENDER_FPS = 50
 NEWTON_DT = 1.0 / 200.0
-NUM_FRAMES = 500
+POLICY_DECIMATION = 4
+DEME_DT = 1.0 / 1000.0
+SIM_DURATION_SECONDS = 5.0
 
 # -- Robot --------------------------------------------------------------------
 ROBOT_NAME = "g1_29dof"
@@ -37,15 +40,22 @@ FIGHTER_COMMANDS = np.array(
 )
 
 # -- Contact ------------------------------------------------------------------
+ROBOT_CONTACT_MODEL = "deme"  # Supported values: "deme", "newton".
 MAX_CONTACT_COUNT = 4096
 MAX_CONSTRAINT_COUNT = 8192
 
-# -- Future DEME contact-proxy visualization ----------------------------------
+# -- Contact-proxy visualization ---------------------------------------------
 SHOW_CONTACT_PROXY_MESHES = True
 CONTACT_PROXY_MESH_PATH = Path(__file__).resolve().parents[3] / "data" / "mesh" / "cube.obj"
 CONTACT_PROXY_PADDING = 0.005
 CONTACT_PROXY_LINE_WIDTH = 0.006
 CONTACT_PROXY_COLORS = ((0.1, 0.9, 1.0), (1.0, 0.45, 0.1))
+DEME_ROBOT_FAMILIES = (10, 11)
+DEME_DOMAIN_X = (-2.0, 2.0)
+DEME_DOMAIN_Y = (-2.5, 2.5)
+DEME_DOMAIN_Z = (-0.5, 2.5)
+DEME_CONTACT_MATERIAL = {"E": 5.0e6, "nu": 0.3, "CoR": 0.1, "mu": 0.6, "Crr": 0.0}
+DEME_PROXY_DIRECTORY_NAME = "deme_contact_proxies"
 
 # -- Visualization ------------------------------------------------------------
 USE_OMNIVERSE_VISUALIZATION = False
@@ -62,21 +72,42 @@ SAVE_MOVIE = True
 MOVIE_FPS = RENDER_FPS
 SAVE_FINAL_STATE = True
 
+# -- Derived constants --------------------------------------------------------
+FRAME_DT = 1.0 / RENDER_FPS
+POLICY_DT = POLICY_DECIMATION * NEWTON_DT
+NUM_FRAMES = int(round(SIM_DURATION_SECONDS / FRAME_DT))
+
 
 def _configure_shared_demo() -> None:
     """Apply fighting-specific configuration to the shared G1 harness."""
+    if ROBOT_CONTACT_MODEL not in ("deme", "newton"):
+        raise ValueError(f"ROBOT_CONTACT_MODEL must be 'deme' or 'newton', got {ROBOT_CONTACT_MODEL!r}.")
+    deme_module = load_package_provider("deme") if ROBOT_CONTACT_MODEL == "deme" else None
+
     humanoid_demo.RENDER_FPS = RENDER_FPS
     humanoid_demo.NEWTON_DT = NEWTON_DT
+    humanoid_demo.POLICY_DECIMATION = POLICY_DECIMATION
     humanoid_demo.NUM_FRAMES = NUM_FRAMES
     humanoid_demo.FRAME_DT = 1.0 / RENDER_FPS
-    humanoid_demo.SIM_SUBSTEPS = int(round(humanoid_demo.FRAME_DT / NEWTON_DT))
+    humanoid_demo.POLICY_DT = POLICY_DECIMATION * NEWTON_DT
+    humanoid_demo.SIM_SUBSTEPS = int(round(humanoid_demo.FRAME_DT / humanoid_demo.POLICY_DT))
+    humanoid_demo.DEME_DT = DEME_DT
+    humanoid_demo.DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
     humanoid_demo.ROBOT_NAME = ROBOT_NAME
     humanoid_demo.ROBOT_INITIAL_POSES = ROBOT_INITIAL_POSES
     humanoid_demo.DEFAULT_WALK_COMMANDS = FIGHTER_COMMANDS
 
-    # Keep visual meshes available as data, while Newton uses its original
-    # coarse policy colliders for all contact in this stage.
+    # Newton always keeps its policy colliders for ground contact. Its
+    # cross-robot pairs are filtered only when DEME supplies those forces.
     humanoid_demo.USE_ROBOT_VISUAL_MESH_COLLIDERS = False
+    humanoid_demo.ENABLE_DEME_ROBOT_CONTACT = ROBOT_CONTACT_MODEL == "deme"
+    humanoid_demo.DEME_MODULE = deme_module
+    humanoid_demo.DEME_ROBOT_FAMILIES = DEME_ROBOT_FAMILIES
+    humanoid_demo.DEME_DOMAIN_X = DEME_DOMAIN_X
+    humanoid_demo.DEME_DOMAIN_Y = DEME_DOMAIN_Y
+    humanoid_demo.DEME_DOMAIN_Z = DEME_DOMAIN_Z
+    humanoid_demo.DEME_CONTACT_MATERIAL = DEME_CONTACT_MATERIAL
+    humanoid_demo.DEME_PROXY_DIRECTORY_NAME = DEME_PROXY_DIRECTORY_NAME
     humanoid_demo.ENABLE_DYNAMIC_CONTACT_BOXES = False
     humanoid_demo.BOX_POSES = []
     humanoid_demo.ENABLE_INTERACTIVE_OBJECT_SPAWNING = False
@@ -107,7 +138,7 @@ def _configure_shared_demo() -> None:
 
 
 def main() -> None:
-    """Run two opposing G1 policies with coarse Newton contact."""
+    """Run two opposing G1 policies with the configured contact model."""
     _configure_shared_demo()
     humanoid_demo.main()
 

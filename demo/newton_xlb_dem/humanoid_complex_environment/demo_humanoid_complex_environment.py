@@ -51,6 +51,7 @@ from newton.examples.robot import example_robot_policy as newton_robot_policy
 # -- Timing -------------------------------------------------------------------
 RENDER_FPS = 50
 NEWTON_DT = 1.0 / 200.0
+POLICY_DECIMATION = 4
 NUM_FRAMES = 500
 
 # -- Robot --------------------------------------------------------------------
@@ -109,11 +110,26 @@ CONTACT_PROXY_PADDING = 0.005
 CONTACT_PROXY_LINE_WIDTH = 0.006
 CONTACT_PROXY_COLORS = ((0.1, 0.9, 1.0), (1.0, 0.45, 0.1))
 
+# -- DEME robot-contact resolution -------------------------------------------
+ENABLE_DEME_ROBOT_CONTACT = False
+DEME_MODULE = None
+DEME_DT = 1.0 / 1000.0
+DEME_ROBOT_FAMILIES = (10, 11)
+DEME_DOMAIN_X = (-2.0, 2.0)
+DEME_DOMAIN_Y = (-2.5, 2.5)
+DEME_DOMAIN_Z = (-0.5, 2.5)
+DEME_CONTACT_MATERIAL = {"E": 5.0e6, "nu": 0.3, "CoR": 0.1, "mu": 0.6, "Crr": 0.0}
+DEME_PROXY_DIRECTORY_NAME = "deme_contact_proxies"
+
 # -- Derived constants --------------------------------------------------------
 FRAME_DT = 1.0 / RENDER_FPS
-SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
-if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
-    raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
+POLICY_DT = POLICY_DECIMATION * NEWTON_DT
+SIM_SUBSTEPS = int(round(FRAME_DT / POLICY_DT))
+DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
+if not np.isclose(SIM_SUBSTEPS * POLICY_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
+    raise ValueError("FRAME_DT must be an integer multiple of POLICY_DT.")
+if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
+    raise ValueError("NEWTON_DT must be an integer multiple of DEME_DT.")
 
 
 @wp.kernel
@@ -180,6 +196,134 @@ def _make_scaled_contact_mesh_proxies(
             }
         )
     return proxies
+
+
+def _write_obj(path: Path, vertices: np.ndarray, triangle_indices: np.ndarray) -> None:
+    """Write one generated, body-local DEME proxy mesh."""
+    lines = [f"v {vertex[0]:.9g} {vertex[1]:.9g} {vertex[2]:.9g}\n" for vertex in vertices]
+    triangles = triangle_indices.reshape(-1, 3) + 1
+    lines.extend(f"f {triangle[0]} {triangle[1]} {triangle[2]}\n" for triangle in triangles)
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def _export_deme_body_contact_meshes(contact_mesh_proxies: list[dict], directory: Path) -> list[tuple[int, int, Path]]:
+    """Merge all scaled unit-box components belonging to each Newton body."""
+    directory.mkdir(parents=True, exist_ok=True)
+    proxies_by_body = {}
+    for proxy in contact_mesh_proxies:
+        key = (proxy["robot_instance"], proxy["body_index"])
+        proxies_by_body.setdefault(key, []).append(proxy)
+
+    exported = []
+    for (robot_instance, body_index), body_proxies in sorted(proxies_by_body.items()):
+        vertices = []
+        triangle_indices = []
+        vertex_offset = 0
+        for proxy in body_proxies:
+            proxy_vertices = np.asarray(proxy["body_local_vertices"], dtype=np.float32)
+            vertices.append(proxy_vertices)
+            triangle_indices.append(np.asarray(proxy["triangle_indices"], dtype=np.int32) + vertex_offset)
+            vertex_offset += len(proxy_vertices)
+        obj_path = directory / f"robot_{robot_instance}_body_{body_index}.obj"
+        _write_obj(obj_path, np.concatenate(vertices), np.concatenate(triangle_indices))
+        exported.append((robot_instance, body_index, obj_path))
+    return exported
+
+
+@wp.kernel
+def _scatter_deme_body_wrenches(
+    body_indices: wp.array(dtype=wp.int32),
+    forces: wp.array(dtype=wp.vec3),
+    torques: wp.array(dtype=wp.vec3),
+    body_forces: wp.array(dtype=wp.spatial_vector),
+):
+    proxy_idx = wp.tid()
+    body_forces[body_indices[proxy_idx]] = wp.spatial_vector(forces[proxy_idx], torques[proxy_idx])
+
+
+class DemeRobotContactResolver:
+    """Pose-driven DEME mesh contact with body-wrench feedback into Newton."""
+
+    def __init__(self, example) -> None:
+        if DEME_MODULE is None:
+            mophi.fatal("DEME contact is enabled, but the fighting demo did not provide the deme package module.")
+        if not example.device.is_cuda:
+            mophi.fatal("The Newton-DEME fighting contact path requires a CUDA Warp device.")
+        if len(DEME_ROBOT_FAMILIES) != example.robot_count:
+            mophi.fatal(
+                f"DEME_ROBOT_FAMILIES must contain one family per robot ({example.robot_count}), "
+                f"got {len(DEME_ROBOT_FAMILIES)}."
+            )
+
+        self.example = example
+        self.solver = DEME_MODULE.DEMSolver([example.device.ordinal])
+        if example.device.ordinal not in self.solver.GetGPUDeviceIDs():
+            mophi.fatal(
+                f"DEME workers {self.solver.GetGPUDeviceIDs()} do not share Warp CUDA device "
+                f"{example.device.ordinal}."
+            )
+        material = self.solver.LoadMaterial(DEME_CONTACT_MATERIAL)
+        exported_meshes = _export_deme_body_contact_meshes(
+            example.contact_mesh_proxies, OUTPUT_DIRECTORY / DEME_PROXY_DIRECTORY_NAME
+        )
+        initial_body_q = example.state_0.body_q.numpy()
+        self.trackers = []
+        for robot_instance, body_index, obj_path in exported_meshes:
+            mesh_owner = self.solver.AddWavefrontMeshObject(str(obj_path), material, False)
+            mesh_owner.SetInitPos(initial_body_q[body_index, :3].tolist())
+            mesh_owner.SetInitQuat(initial_body_q[body_index, 3:7].tolist())
+            mesh_owner.SetFamily(DEME_ROBOT_FAMILIES[robot_instance])
+            # Unit virtual mass and inertia make DEME contact accelerations
+            # numerically equal to force and body-frame moment resultants.
+            mesh_owner.SetMass(1.0)
+            mesh_owner.SetMOI([1.0, 1.0, 1.0])
+            self.trackers.append((body_index, self.solver.Track(mesh_owner)))
+
+        for family in DEME_ROBOT_FAMILIES:
+            self.solver.SetFamilyFixed(family)
+            self.solver.DisableContactBetweenFamilies(family, family)
+        self.solver.SetMeshUniversalContact(True)
+        self.solver.InstructBoxDomainDimension(DEME_DOMAIN_X, DEME_DOMAIN_Y, DEME_DOMAIN_Z)
+        self.solver.SetGravitationalAcceleration([0.0, 0.0, 0.0])
+        self.solver.SetInitTimeStep(DEME_DT)
+        self.solver.SetErrorOutAvgContacts(1000)
+        self.solver.Initialize()
+
+        tracker_count = len(self.trackers)
+        self.body_indices = wp.array(
+            [body_index for body_index, _ in self.trackers], dtype=wp.int32, device=example.device
+        )
+        self.forces = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
+        self.torques = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
+        self.body_forces = wp.zeros(example.model.body_count, dtype=wp.spatial_vector, device=example.device)
+        print(
+            f"[DEME] Initialized {tracker_count} articulated body proxy meshes; "
+            "only cross-robot mesh contact is enabled."
+        )
+
+    def resolve(self, state) -> None:
+        """Advance DEME at Newton's current pose and write the resulting wrenches."""
+        # DEME 3.0 exposes these pose setters and per-owner resultant getters
+        # through host calls. Keep the exchange isolated here so it can switch
+        # to bulk device APIs when DEME provides matching pose/resultant access.
+        body_q = state.body_q.numpy()
+        for body_index, tracker in self.trackers:
+            tracker.SetPos(body_q[body_index, :3].tolist())
+            tracker.SetOriQ(body_q[body_index, 3:7].tolist())
+        for _ in range(DEME_SUBSTEPS):
+            self.solver.DoStepDynamics()
+
+        force_values = [np.asarray(tracker.ContactAcc(), dtype=np.float32) for _, tracker in self.trackers]
+        torque_values = [np.asarray(tracker.ContactAngAccGlobal(), dtype=np.float32) for _, tracker in self.trackers]
+        self.forces.assign(np.asarray(force_values, dtype=np.float32))
+        self.torques.assign(np.asarray(torque_values, dtype=np.float32))
+        self.body_forces.zero_()
+        wp.launch(
+            _scatter_deme_body_wrenches,
+            dim=len(self.trackers),
+            inputs=[self.body_indices, self.forces, self.torques, self.body_forces],
+            device=self.example.device,
+        )
 
 
 def _add_robot_visual_mesh_proxies(builder: newton.ModelBuilder) -> list[int]:
@@ -351,7 +495,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
         physx_to_mjc: list[int],
     ):
         self.frame_dt = NEWTON_DT
-        self.decimation = 4
+        self.decimation = POLICY_DECIMATION
         self.cycle_time = self.frame_dt * self.decimation
         self.sim_time = 0.0
         self.sim_step = 0
@@ -402,6 +546,24 @@ class HumanoidContactExample(newton_robot_policy.Example):
         if USE_ROBOT_VISUAL_MESH_COLLIDERS:
             robot_mesh_proxy_indices = _add_robot_visual_mesh_proxies(builder)
             self.robot_mesh_proxy_count = len(robot_mesh_proxy_indices)
+
+        # DEME owns cross-robot contact in the fighting configuration. Newton
+        # retains all robot-ground and articulated self-contact behavior.
+        if ENABLE_DEME_ROBOT_CONTACT and len(self.robot_body_ranges) > 1:
+            robot_shapes = []
+            for body_start, body_end in self.robot_body_ranges:
+                robot_shapes.append(
+                    [
+                        shape_idx
+                        for shape_idx, body_idx in enumerate(builder.shape_body)
+                        if body_start <= body_idx < body_end
+                    ]
+                )
+            for first_robot_idx in range(len(robot_shapes)):
+                for second_robot_idx in range(first_robot_idx + 1, len(robot_shapes)):
+                    for first_shape_idx in robot_shapes[first_robot_idx]:
+                        for second_shape_idx in robot_shapes[second_robot_idx]:
+                            builder.add_shape_collision_filter_pair(first_shape_idx, second_shape_idx)
 
         ground_shape_idx = builder.add_ground_plane()
         _filter_mesh_proxies_to_external_objects(
@@ -454,7 +616,8 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.contact_proxy_world_starts = None
         self.contact_proxy_world_ends = None
         self.contact_proxy_colors = None
-        if SHOW_CONTACT_PROXY_MESHES:
+        self.deme_contact_resolver = None
+        if SHOW_CONTACT_PROXY_MESHES or ENABLE_DEME_ROBOT_CONTACT:
             self._initialize_contact_proxy_visualization()
         newton.eval_fk(self.model, self.state_0.joint_q, self.state_0.joint_qd, self.state_0)
         self._initial_joint_q = wp.clone(self.state_0.joint_q)
@@ -494,7 +657,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
         """Capture simulation with a control buffer sized for every robot instance."""
         self.graph = None
         self.use_cuda_graph = False
-        if wp.get_device().is_cuda and wp.is_mempool_enabled(wp.get_device()):
+        if not ENABLE_DEME_ROBOT_CONTACT and wp.get_device().is_cuda and wp.is_mempool_enabled(wp.get_device()):
             print("[INFO] Using CUDA graph")
             self.use_cuda_graph = True
             target_count = self.robot_count * self.robot_joint_target_count
@@ -505,7 +668,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
             self.graph = capture.graph
 
     def _initialize_contact_proxy_visualization(self) -> None:
-        """Allocate visualization-only wireframe boxes around visual meshes."""
+        """Build scaled contact meshes and allocate their optional wireframe overlay."""
         if not CONTACT_PROXY_MESH_PATH.is_file():
             mophi.fatal(f"Required contact proxy OBJ was not found: {CONTACT_PROXY_MESH_PATH}")
         self.contact_proxy_base_mesh = mophi.load_obj(str(CONTACT_PROXY_MESH_PATH))
@@ -516,6 +679,8 @@ class HumanoidContactExample(newton_robot_policy.Example):
             base_vertices,
             base_indices,
         )
+        if not SHOW_CONTACT_PROXY_MESHES:
+            return
         body_indices = []
         local_starts = []
         local_ends = []
@@ -568,6 +733,27 @@ class HumanoidContactExample(newton_robot_policy.Example):
             dtype=torch.float32,
         )
         self.rearranged_act = torch.zeros_like(self.act)
+
+    def initialize_deme_contact(self) -> None:
+        """Create DEME after Newton's initial body transforms are available."""
+        if ENABLE_DEME_ROBOT_CONTACT:
+            self.deme_contact_resolver = DemeRobotContactResolver(self)
+
+    def simulate(self):
+        """Advance Newton after applying the current DEME proxy contact resultants."""
+        need_state_copy = self.use_cuda_graph and self.sim_substeps % 2 == 1
+        for substep in range(self.sim_substeps):
+            self.state_0.clear_forces()
+            if self.deme_contact_resolver is not None:
+                self.deme_contact_resolver.resolve(self.state_0)
+                wp.copy(self.state_0.body_f, self.deme_contact_resolver.body_forces)
+            self.viewer.apply_forces(self.state_0)
+            self.solver.step(self.state_0, self.state_1, self.control, None, self.sim_dt)
+            if need_state_copy and substep == self.sim_substeps - 1:
+                self.state_0.assign(self.state_1)
+            else:
+                self.state_0, self.state_1 = self.state_1, self.state_0
+        self.solver.update_contacts(self.contacts, self.state_0)
 
     def step(self):
         """Advance the inherited policy while excluding free-box coordinates from its inputs."""
@@ -640,7 +826,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
             else:
                 self.simulate()
 
-        self.sim_time += self.frame_dt
+        self.sim_time += self.cycle_time
         self.sim_step += 1
 
     def spawn_interactive_object(self) -> bool:
@@ -680,7 +866,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
         self.viewer.log_contacts(self.contacts, self.state_0)
-        if self.contact_mesh_proxies:
+        if self.contact_proxy_local_starts is not None:
             wp.launch(
                 _transform_contact_proxy_lines,
                 dim=len(self.contact_proxy_local_starts),
@@ -715,6 +901,8 @@ def _write_run_metadata(
         "newton_version": newton.__version__,
         "asset_directory": str(asset_directory),
         "newton_dt": NEWTON_DT,
+        "policy_decimation": POLICY_DECIMATION,
+        "policy_dt": POLICY_DT,
         "render_fps": RENDER_FPS,
         "requested_frames": NUM_FRAMES,
         "completed_frames": frame_count,
@@ -730,6 +918,11 @@ def _write_run_metadata(
         "contact_proxy_mesh_path": str(CONTACT_PROXY_MESH_PATH),
         "contact_proxy_mesh_count": contact_proxy_mesh_count,
         "contact_proxy_padding": CONTACT_PROXY_PADDING,
+        "deme_robot_contact_enabled": ENABLE_DEME_ROBOT_CONTACT,
+        "deme_dt": DEME_DT if ENABLE_DEME_ROBOT_CONTACT else None,
+        "deme_substeps_per_newton_step": DEME_SUBSTEPS if ENABLE_DEME_ROBOT_CONTACT else 0,
+        "deme_robot_families": list(DEME_ROBOT_FAMILIES) if ENABLE_DEME_ROBOT_CONTACT else [],
+        "deme_contact_material": DEME_CONTACT_MATERIAL if ENABLE_DEME_ROBOT_CONTACT else None,
     }
     RUN_METADATA_OUTPUT_PATH.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
 
@@ -804,6 +997,7 @@ def main() -> None:
         slice(7, 7 + config["num_dofs"]),
     )
     example.configure_policy_instances()
+    example.initialize_deme_contact()
     if not np.isclose(example.frame_dt, NEWTON_DT, rtol=0.0, atol=1.0e-12):
         mophi.fatal(f"Newton G1 policy timestep changed: expected {NEWTON_DT}, got {example.frame_dt}.")
     print(
@@ -843,7 +1037,8 @@ def main() -> None:
 
     print(
         f"Running up to {NUM_FRAMES} interactive Unitree G1 frame(s) "
-        f"({SIM_SUBSTEPS} Newton policy steps x {NEWTON_DT * 1000.0:.1f} ms per rendered frame) ..."
+        f"({SIM_SUBSTEPS} policy step(s) x {POLICY_DECIMATION} Newton substeps x "
+        f"{NEWTON_DT * 1000.0:.1f} ms per rendered frame) ..."
     )
 
     completed_frames = 0

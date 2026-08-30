@@ -67,22 +67,33 @@ Keep `NEWTON_CACHE_PATH` set when reusing that fresh cache.
 The next stages will add complex terrain and support more challenging
 interactive object shapes and counts.
 
-## Robot-fighting groundwork demo
+## Robot-fighting Newton-DEME demo
 
 `demo_humanoid_robot_fighting.py` places two G1 robots face-to-face and gives
-both policies continuous forward commands. Newton's original coarse,
-policy-trained collision shapes handle ground and robot-to-robot contact. No
-dynamic boxes, warehouse shelves, or other decorative scene objects are added.
-The robots' high-resolution visual meshes do not participate in collision.
+both policies continuous forward commands. Newton manages the articulated
+robots and retains its policy-trained collision shapes for ground contact.
+DEME owns robot-to-robot contact: Newton's cross-robot shape pairs are filtered,
+and DEME returns one contact force and torque resultant per proxied body before
+each Newton step. No dynamic boxes, warehouse shelves, or other decorative
+scene objects are added.
+
+Set `ROBOT_CONTACT_MODEL = "deme"` for proxy-mesh contact and wrench
+feedback, or `ROBOT_CONTACT_MODEL = "newton"` to restore Newton's coarse
+robot-to-robot collision shapes. The latter is useful as a comparison and can
+show the previously observed interpenetration. This selection is independent
+of `SHOW_CONTACT_PROXY_MESHES`: set that flag to `False` to hide the wireframe
+while retaining the selected physics model, or `True` to show it.
 
 The demo loads the centered unit-box triangle mesh from `data/mesh/cube.obj`
 and scales a copy around every visual robot part, including the torso/head
 geometry, arm links, hands, and finger links. Each instance matches the padded
 local bounds of its corresponding visual mesh and follows the owning Newton
 body every frame. Cyan triangle wireframes identify the first robot; orange
-wireframes identify the second. These boxes are not Newton collision shapes and
-do not affect physics. Their scaled vertices and the OBJ triangle indices are
-retained for later DEME mesh-tracker registration. Set
+wireframes identify the second. These boxes are not Newton collision shapes;
+at startup, components on the same body are merged into body-local OBJ files
+under `output/demo_humanoid_robot_fighting/deme_contact_proxies/`. DEME loads
+those files as fixed, pose-driven mesh owners. Same-robot mesh contact is
+disabled, while cross-robot mesh contact is enabled universally. Set
 `SHOW_CONTACT_PROXY_MESHES = False` to hide the overlay, or tune
 `CONTACT_PROXY_MESH_PATH`, `CONTACT_PROXY_PADDING`, and
 `CONTACT_PROXY_LINE_WIDTH` in the configuration block.
@@ -92,7 +103,8 @@ mesh exposes vertices and triangle indices and retains its body association,
 body-local transform, and scale. It writes vertex/triangle counts to
 `output/demo_humanoid_robot_fighting/visual_mesh_manifest.json`. The live mesh objects
 and transforms remain available on `HumanoidContactExample.robot_visual_meshes`
-for a later DEME tracker integration without changing the robot asset pipeline.
+for inspection without changing the robot asset pipeline. The configured run
+duration is five seconds.
 
 Run it with:
 

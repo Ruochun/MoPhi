@@ -296,7 +296,7 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_ne
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 # Run the interactive Newton humanoid walking baseline
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
-# Run the two-robot Newton humanoid fighting groundwork demo
+# Run the two-robot Newton-DEME humanoid fighting demo
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 # Run the Newton + XLB humanoid swimming idea demo
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
@@ -393,19 +393,25 @@ robot and return spawned objects to the pool.
 The viewer also shows a non-physical warehouse aisle; set
 `SHOW_WAREHOUSE_ENVIRONMENT = False` to hide the decorative scene.
 
-The humanoid robot-fighting groundwork demo places two G1 robots face-to-face
-and commands both policies forward. Newton's coarse policy colliders handle
-ground and robot-to-robot contact. The scene contains no dynamic boxes,
-warehouse shelves, or other decorative obstacles. High-resolution visual
-meshes are only validated and retained for future DEME mesh trackers. The demo
+The humanoid robot-fighting demo places two G1 robots face-to-face and commands
+both policies forward for five seconds. Newton manages articulated dynamics and
+uses its coarse policy colliders for ground contact. DEME resolves cross-robot
+mesh contact and feeds each proxy body's force and torque back into Newton;
+Newton's duplicate cross-robot collider pairs are disabled. The scene contains
+no dynamic boxes, warehouse shelves, or other decorative obstacles. The demo
 records a mesh manifest under `output/demo_humanoid_robot_fighting/`, alongside
 its movie, metadata, and final-state snapshot.
+Set `ROBOT_CONTACT_MODEL` to `"deme"` for this coupled path or `"newton"`
+for the original coarse-contact comparison. `SHOW_CONTACT_PROXY_MESHES`
+independently turns the wireframe overlay on or off; hiding it does not disable
+DEME contact.
 It also loads `data/mesh/cube.obj` and draws scaled instances of that triangle
 mesh around every visual robot part. The cyan and orange wireframe overlays
-follow the two robots' links but do not participate in Newton contact. The
-scaled OBJ vertices and triangle indices are retained for later DEME tracker
-registration; configure the mesh path, padding, line width, colors, or
-visibility in the demo's contact-proxy visualization block.
+follow the two robots' links and show the meshes used for DEME contact. Proxy
+components attached to the same Newton body are merged into a body-local OBJ
+under `output/demo_humanoid_robot_fighting/deme_contact_proxies/`; configure
+the mesh path, padding, line width, colors, or visibility in the demo's
+contact-proxy block.
 
 The humanoid swimming idea demo places the G1 in an XLB fluid domain without a
 ground plane. Newton advances a scripted swimming stroke while analytic
