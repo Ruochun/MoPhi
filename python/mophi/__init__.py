@@ -127,6 +127,14 @@ try:
 except ImportError:
     pass
 
+# Validated Newton asset downloads with automatic incomplete-cache repair.
+try:
+    from .utils.newton_assets import download_newton_asset  # noqa: F401
+
+    __all__.append("download_newton_asset")
+except ImportError:
+    pass
+
 # SurfaceMesh and load_obj are always available — they depend only on the
 # mophi_essentials submodule which is always compiled into mophi_core.
 try:

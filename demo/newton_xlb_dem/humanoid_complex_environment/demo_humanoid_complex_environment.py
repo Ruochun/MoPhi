@@ -40,7 +40,6 @@ import yaml
 import mophi
 import newton
 import newton.examples
-import newton.utils
 from newton import JointTargetMode, ShapeFlags
 from newton.examples.robot import example_robot_policy as newton_robot_policy
 
@@ -56,6 +55,10 @@ NUM_FRAMES = 500
 
 # -- Robot --------------------------------------------------------------------
 ROBOT_NAME = "g1_29dof"
+ROBOT_INITIAL_POSES = [
+    ((0.0, 0.0, 0.76), (0.0, 0.0, 0.7071, 0.7071)),
+]
+DEFAULT_WALK_COMMANDS = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 USE_ROBOT_VISUAL_MESH_COLLIDERS = True
 ROBOT_MESH_APPROXIMATION_METHOD = "convex_hull"
 
@@ -97,12 +100,86 @@ MOVIE_FPS = RENDER_FPS
 SAVE_FINAL_STATE = True
 FINAL_STATE_OUTPUT_PATH = OUTPUT_DIRECTORY / "final_state.npz"
 RUN_METADATA_OUTPUT_PATH = OUTPUT_DIRECTORY / "run_metadata.json"
+VISUAL_MESH_MANIFEST_OUTPUT_PATH = OUTPUT_DIRECTORY / "visual_mesh_manifest.json"
+
+# -- Contact-proxy visualization ----------------------------------------------
+SHOW_CONTACT_PROXY_MESHES = False
+CONTACT_PROXY_MESH_PATH = REPOSITORY_ROOT / "data" / "mesh" / "cube.obj"
+CONTACT_PROXY_PADDING = 0.005
+CONTACT_PROXY_LINE_WIDTH = 0.006
+CONTACT_PROXY_COLORS = ((0.1, 0.9, 1.0), (1.0, 0.45, 0.1))
 
 # -- Derived constants --------------------------------------------------------
 FRAME_DT = 1.0 / RENDER_FPS
 SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
+
+
+@wp.kernel
+def _transform_contact_proxy_lines(
+    body_q: wp.array(dtype=wp.transform),
+    body_indices: wp.array(dtype=wp.int32),
+    local_starts: wp.array(dtype=wp.vec3),
+    local_ends: wp.array(dtype=wp.vec3),
+    world_starts: wp.array(dtype=wp.vec3),
+    world_ends: wp.array(dtype=wp.vec3),
+):
+    line_idx = wp.tid()
+    body_q_i = body_q[body_indices[line_idx]]
+    world_starts[line_idx] = wp.transform_point(body_q_i, local_starts[line_idx])
+    world_ends[line_idx] = wp.transform_point(body_q_i, local_ends[line_idx])
+
+
+def _transform_points(points: np.ndarray, transform) -> np.ndarray:
+    """Apply a Warp XYZW transform to NumPy points."""
+    position = np.asarray([transform[0], transform[1], transform[2]], dtype=np.float32)
+    quaternion_xyz = np.asarray([transform[3], transform[4], transform[5]], dtype=np.float32)
+    quaternion_w = float(transform[6])
+    cross = np.cross(quaternion_xyz, points)
+    rotated = points + 2.0 * np.cross(quaternion_xyz, cross + quaternion_w * points)
+    return rotated + position
+
+
+def _make_scaled_contact_mesh_proxies(
+    visual_meshes: list[dict],
+    base_vertices: np.ndarray,
+    base_indices: np.ndarray,
+) -> list[dict]:
+    """Scale the configured OBJ mesh around each visual triangle mesh."""
+    base_bounds_min = base_vertices.min(axis=0)
+    base_bounds_max = base_vertices.max(axis=0)
+    base_center = 0.5 * (base_bounds_min + base_bounds_max)
+    base_size = base_bounds_max - base_bounds_min
+    if not np.all(np.isfinite(base_vertices)) or np.any(base_size <= 0.0):
+        mophi.fatal(f"Contact proxy mesh has invalid bounds: {CONTACT_PROXY_MESH_PATH}")
+    if len(base_indices) % 3 != 0 or np.any(base_indices < 0) or np.any(base_indices >= len(base_vertices)):
+        mophi.fatal(f"Contact proxy mesh has invalid triangle indices: {CONTACT_PROXY_MESH_PATH}")
+
+    proxies = []
+    for mesh_info in visual_meshes:
+        vertices = np.asarray(mesh_info["mesh"].vertices, dtype=np.float32)
+        shape_scale = mesh_info["shape_scale"]
+        scale = np.asarray([shape_scale[0], shape_scale[1], shape_scale[2]], dtype=np.float32)
+        scaled_vertices = vertices * scale
+        bounds_min = scaled_vertices.min(axis=0) - CONTACT_PROXY_PADDING
+        bounds_max = scaled_vertices.max(axis=0) + CONTACT_PROXY_PADDING
+        proxy_center = 0.5 * (bounds_min + bounds_max)
+        proxy_size = bounds_max - bounds_min
+        scaled_proxy_vertices = (base_vertices - base_center) * (proxy_size / base_size) + proxy_center
+        body_local_vertices = _transform_points(scaled_proxy_vertices, mesh_info["shape_transform"])
+        proxies.append(
+            {
+                "robot_instance": mesh_info["robot_instance"],
+                "body_index": mesh_info["body_index"],
+                "body_label": mesh_info["body_label"],
+                "shape_label": mesh_info["shape_label"],
+                "half_extents": 0.5 * (bounds_max - bounds_min),
+                "body_local_vertices": body_local_vertices,
+                "triangle_indices": base_indices,
+            }
+        )
+    return proxies
 
 
 def _add_robot_visual_mesh_proxies(builder: newton.ModelBuilder) -> list[int]:
@@ -146,6 +223,52 @@ def _add_robot_visual_mesh_proxies(builder: newton.ModelBuilder) -> list[int]:
         shape_indices=mesh_proxy_indices,
     )
     return mesh_proxy_indices
+
+
+def _collect_robot_visual_meshes(
+    builder: newton.ModelBuilder,
+    robot_body_start: int,
+    robot_body_end: int,
+    robot_instance: int,
+) -> list[dict]:
+    """Retain the visual mesh sources and describe their future DEME inputs."""
+    visual_meshes = []
+    for shape_idx, shape_type in enumerate(builder.shape_type):
+        body_idx = builder.shape_body[shape_idx]
+        flags = builder.shape_flags[shape_idx]
+        if not (
+            robot_body_start <= body_idx < robot_body_end
+            and shape_type == newton.GeoType.MESH
+            and flags & ShapeFlags.VISIBLE
+            and not flags & ShapeFlags.COLLIDE_SHAPES
+        ):
+            continue
+
+        mesh = builder.shape_source[shape_idx]
+        vertices = getattr(mesh, "vertices", None)
+        indices = getattr(mesh, "indices", None)
+        if vertices is None or indices is None:
+            mophi.fatal(
+                f"Visual mesh '{builder.shape_label[shape_idx]}' does not expose vertices and indices; "
+                "it cannot be handed to a future DEME mesh tracker."
+            )
+        visual_meshes.append(
+            {
+                "shape_index": shape_idx,
+                "robot_instance": robot_instance,
+                "shape_label": builder.shape_label[shape_idx],
+                "body_index": body_idx,
+                "body_label": builder.body_label[body_idx],
+                "mesh": mesh,
+                "shape_transform": builder.shape_transform[shape_idx],
+                "shape_scale": builder.shape_scale[shape_idx],
+                "vertex_count": len(vertices),
+                "triangle_count": len(indices) // 3,
+            }
+        )
+    if not visual_meshes:
+        mophi.fatal("The Unitree G1 asset did not expose any non-colliding visual meshes.")
+    return visual_meshes
 
 
 def _filter_mesh_proxies_to_external_objects(
@@ -253,14 +376,23 @@ class HumanoidContactExample(newton_robot_policy.Example):
         builder.default_shape_cfg.kf = 1.0e3
         builder.default_shape_cfg.mu = 0.75
 
-        builder.add_usd(
-            newton.examples.get_asset(asset_directory + "/" + robot_config.asset_path),
-            xform=wp.transform(wp.vec3(0.0, 0.0, 0.8)),
-            collapse_fixed_joints=False,
-            enable_self_collisions=False,
-            joint_ordering="dfs",
-            hide_collision_shapes=True,
-        )
+        self.robot_visual_meshes = []
+        self.robot_body_ranges = []
+        for robot_instance, (position, orientation) in enumerate(ROBOT_INITIAL_POSES):
+            robot_body_start = len(builder.body_label)
+            builder.add_usd(
+                newton.examples.get_asset(asset_directory + "/" + robot_config.asset_path),
+                xform=wp.transform(wp.vec3(*position), wp.quat(*orientation)),
+                collapse_fixed_joints=False,
+                enable_self_collisions=False,
+                joint_ordering="dfs",
+                hide_collision_shapes=True,
+            )
+            robot_body_end = len(builder.body_label)
+            self.robot_body_ranges.append((robot_body_start, robot_body_end))
+            self.robot_visual_meshes.extend(
+                _collect_robot_visual_meshes(builder, robot_body_start, robot_body_end, robot_instance)
+            )
         robot_body_count = len(builder.body_label)
         # Preserve Newton's policy baseline collision model for stable ground
         # contact, then add separate body-mesh proxies for external objects.
@@ -281,15 +413,22 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.contact_box_count = _add_dynamic_contact_boxes(builder)
         self.interactive_object_joint_starts = _add_interactive_object_pool(builder)
 
-        builder.joint_q[:3] = [0.0, 0.0, 0.76]
-        builder.joint_q[3:7] = [0.0, 0.0, 0.7071, 0.7071]
-        builder.joint_q[7 : 7 + len(config["mjw_joint_pos"])] = config["mjw_joint_pos"]
-
-        for joint_idx in range(len(config["mjw_joint_stiffness"])):
-            builder.joint_target_ke[joint_idx + 6] = config["mjw_joint_stiffness"][joint_idx]
-            builder.joint_target_kd[joint_idx + 6] = config["mjw_joint_damping"][joint_idx]
-            builder.joint_armature[joint_idx + 6] = config["mjw_joint_armature"][joint_idx]
-            builder.joint_target_mode[joint_idx + 6] = int(JointTargetMode.POSITION)
+        self.robot_count = len(ROBOT_INITIAL_POSES)
+        self.robot_joint_q_count = 7 + config["num_dofs"]
+        self.robot_joint_qd_count = 6 + config["num_dofs"]
+        self.robot_joint_target_count = 6 + config["num_dofs"]
+        for robot_instance, (position, orientation) in enumerate(ROBOT_INITIAL_POSES):
+            joint_q_start = robot_instance * self.robot_joint_q_count
+            joint_dof_start = robot_instance * self.robot_joint_qd_count
+            builder.joint_q[joint_q_start : joint_q_start + 3] = position
+            builder.joint_q[joint_q_start + 3 : joint_q_start + 7] = orientation
+            builder.joint_q[joint_q_start + 7 : joint_q_start + self.robot_joint_q_count] = config["mjw_joint_pos"]
+            for joint_idx in range(len(config["mjw_joint_stiffness"])):
+                dof_idx = joint_dof_start + 6 + joint_idx
+                builder.joint_target_ke[dof_idx] = config["mjw_joint_stiffness"][joint_idx]
+                builder.joint_target_kd[dof_idx] = config["mjw_joint_damping"][joint_idx]
+                builder.joint_armature[dof_idx] = config["mjw_joint_armature"][joint_idx]
+                builder.joint_target_mode[dof_idx] = int(JointTargetMode.POSITION)
 
         self.model = builder.finalize()
         self.model.set_gravity((0.0, 0.0, -9.81))
@@ -306,11 +445,17 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.state_1 = self.model.state()
         self.control = self.model.control()
         self.contacts = newton.Contacts(self.solver.get_max_contact_count(), 0)
-        self.robot_joint_q_count = 7 + config["num_dofs"]
-        self.robot_joint_qd_count = 6 + config["num_dofs"]
-        self.robot_joint_target_count = 6 + config["num_dofs"]
         self.viewer.set_model(self.model)
         self.viewer.vsync = True
+        self.contact_mesh_proxies = []
+        self.contact_proxy_body_indices = None
+        self.contact_proxy_local_starts = None
+        self.contact_proxy_local_ends = None
+        self.contact_proxy_world_starts = None
+        self.contact_proxy_world_ends = None
+        self.contact_proxy_colors = None
+        if SHOW_CONTACT_PROXY_MESHES:
+            self._initialize_contact_proxy_visualization()
         newton.eval_fk(self.model, self.state_0.joint_q, self.state_0.joint_qd, self.state_0)
         self._initial_joint_q = wp.clone(self.state_0.joint_q)
         self._initial_joint_qd = wp.clone(self.state_0.joint_qd)
@@ -318,7 +463,11 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.physx_to_mjc_indices = torch.tensor(physx_to_mjc, device=self.torch_device, dtype=torch.long)
         self.mjc_to_physx_indices = torch.tensor(mjc_to_physx, device=self.torch_device, dtype=torch.long)
         self.gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=self.torch_device, dtype=torch.float32).unsqueeze(0)
-        self.command = torch.zeros((1, 3), device=self.torch_device, dtype=torch.float32)
+        if DEFAULT_WALK_COMMANDS.shape != (self.robot_count, 3):
+            mophi.fatal(
+                f"DEFAULT_WALK_COMMANDS must have shape ({self.robot_count}, 3), " f"got {DEFAULT_WALK_COMMANDS.shape}."
+            )
+        self.command = torch.as_tensor(DEFAULT_WALK_COMMANDS, device=self.torch_device, dtype=torch.float32).clone()
         self._reset_key_prev = False
         self._spawn_key_prev = False
         self.spawned_object_count = 0
@@ -334,16 +483,113 @@ class HumanoidContactExample(newton_robot_policy.Example):
             device=self.torch_device,
             dtype=torch.float32,
         )
+        expected_target_count = self.robot_count * self.robot_joint_target_count
+        if self.full_joint_target_pos.shape[0] < expected_target_count:
+            mophi.fatal(
+                f"Newton control buffer has {self.full_joint_target_pos.shape[0]} target values, "
+                f"but {self.robot_count} robot(s) require {expected_target_count}."
+            )
+
+    def capture(self) -> None:
+        """Capture simulation with a control buffer sized for every robot instance."""
+        self.graph = None
+        self.use_cuda_graph = False
+        if wp.get_device().is_cuda and wp.is_mempool_enabled(wp.get_device()):
+            print("[INFO] Using CUDA graph")
+            self.use_cuda_graph = True
+            target_count = self.robot_count * self.robot_joint_target_count
+            torch_tensor = torch.zeros(target_count, device=self.torch_device, dtype=torch.float32)
+            self.control.joint_target_pos = wp.from_torch(torch_tensor, dtype=wp.float32, requires_grad=False)
+            with wp.ScopedCapture() as capture:
+                self.simulate()
+            self.graph = capture.graph
+
+    def _initialize_contact_proxy_visualization(self) -> None:
+        """Allocate visualization-only wireframe boxes around visual meshes."""
+        if not CONTACT_PROXY_MESH_PATH.is_file():
+            mophi.fatal(f"Required contact proxy OBJ was not found: {CONTACT_PROXY_MESH_PATH}")
+        self.contact_proxy_base_mesh = mophi.load_obj(str(CONTACT_PROXY_MESH_PATH))
+        base_vertices = np.asarray(self.contact_proxy_base_mesh.vertices, dtype=np.float32)
+        base_indices = np.asarray(self.contact_proxy_base_mesh.indices, dtype=np.int32)
+        self.contact_mesh_proxies = _make_scaled_contact_mesh_proxies(
+            self.robot_visual_meshes,
+            base_vertices,
+            base_indices,
+        )
+        body_indices = []
+        local_starts = []
+        local_ends = []
+        colors = []
+        for proxy in self.contact_mesh_proxies:
+            vertices = proxy["body_local_vertices"]
+            triangles = proxy["triangle_indices"].reshape(-1, 3)
+            color = CONTACT_PROXY_COLORS[proxy["robot_instance"] % len(CONTACT_PROXY_COLORS)]
+            unique_edges = {}
+            for triangle in triangles:
+                for start_idx, end_idx in (
+                    (int(triangle[0]), int(triangle[1])),
+                    (int(triangle[1]), int(triangle[2])),
+                    (int(triangle[2]), int(triangle[0])),
+                ):
+                    start_key = tuple(np.round(vertices[start_idx], decimals=8))
+                    end_key = tuple(np.round(vertices[end_idx], decimals=8))
+                    edge_key = tuple(sorted((start_key, end_key)))
+                    unique_edges[edge_key] = (start_idx, end_idx)
+            for start_idx, end_idx in unique_edges.values():
+                body_indices.append(proxy["body_index"])
+                local_starts.append(wp.vec3(*vertices[start_idx]))
+                local_ends.append(wp.vec3(*vertices[end_idx]))
+                colors.append(wp.vec3(*color))
+
+        self.contact_proxy_body_indices = wp.array(body_indices, dtype=wp.int32, device=self.device)
+        self.contact_proxy_local_starts = wp.array(local_starts, dtype=wp.vec3, device=self.device)
+        self.contact_proxy_local_ends = wp.array(local_ends, dtype=wp.vec3, device=self.device)
+        self.contact_proxy_world_starts = wp.empty(len(local_starts), dtype=wp.vec3, device=self.device)
+        self.contact_proxy_world_ends = wp.empty(len(local_ends), dtype=wp.vec3, device=self.device)
+        self.contact_proxy_colors = wp.array(colors, dtype=wp.vec3, device=self.device)
+
+    def configure_policy_instances(self) -> None:
+        """Expand Newton's single-instance policy tensors across all robots."""
+        initial_positions = []
+        for robot_instance in range(self.robot_count):
+            joint_q_start = robot_instance * self.robot_joint_q_count
+            initial_positions.append(
+                torch.tensor(
+                    self.state_0.joint_q[joint_q_start + 7 : joint_q_start + self.robot_joint_q_count],
+                    device=self.torch_device,
+                    dtype=torch.float32,
+                )
+            )
+        self.joint_pos_initial = torch.stack(initial_positions)
+        self.act = torch.zeros(
+            self.robot_count,
+            self.config["num_dofs"],
+            device=self.torch_device,
+            dtype=torch.float32,
+        )
+        self.rearranged_act = torch.zeros_like(self.act)
 
     def step(self):
         """Advance the inherited policy while excluding free-box coordinates from its inputs."""
         if hasattr(self.viewer, "is_key_down"):
-            forward = 1.0 if self.viewer.is_key_down("i") else (-1.0 if self.viewer.is_key_down("k") else 0.0)
-            lateral = 0.5 if self.viewer.is_key_down("j") else (-0.5 if self.viewer.is_key_down("l") else 0.0)
-            rotation = 1.0 if self.viewer.is_key_down("u") else (-1.0 if self.viewer.is_key_down("o") else 0.0)
-            self.command[0, 0] = float(forward)
-            self.command[0, 1] = float(lateral)
-            self.command[0, 2] = float(rotation)
+            if self.viewer.is_key_down("i"):
+                self.command[0, 0] = 1.0
+            elif self.viewer.is_key_down("k"):
+                self.command[0, 0] = -1.0
+            else:
+                self.command[0, 0] = float(DEFAULT_WALK_COMMANDS[0, 0])
+            if self.viewer.is_key_down("j"):
+                self.command[0, 1] = 0.5
+            elif self.viewer.is_key_down("l"):
+                self.command[0, 1] = -0.5
+            else:
+                self.command[0, 1] = float(DEFAULT_WALK_COMMANDS[0, 1])
+            if self.viewer.is_key_down("u"):
+                self.command[0, 2] = 1.0
+            elif self.viewer.is_key_down("o"):
+                self.command[0, 2] = -1.0
+            else:
+                self.command[0, 2] = float(DEFAULT_WALK_COMMANDS[0, 2])
             reset_down = bool(self.viewer.is_key_down("p"))
             if reset_down and not self._reset_key_prev:
                 self.reset()
@@ -353,27 +599,38 @@ class HumanoidContactExample(newton_robot_policy.Example):
                 self.spawn_interactive_object()
             self._spawn_key_prev = spawn_down
 
-        policy_state = newton.State()
-        policy_state.joint_q = self.state_0.joint_q[: self.robot_joint_q_count]
-        policy_state.joint_qd = self.state_0.joint_qd[: self.robot_joint_qd_count]
-        observation = newton_robot_policy.compute_obs(
-            self.act,
-            policy_state,
-            self.joint_pos_initial,
-            self.torch_device,
-            self.physx_to_mjc_indices,
-            self.gravity_vec,
-            self.command,
-        )
+        observations = []
+        for robot_instance in range(self.robot_count):
+            joint_q_start = robot_instance * self.robot_joint_q_count
+            joint_qd_start = robot_instance * self.robot_joint_qd_count
+            policy_state = newton.State()
+            policy_state.joint_q = self.state_0.joint_q[joint_q_start : joint_q_start + self.robot_joint_q_count]
+            policy_state.joint_qd = self.state_0.joint_qd[joint_qd_start : joint_qd_start + self.robot_joint_qd_count]
+            observations.append(
+                newton_robot_policy.compute_obs(
+                    self.act[robot_instance : robot_instance + 1],
+                    policy_state,
+                    self.joint_pos_initial[robot_instance : robot_instance + 1],
+                    self.torch_device,
+                    self.physx_to_mjc_indices,
+                    self.gravity_vec,
+                    self.command[robot_instance : robot_instance + 1],
+                )
+            )
+        observation = torch.cat(observations)
         with torch.no_grad():
             self.act = self.policy(observation)
             self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
             robot_target = self.joint_pos_initial + self.config["action_scale"] * self.rearranged_act
             robot_target_with_zeros = torch.cat(
-                [torch.zeros(6, device=self.torch_device, dtype=torch.float32), robot_target.squeeze(0)]
-            )
+                [
+                    torch.zeros(self.robot_count, 6, device=self.torch_device, dtype=torch.float32),
+                    robot_target,
+                ],
+                dim=1,
+            ).flatten()
             self.full_joint_target_pos.zero_()
-            self.full_joint_target_pos[: self.robot_joint_target_count] = robot_target_with_zeros
+            self.full_joint_target_pos[: self.robot_count * self.robot_joint_target_count] = robot_target_with_zeros
             target_wp = wp.from_torch(self.full_joint_target_pos, dtype=wp.float32, requires_grad=False)
             wp.copy(self.control.joint_target_pos, target_wp)
 
@@ -418,8 +675,40 @@ class HumanoidContactExample(newton_robot_policy.Example):
         super().reset()
         self.spawned_object_count = 0
 
+    def render(self) -> None:
+        """Render robot state plus optional visualization-only contact boxes."""
+        self.viewer.begin_frame(self.sim_time)
+        self.viewer.log_state(self.state_0)
+        self.viewer.log_contacts(self.contacts, self.state_0)
+        if self.contact_mesh_proxies:
+            wp.launch(
+                _transform_contact_proxy_lines,
+                dim=len(self.contact_proxy_local_starts),
+                inputs=[
+                    self.state_0.body_q,
+                    self.contact_proxy_body_indices,
+                    self.contact_proxy_local_starts,
+                    self.contact_proxy_local_ends,
+                ],
+                outputs=[self.contact_proxy_world_starts, self.contact_proxy_world_ends],
+                device=self.device,
+            )
+            self.viewer.log_lines(
+                "/contact_proxy_meshes",
+                self.contact_proxy_world_starts,
+                self.contact_proxy_world_ends,
+                self.contact_proxy_colors,
+                width=CONTACT_PROXY_LINE_WIDTH,
+            )
+        self.viewer.end_frame()
 
-def _write_run_metadata(frame_count: int, asset_directory: Path, spawned_object_count: int) -> None:
+
+def _write_run_metadata(
+    frame_count: int,
+    asset_directory: Path,
+    spawned_object_count: int,
+    contact_proxy_mesh_count: int,
+) -> None:
     metadata = {
         "baseline": "newton.examples.robot.example_robot_policy",
         "robot": ROBOT_NAME,
@@ -430,13 +719,39 @@ def _write_run_metadata(frame_count: int, asset_directory: Path, spawned_object_
         "requested_frames": NUM_FRAMES,
         "completed_frames": frame_count,
         "sim_duration": frame_count * FRAME_DT,
+        "robot_count": len(ROBOT_INITIAL_POSES),
+        "default_walk_commands": DEFAULT_WALK_COMMANDS.tolist(),
         "use_robot_visual_mesh_colliders": USE_ROBOT_VISUAL_MESH_COLLIDERS,
         "dynamic_contact_box_count": len(BOX_POSES) if ENABLE_DYNAMIC_CONTACT_BOXES else 0,
         "interactive_object_pool_size": INTERACTIVE_OBJECT_POOL_SIZE if ENABLE_INTERACTIVE_OBJECT_SPAWNING else 0,
         "interactively_spawned_object_count": spawned_object_count,
         "show_warehouse_environment": SHOW_WAREHOUSE_ENVIRONMENT,
+        "show_contact_proxy_meshes": SHOW_CONTACT_PROXY_MESHES,
+        "contact_proxy_mesh_path": str(CONTACT_PROXY_MESH_PATH),
+        "contact_proxy_mesh_count": contact_proxy_mesh_count,
+        "contact_proxy_padding": CONTACT_PROXY_PADDING,
     }
     RUN_METADATA_OUTPUT_PATH.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
+
+
+def _write_visual_mesh_manifest(visual_meshes: list[dict]) -> None:
+    """Write serializable proof that the high-resolution robot meshes are available."""
+    manifest = [
+        {
+            key: mesh_info[key]
+            for key in (
+                "robot_instance",
+                "shape_index",
+                "shape_label",
+                "body_index",
+                "body_label",
+                "vertex_count",
+                "triangle_count",
+            )
+        }
+        for mesh_info in visual_meshes
+    ]
+    VISUAL_MESH_MANIFEST_OUTPUT_PATH.write_text(json.dumps(manifest, indent=4) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -457,36 +772,20 @@ def main() -> None:
     robot_config = newton_robot_policy.ROBOT_CONFIGS[ROBOT_NAME]
     print(f"[Assets] Downloading or locating public Newton assets for '{ROBOT_NAME}' ...")
     try:
-        asset_directory = Path(newton.utils.download_asset(robot_config.asset_dir))
-    except RuntimeError as exc:
-        mophi.fatal(
-            "Newton could not download the Unitree G1 assets. Check GitHub connectivity, "
-            "then retry with a fresh cache directory:\n"
-            "  NEWTON_CACHE_PATH=$HOME/.cache/newton-mophi "
-            "python -c \"import newton.utils; print(newton.utils.download_asset('unitree_g1'))\"\n"
-            f"Newton error: {exc}"
+        asset_directory = mophi.download_newton_asset(
+            robot_config.asset_dir,
+            [robot_config.yaml_path, robot_config.policy_path["mjw"], robot_config.asset_path],
         )
+    except RuntimeError as exc:
+        mophi.fatal(f"Newton could not prepare the Unitree G1 assets.\n{exc}")
     print(f"[Assets] Ready at '{asset_directory}'.")
 
     yaml_path = asset_directory / robot_config.yaml_path
-    if not yaml_path.is_file():
-        mophi.fatal(f"Downloaded robot configuration was not found: {yaml_path}")
     with yaml_path.open(encoding="utf-8") as yaml_file:
         config = yaml.safe_load(yaml_file)
 
     policy_path = asset_directory / robot_config.policy_path["mjw"]
-    if not policy_path.is_file():
-        mophi.fatal(f"Downloaded robot policy was not found: {policy_path}")
     model_path = asset_directory / robot_config.asset_path
-    if not model_path.is_file():
-        mophi.fatal(
-            "The Newton Unitree G1 asset cache is incomplete. The robot model "
-            f"was not found:\n  {model_path}\n"
-            "Download into a fresh cache directory, then run this demo with the "
-            "same NEWTON_CACHE_PATH value:\n"
-            "  NEWTON_CACHE_PATH=$HOME/.cache/newton-mophi "
-            "python -c \"import newton.utils; print(newton.utils.download_asset('unitree_g1'))\""
-        )
 
     dof_indices = list(range(config["num_dofs"]))
     viewer = newton.viewer.ViewerGL()
@@ -504,13 +803,23 @@ def main() -> None:
         config["num_dofs"],
         slice(7, 7 + config["num_dofs"]),
     )
+    example.configure_policy_instances()
     if not np.isclose(example.frame_dt, NEWTON_DT, rtol=0.0, atol=1.0e-12):
         mophi.fatal(f"Newton G1 policy timestep changed: expected {NEWTON_DT}, got {example.frame_dt}.")
     print(
-        f"[Contact] Created {example.robot_mesh_proxy_count} mesh-derived robot contact proxies "
-        f"and {example.contact_box_count} initial dynamic boxes. "
-        f"Press '{INTERACTIVE_OBJECT_SPAWN_KEY.upper()}' to spawn up to "
-        f"{len(example.interactive_object_joint_starts)} additional boxes."
+        f"[Contact] Newton model contains {example.robot_count} robot(s), "
+        f"{example.robot_mesh_proxy_count} mesh-derived robot contact proxies, and "
+        f"{example.contact_box_count} initial dynamic boxes."
+    )
+    if example.interactive_object_joint_starts:
+        print(
+            f"[Contact] Press '{INTERACTIVE_OBJECT_SPAWN_KEY.upper()}' to spawn up to "
+            f"{len(example.interactive_object_joint_starts)} additional boxes."
+        )
+    _write_visual_mesh_manifest(example.robot_visual_meshes)
+    print(
+        f"[Meshes] Validated {len(example.robot_visual_meshes)} visual body meshes and wrote "
+        f"'{VISUAL_MESH_MANIFEST_OUTPUT_PATH}'."
     )
 
     if hasattr(viewer, "set_camera"):
@@ -566,7 +875,12 @@ def main() -> None:
         )
         print(f"[Output] Saved final state to '{FINAL_STATE_OUTPUT_PATH}'.")
 
-    _write_run_metadata(completed_frames, asset_directory, example.spawned_object_count)
+    _write_run_metadata(
+        completed_frames,
+        asset_directory,
+        example.spawned_object_count,
+        len(example.contact_mesh_proxies),
+    )
     print(f"[Output] Saved run metadata to '{RUN_METADATA_OUTPUT_PATH}'.")
     if SAVE_MOVIE:
         print(f"[Movie] Saved simulation recording to '{MOVIE_OUTPUT_PATH}'.")

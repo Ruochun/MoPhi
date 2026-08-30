@@ -44,6 +44,9 @@ and `cibuildwheel` matrix builds, including ABI troubleshooting and verification
 For the solver-independent G-code parser used by printing workflows, see
 [docs/gcode.md](docs/gcode.md).
 
+Newton-backed demos use validated, self-repairing asset downloads described in
+[docs/newton-assets.md](docs/newton-assets.md).
+
 ### Linux Python 3.11–3.14 wheels (Newton + XLB + DEME, no FERIS)
 
 For the packaged distribution path, see

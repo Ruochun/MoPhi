@@ -10,6 +10,7 @@
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton.py
 #   python demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
+#   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
@@ -76,6 +77,15 @@ add_custom_target(demo_humanoid_complex_environment
     VERBATIM
 )
 
+# ── Custom target: humanoid robot-fighting groundwork demo ───────────────────
+add_custom_target(demo_humanoid_robot_fighting
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/humanoid_complex_environment/demo_humanoid_robot_fighting.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running Newton humanoid coarse-contact robot-fighting demo"
+    VERBATIM
+)
+
 # ── Custom target: humanoid swimming idea demo ────────────────────────────────
 add_custom_target(demo_humanoid_swimming
     COMMAND ${Python3_EXECUTABLE}
@@ -130,6 +140,7 @@ install(
 install(
     FILES
         humanoid_complex_environment/demo_humanoid_complex_environment.py
+        humanoid_complex_environment/demo_humanoid_robot_fighting.py
         humanoid_complex_environment/demo_humanoid_swimming.py
         humanoid_complex_environment/README.md
     DESTINATION demo/newton_xlb_dem/humanoid_complex_environment

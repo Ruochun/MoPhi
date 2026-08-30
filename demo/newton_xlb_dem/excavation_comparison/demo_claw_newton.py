@@ -283,7 +283,7 @@ EXCAVATOR_OBJ_PATH = os.path.join(_REPO_ROOT, "data", "mesh", "excavator.obj")
 # from the Newton Assets repository.  The arm is mounted on a cylindrical
 # pedestal so its base link clears the ground plane.
 print("[Newton] Downloading UR10 robot assets ...")
-asset_path = newton.utils.download_asset("universal_robots_ur10")
+asset_path = mophi.download_newton_asset("universal_robots_ur10", ["usd/ur10_instanceable.usda"])
 asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
 print(f"[Newton] Assets ready: {asset_path}\n")
 

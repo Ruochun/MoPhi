@@ -15,7 +15,6 @@ import warp as wp
 import mophi
 import mujoco
 import newton
-import newton.utils
 from newton import JointTargetMode
 from newton.selection import ArticulationView
 from mophi.utils import load_package_provider
@@ -186,7 +185,7 @@ if not device.is_cuda:
     mophi.fatal("This demo requires a CUDA Warp device for direct DEME/Newton pointer exchange.")
 
 print("[Newton] Downloading the Universal Robots UR10 asset ...")
-asset_path = newton.utils.download_asset("universal_robots_ur10")
+asset_path = mophi.download_newton_asset("universal_robots_ur10", ["usd/ur10_instanceable.usda"])
 asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
 
 robot_builder = newton.ModelBuilder()

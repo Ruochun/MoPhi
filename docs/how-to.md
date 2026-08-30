@@ -296,6 +296,8 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_ne
 PYTHONPATH=python python3 demo/newton_xlb_dem/excavation_comparison/demo_claw_newton_cubes.py
 # Run the interactive Newton humanoid walking baseline
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
+# Run the two-robot Newton humanoid fighting groundwork demo
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 # Run the Newton + XLB humanoid swimming idea demo
 PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
 # Run 64 downward-facing Allegro hands grasping loose Newton cubes
@@ -391,6 +393,20 @@ robot and return spawned objects to the pool.
 The viewer also shows a non-physical warehouse aisle; set
 `SHOW_WAREHOUSE_ENVIRONMENT = False` to hide the decorative scene.
 
+The humanoid robot-fighting groundwork demo places two G1 robots face-to-face
+and commands both policies forward. Newton's coarse policy colliders handle
+ground and robot-to-robot contact. The scene contains no dynamic boxes,
+warehouse shelves, or other decorative obstacles. High-resolution visual
+meshes are only validated and retained for future DEME mesh trackers. The demo
+records a mesh manifest under `output/demo_humanoid_robot_fighting/`, alongside
+its movie, metadata, and final-state snapshot.
+It also loads `data/mesh/cube.obj` and draws scaled instances of that triangle
+mesh around every visual robot part. The cyan and orange wireframe overlays
+follow the two robots' links but do not participate in Newton contact. The
+scaled OBJ vertices and triangle indices are retained for later DEME tracker
+registration; configure the mesh path, padding, line width, colors, or
+visibility in the demo's contact-proxy visualization block.
+
 The humanoid swimming idea demo places the G1 in an XLB fluid domain without a
 ground plane. Newton advances a scripted swimming stroke while analytic
 buoyancy, drag, and propulsion keep the robot suspended and moving. Ten
@@ -413,31 +429,31 @@ meshes. These proxies have clump contact disabled during a blocking DEME
 settling phase, then switch into an active-contact family for the hand motion.
 This stage does not feed DEME forces back into Newton.
 
-To download the G1 assets before launching the demo and print their cache
-location:
-
-```bash
-python3 -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
-```
-
 Newton stores assets under the platform user cache by default, normally
 `~/.cache/newton/` on Linux. Set `NEWTON_CACHE_PATH` to choose a different
 persistent cache location:
 
 ```bash
 NEWTON_CACHE_PATH=/path/to/newton-cache \
-python3 -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 ```
 
-If the asset download was interrupted and files such as `usd/g1_isaac.usd`
-are missing, download into a fresh cache directory:
+MoPhi demos validate the particular files they require. If Newton returns an
+incomplete cached sparse checkout, MoPhi automatically invokes Newton's
+force-refresh path once and validates the replacement. The reusable helper,
+supported behavior, and offline limitations are documented in
+[`docs/newton-assets.md`](newton-assets.md).
+
+If the automatic refresh cannot repair the checkout because the configured
+cache root is unwritable or corrupted, use a new cache directory as a
+**last resort**:
 
 ```bash
-export NEWTON_CACHE_PATH="$HOME/.cache/newton-mophi"
-python3 -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
+export NEWTON_CACHE_PATH="$HOME/.cache/newton-mophi-fresh"
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 ```
 
-Keep `NEWTON_CACHE_PATH` set when running the demo.
+Keep `NEWTON_CACHE_PATH` set for subsequent runs that should reuse this cache.
 
 `NewtonXLBDEMCoupler` is a three-way co-simulation coupler:
 

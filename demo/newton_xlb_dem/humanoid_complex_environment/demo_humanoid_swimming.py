@@ -19,7 +19,6 @@ import yaml
 import mophi
 import newton
 import newton.examples
-import newton.utils
 import xlb
 from newton import JointTargetMode
 from xlb.compute_backend import ComputeBackend
@@ -334,7 +333,10 @@ def main() -> None:
     from newton.examples.robot import example_robot_policy
 
     robot_config = example_robot_policy.ROBOT_CONFIGS[ROBOT_NAME]
-    asset_directory = Path(newton.utils.download_asset(robot_config.asset_dir))
+    asset_directory = mophi.download_newton_asset(
+        robot_config.asset_dir,
+        [robot_config.yaml_path, robot_config.asset_path],
+    )
     with (asset_directory / robot_config.yaml_path).open(encoding="utf-8") as config_file:
         config = yaml.safe_load(config_file)
 

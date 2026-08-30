@@ -32,18 +32,15 @@ Newton contact. Set `SHOW_WAREHOUSE_ENVIRONMENT = False` to hide them.
 
 ## Assets
 
-No manual asset placement is required. On first run, Newton calls
-`newton.utils.download_asset("unitree_g1")` and downloads the Unitree G1 model,
-walking policy, and policy configuration from the public
+No manual asset placement is required. On first run, MoPhi asks Newton to
+download the Unitree G1 model, walking policy, and policy configuration from the public
 [`newton-assets`](https://github.com/newton-physics/newton-assets) repository.
 Newton prints the resulting cache directory as `[Assets] Ready at ...`.
 
-Install the downloader and policy-configuration dependencies, then optionally
-prefetch the assets:
+Install the downloader and policy-configuration dependencies:
 
 ```bash
 pip install GitPython PyYAML
-python -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
 ```
 
 Newton uses `NEWTON_CACHE_PATH` when that environment variable is set.
@@ -51,18 +48,57 @@ Otherwise, it stores assets in the platform user cache, normally
 `~/.cache/newton/` on Linux. Do not place assets inside the Python
 `site-packages` directory.
 
-If a download was interrupted and the cache is missing files such as
-`usd/g1_isaac.usd`, download into a fresh cache directory:
+MoPhi validates the model, policy, and configuration after every download. If
+Newton returns an incomplete cached sparse checkout, MoPhi automatically calls
+Newton's supported force-refresh path once and validates the result again. See
+[`docs/newton-assets.md`](../../../docs/newton-assets.md) for the shared cache
+handling contract and failure behavior.
+
+If automatic refresh fails because the configured cache root is unwritable or
+corrupted, use a new cache root as a **last resort**:
 
 ```bash
-export NEWTON_CACHE_PATH="$HOME/.cache/newton-mophi"
-python -c "import newton.utils; print(newton.utils.download_asset('unitree_g1'))"
+export NEWTON_CACHE_PATH="$HOME/.cache/newton-mophi-fresh"
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 ```
 
-Keep `NEWTON_CACHE_PATH` set when running the demo.
+Keep `NEWTON_CACHE_PATH` set when reusing that fresh cache.
 
 The next stages will add complex terrain and support more challenging
 interactive object shapes and counts.
+
+## Robot-fighting groundwork demo
+
+`demo_humanoid_robot_fighting.py` places two G1 robots face-to-face and gives
+both policies continuous forward commands. Newton's original coarse,
+policy-trained collision shapes handle ground and robot-to-robot contact. No
+dynamic boxes, warehouse shelves, or other decorative scene objects are added.
+The robots' high-resolution visual meshes do not participate in collision.
+
+The demo loads the centered unit-box triangle mesh from `data/mesh/cube.obj`
+and scales a copy around every visual robot part, including the torso/head
+geometry, arm links, hands, and finger links. Each instance matches the padded
+local bounds of its corresponding visual mesh and follows the owning Newton
+body every frame. Cyan triangle wireframes identify the first robot; orange
+wireframes identify the second. These boxes are not Newton collision shapes and
+do not affect physics. Their scaled vertices and the OBJ triangle indices are
+retained for later DEME mesh-tracker registration. Set
+`SHOW_CONTACT_PROXY_MESHES = False` to hide the overlay, or tune
+`CONTACT_PROXY_MESH_PATH`, `CONTACT_PROXY_PADDING`, and
+`CONTACT_PROXY_LINE_WIDTH` in the configuration block.
+
+During model construction, the demo nevertheless validates that each visual
+mesh exposes vertices and triangle indices and retains its body association,
+body-local transform, and scale. It writes vertex/triangle counts to
+`output/demo_humanoid_robot_fighting/visual_mesh_manifest.json`. The live mesh objects
+and transforms remain available on `HumanoidContactExample.robot_visual_meshes`
+for a later DEME tracker integration without changing the robot asset pipeline.
+
+Run it with:
+
+```bash
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
+```
 
 ## Swimming idea demo
 

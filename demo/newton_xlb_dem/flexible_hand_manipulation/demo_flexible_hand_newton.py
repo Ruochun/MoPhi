@@ -14,7 +14,6 @@ import warp as wp
 
 import mophi
 import newton
-import newton.utils
 from newton import JointTargetMode
 
 # =============================================================================
@@ -290,7 +289,7 @@ def _configure_hand_template():
     hand.default_shape_cfg.margin = SHAPE_CONTACT_MARGIN
     hand.default_shape_cfg.gap = SHAPE_CONTACT_GAP
 
-    asset_directory = Path(newton.utils.download_asset(HAND_ASSET_NAME))
+    asset_directory = mophi.download_newton_asset(HAND_ASSET_NAME, [HAND_ASSET_RELATIVE_PATH])
     asset_path = asset_directory / HAND_ASSET_RELATIVE_PATH
     hand_rotation = wp.quat_rpy(*HAND_DOWNWARD_ROTATION_RPY)
     hand.add_usd(

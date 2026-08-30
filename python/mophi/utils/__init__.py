@@ -8,11 +8,13 @@ from .version_checker import (
 from .package_provider import get_package_provider, load_package_provider
 from .gcode import GCodeMove, GCodeProgram, parse_gcode
 from .vis_utils import log_orientation_and_scale_reference
+from .newton_assets import download_newton_asset
 
 __all__ = [
     "check_newton_warp_mujoco_versions",
     "check_newton_warp_versions",
     "check_python_package_versions",
+    "download_newton_asset",
     "get_package_provider",
     "GCodeMove",
     "GCodeProgram",

@@ -142,7 +142,10 @@ torch_device = wp.device_to_torch(wp.get_device())
 # newton.utils.download_asset("anybotics_anymal_c") downloads the ANYmal C URDF
 # and pre-trained RL walking policy from the Newton Assets repository.
 print("[Newton] Downloading ANYmal C robot assets ...")
-asset_path = newton.utils.download_asset("anybotics_anymal_c")
+asset_path = mophi.download_newton_asset(
+    "anybotics_anymal_c",
+    ["urdf/anymal.urdf", "rl_policies/anymal_walking_policy_physx.pt"],
+)
 urdf_path = str(asset_path / "urdf" / "anymal.urdf")
 policy_path = str(asset_path / "rl_policies" / "anymal_walking_policy_physx.pt")
 print(f"[Newton] Assets ready: {asset_path}\n")
