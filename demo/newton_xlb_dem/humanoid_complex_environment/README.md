@@ -98,6 +98,25 @@ disabled, while cross-robot mesh contact is enabled universally. Set
 `CONTACT_PROXY_MESH_PATH`, `CONTACT_PROXY_PADDING`, and
 `CONTACT_PROXY_LINE_WIDTH` in the configuration block.
 
+The default five-second choreography drives both locomotion policies toward
+each other until 1.9 seconds, after their expected meeting interval, then stops
+their velocity commands and executes four alternating right/left punches from
+2.05 through 4.85 seconds. Kicks are omitted because their unsupported
+single-leg motion readily destabilizes the locomotion policy. The punches use
+an emphasized shoulder/waist wind-up and elbow extension so the action remains
+visually apparent. These motions are smooth
+residual joint-position targets added after locomotion-policy inference; the
+robots are not teleported or animated independently of physics. Newton must
+therefore balance and integrate each strike, and DEME contact impulses can
+disturb the receiving robot naturally. Edit `FIGHT_ATTACK_SEQUENCE` to change
+the start time, duration, attacker, strike type, or side, or set
+`ENABLE_SCRIPTED_FIGHT = False` to recover the approach-only comparison.
+The fighting wrapper also selects a brighter sky and stronger renderer light,
+with a closer camera focused on the exchange. Adjust `SCENE_SKY_UPPER_COLOR`,
+`SCENE_SKY_LOWER_COLOR`, `SCENE_LIGHT_COLOR`, and `CAMERA_POSITION` in its
+visualization configuration block to retune the presentation without changing
+physics.
+
 During model construction, the demo nevertheless validates that each visual
 mesh exposes vertices and triangle indices and retains its body association,
 body-local transform, and scale. It writes vertex/triangle counts to

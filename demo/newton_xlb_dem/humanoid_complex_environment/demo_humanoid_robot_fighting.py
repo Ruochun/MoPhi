@@ -38,6 +38,19 @@ FIGHTER_COMMANDS = np.array(
     ],
     dtype=np.float32,
 )
+ENABLE_SCRIPTED_FIGHT = True
+FIGHT_APPROACH_END_TIME = 1.9
+FIGHT_APPROACH_COMMANDS = FIGHTER_COMMANDS.copy()
+FIGHT_HOLD_COMMANDS = np.zeros((2, 3), dtype=np.float32)
+# Each entry is (start time, duration, attacking robot, attack kind, side).
+FIGHT_ATTACK_SEQUENCE = (
+    (2.05, 0.70, 0, "punch", "right"),
+    (2.75, 0.70, 1, "punch", "left"),
+    (3.45, 0.70, 0, "punch", "left"),
+    (4.15, 0.70, 1, "punch", "right"),
+)
+FIGHT_FIST_CURL = 0.8
+FIGHT_PUNCH_MOTION_SCALE = 1.35
 
 # -- Contact ------------------------------------------------------------------
 ROBOT_CONTACT_MODEL = "deme"  # Supported values: "deme", "newton".
@@ -59,9 +72,12 @@ DEME_PROXY_DIRECTORY_NAME = "deme_contact_proxies"
 
 # -- Visualization ------------------------------------------------------------
 USE_OMNIVERSE_VISUALIZATION = False
-CAMERA_POSITION = (4.8, -5.2, 2.7)
-CAMERA_PITCH = -14.0
+CAMERA_POSITION = (3.4, -3.7, 2.2)
+CAMERA_PITCH = -12.0
 CAMERA_YAW = 132.0
+SCENE_SKY_UPPER_COLOR = (0.72, 0.78, 0.86)
+SCENE_SKY_LOWER_COLOR = (0.42, 0.48, 0.56)
+SCENE_LIGHT_COLOR = (2.0, 2.05, 2.1)
 REFERENCE_AXIS_ORIGIN = (1.2, -2.1, 0.02)
 REFERENCE_SCALE_BAR_CENTER = (0.2, -2.1, 0.06)
 
@@ -96,6 +112,13 @@ def _configure_shared_demo() -> None:
     humanoid_demo.ROBOT_NAME = ROBOT_NAME
     humanoid_demo.ROBOT_INITIAL_POSES = ROBOT_INITIAL_POSES
     humanoid_demo.DEFAULT_WALK_COMMANDS = FIGHTER_COMMANDS
+    humanoid_demo.ENABLE_SCRIPTED_FIGHT = ENABLE_SCRIPTED_FIGHT
+    humanoid_demo.FIGHT_APPROACH_END_TIME = FIGHT_APPROACH_END_TIME
+    humanoid_demo.FIGHT_APPROACH_COMMANDS = FIGHT_APPROACH_COMMANDS
+    humanoid_demo.FIGHT_HOLD_COMMANDS = FIGHT_HOLD_COMMANDS
+    humanoid_demo.FIGHT_ATTACK_SEQUENCE = FIGHT_ATTACK_SEQUENCE
+    humanoid_demo.FIGHT_FIST_CURL = FIGHT_FIST_CURL
+    humanoid_demo.FIGHT_PUNCH_MOTION_SCALE = FIGHT_PUNCH_MOTION_SCALE
 
     # Newton always keeps its policy colliders for ground contact. Its
     # cross-robot pairs are filtered only when DEME supplies those forces.
@@ -123,6 +146,9 @@ def _configure_shared_demo() -> None:
     humanoid_demo.CAMERA_POSITION = CAMERA_POSITION
     humanoid_demo.CAMERA_PITCH = CAMERA_PITCH
     humanoid_demo.CAMERA_YAW = CAMERA_YAW
+    humanoid_demo.SCENE_SKY_UPPER_COLOR = SCENE_SKY_UPPER_COLOR
+    humanoid_demo.SCENE_SKY_LOWER_COLOR = SCENE_SKY_LOWER_COLOR
+    humanoid_demo.SCENE_LIGHT_COLOR = SCENE_LIGHT_COLOR
     humanoid_demo.REFERENCE_AXIS_ORIGIN = REFERENCE_AXIS_ORIGIN
     humanoid_demo.REFERENCE_SCALE_BAR_CENTER = REFERENCE_SCALE_BAR_CENTER
     humanoid_demo.SHOW_WAREHOUSE_ENVIRONMENT = False

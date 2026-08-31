@@ -62,6 +62,13 @@ ROBOT_INITIAL_POSES = [
 DEFAULT_WALK_COMMANDS = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 USE_ROBOT_VISUAL_MESH_COLLIDERS = True
 ROBOT_MESH_APPROXIMATION_METHOD = "convex_hull"
+ENABLE_SCRIPTED_FIGHT = False
+FIGHT_APPROACH_END_TIME = 1.4
+FIGHT_APPROACH_COMMANDS = np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+FIGHT_HOLD_COMMANDS = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+FIGHT_ATTACK_SEQUENCE = ()
+FIGHT_FIST_CURL = 0.8
+FIGHT_PUNCH_MOTION_SCALE = 1.0
 
 # -- Contact objects -----------------------------------------------------------
 ENABLE_DYNAMIC_CONTACT_BOXES = True
@@ -86,6 +93,9 @@ USE_OMNIVERSE_VISUALIZATION = False
 CAMERA_POSITION = (5.0, -7.0, 2.8)
 CAMERA_PITCH = -12.0
 CAMERA_YAW = 135.0
+SCENE_SKY_UPPER_COLOR = (0.48, 0.56, 0.64)
+SCENE_SKY_LOWER_COLOR = (0.20, 0.24, 0.28)
+SCENE_LIGHT_COLOR = (1.6, 1.7, 1.8)
 REFERENCE_AXIS_ORIGIN = (0.8, -0.8, 0.02)
 REFERENCE_SCALE_BAR_CENTER = (0.0, -0.8, 0.06)
 SHOW_WAREHOUSE_ENVIRONMENT = True
@@ -155,6 +165,98 @@ def _transform_points(points: np.ndarray, transform) -> np.ndarray:
     cross = np.cross(quaternion_xyz, points)
     rotated = points + 2.0 * np.cross(quaternion_xyz, cross + quaternion_w * points)
     return rotated + position
+
+
+def _configure_viewer_scene_lighting(viewer) -> None:
+    """Apply the configured sky gradient and directional-light intensity."""
+    if not hasattr(viewer, "renderer"):
+        return
+    viewer.renderer.sky_upper = tuple(SCENE_SKY_UPPER_COLOR)
+    viewer.renderer.sky_lower = tuple(SCENE_SKY_LOWER_COLOR)
+    viewer.renderer.background_color = tuple(SCENE_SKY_UPPER_COLOR)
+    viewer.renderer._light_color = tuple(SCENE_LIGHT_COLOR)
+
+
+def _interpolate_joint_keyframes(progress: float, keyframes: tuple[tuple[float, dict[str, float]], ...]) -> dict:
+    """Linearly interpolate sparse named-joint offsets for one attack."""
+    progress = float(np.clip(progress, 0.0, 1.0))
+    for keyframe_idx in range(len(keyframes) - 1):
+        time_0, offsets_0 = keyframes[keyframe_idx]
+        time_1, offsets_1 = keyframes[keyframe_idx + 1]
+        if progress <= time_1:
+            blend = (progress - time_0) / (time_1 - time_0)
+            joint_names = offsets_0.keys() | offsets_1.keys()
+            return {
+                name: (1.0 - blend) * offsets_0.get(name, 0.0) + blend * offsets_1.get(name, 0.0)
+                for name in joint_names
+            }
+    return dict(keyframes[-1][1])
+
+
+def _scripted_attack_offsets(attack_kind: str, side: str, progress: float) -> dict[str, float]:
+    """Return a whole-body residual trajectory for a punch or kick."""
+    side_sign = -1.0 if side == "left" else 1.0
+    if side not in ("left", "right"):
+        raise ValueError(f"Attack side must be 'left' or 'right', got {side!r}.")
+
+    if attack_kind == "punch":
+        prefix = f"{side}_"
+        fist = {
+            f"{prefix}hand_index_0_joint": FIGHT_FIST_CURL,
+            f"{prefix}hand_index_1_joint": FIGHT_FIST_CURL,
+            f"{prefix}hand_middle_0_joint": FIGHT_FIST_CURL,
+            f"{prefix}hand_middle_1_joint": FIGHT_FIST_CURL,
+            f"{prefix}hand_thumb_0_joint": 0.6 * FIGHT_FIST_CURL,
+            f"{prefix}hand_thumb_1_joint": FIGHT_FIST_CURL,
+            f"{prefix}hand_thumb_2_joint": FIGHT_FIST_CURL,
+        }
+        windup = {
+            **fist,
+            f"{prefix}shoulder_pitch_joint": 0.45,
+            f"{prefix}shoulder_roll_joint": 0.25 * side_sign,
+            f"{prefix}shoulder_yaw_joint": -0.35 * side_sign,
+            f"{prefix}elbow_joint": 1.25,
+            "waist_yaw_joint": -0.25 * side_sign,
+        }
+        strike = {
+            **fist,
+            f"{prefix}shoulder_pitch_joint": -1.25,
+            f"{prefix}shoulder_roll_joint": -0.12 * side_sign,
+            f"{prefix}shoulder_yaw_joint": 0.18 * side_sign,
+            f"{prefix}elbow_joint": 0.05,
+            "waist_yaw_joint": 0.35 * side_sign,
+        }
+        offsets = _interpolate_joint_keyframes(
+            progress,
+            ((0.0, fist), (0.30, windup), (0.58, strike), (0.78, strike), (1.0, fist)),
+        )
+        return {name: value if "hand_" in name else FIGHT_PUNCH_MOTION_SCALE * value for name, value in offsets.items()}
+
+    if attack_kind == "kick":
+        prefix = f"{side}_"
+        other_side = "right" if side == "left" else "left"
+        chamber = {
+            f"{prefix}hip_pitch_joint": -0.75,
+            f"{prefix}knee_joint": 1.15,
+            f"{prefix}ankle_pitch_joint": -0.45,
+            f"{other_side}_knee_joint": 0.18,
+            "waist_pitch_joint": 0.18,
+            "waist_roll_joint": -0.12 * side_sign,
+        }
+        strike = {
+            f"{prefix}hip_pitch_joint": -1.05,
+            f"{prefix}knee_joint": 0.05,
+            f"{prefix}ankle_pitch_joint": 0.15,
+            f"{other_side}_knee_joint": 0.22,
+            "waist_pitch_joint": 0.28,
+            "waist_roll_joint": -0.16 * side_sign,
+        }
+        return _interpolate_joint_keyframes(
+            progress,
+            ((0.0, {}), (0.38, chamber), (0.62, strike), (0.78, strike), (1.0, {})),
+        )
+
+    raise ValueError(f"Attack kind must be 'punch' or 'kick', got {attack_kind!r}.")
 
 
 def _make_scaled_contact_mesh_proxies(
@@ -733,6 +835,39 @@ class HumanoidContactExample(newton_robot_policy.Example):
             dtype=torch.float32,
         )
         self.rearranged_act = torch.zeros_like(self.act)
+        self.policy_joint_name_to_index = {
+            joint_name: joint_idx for joint_idx, joint_name in enumerate(self.config["mjw_joint_names"])
+        }
+        if ENABLE_SCRIPTED_FIGHT:
+            for commands_name, commands in (
+                ("FIGHT_APPROACH_COMMANDS", FIGHT_APPROACH_COMMANDS),
+                ("FIGHT_HOLD_COMMANDS", FIGHT_HOLD_COMMANDS),
+            ):
+                if commands.shape != (self.robot_count, 3):
+                    mophi.fatal(f"{commands_name} must have shape ({self.robot_count}, 3), got {commands.shape}.")
+            for start_time, duration, attacker, attack_kind, side in FIGHT_ATTACK_SEQUENCE:
+                if duration <= 0.0 or not 0 <= attacker < self.robot_count:
+                    mophi.fatal(
+                        f"Invalid scripted attack ({start_time}, {duration}, {attacker}, {attack_kind!r}, {side!r})."
+                    )
+                offsets = _scripted_attack_offsets(attack_kind, side, 0.5)
+                missing_names = offsets.keys() - self.policy_joint_name_to_index.keys()
+                if missing_names:
+                    mophi.fatal(f"Scripted attack references unknown G1 joints: {sorted(missing_names)}")
+
+    def _scripted_fight_residuals(self) -> torch.Tensor:
+        """Update approach commands and return the active attack residuals."""
+        commands = FIGHT_APPROACH_COMMANDS if self.sim_time < FIGHT_APPROACH_END_TIME else FIGHT_HOLD_COMMANDS
+        self.command.copy_(torch.as_tensor(commands, device=self.torch_device, dtype=torch.float32))
+        residuals = torch.zeros(
+            (self.robot_count, self.config["num_dofs"]), device=self.torch_device, dtype=torch.float32
+        )
+        for start_time, duration, attacker, attack_kind, side in FIGHT_ATTACK_SEQUENCE:
+            progress = (self.sim_time - start_time) / duration
+            if 0.0 <= progress <= 1.0:
+                for joint_name, offset in _scripted_attack_offsets(attack_kind, side, progress).items():
+                    residuals[attacker, self.policy_joint_name_to_index[joint_name]] += offset
+        return residuals
 
     def initialize_deme_contact(self) -> None:
         """Create DEME after Newton's initial body transforms are available."""
@@ -785,6 +920,10 @@ class HumanoidContactExample(newton_robot_policy.Example):
                 self.spawn_interactive_object()
             self._spawn_key_prev = spawn_down
 
+        fight_residuals = None
+        if ENABLE_SCRIPTED_FIGHT:
+            fight_residuals = self._scripted_fight_residuals()
+
         observations = []
         for robot_instance in range(self.robot_count):
             joint_q_start = robot_instance * self.robot_joint_q_count
@@ -808,6 +947,8 @@ class HumanoidContactExample(newton_robot_policy.Example):
             self.act = self.policy(observation)
             self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
             robot_target = self.joint_pos_initial + self.config["action_scale"] * self.rearranged_act
+            if fight_residuals is not None:
+                robot_target += fight_residuals
             robot_target_with_zeros = torch.cat(
                 [
                     torch.zeros(self.robot_count, 6, device=self.torch_device, dtype=torch.float32),
@@ -904,11 +1045,17 @@ def _write_run_metadata(
         "policy_decimation": POLICY_DECIMATION,
         "policy_dt": POLICY_DT,
         "render_fps": RENDER_FPS,
+        "scene_sky_upper_color": SCENE_SKY_UPPER_COLOR,
+        "scene_sky_lower_color": SCENE_SKY_LOWER_COLOR,
+        "scene_light_color": SCENE_LIGHT_COLOR,
         "requested_frames": NUM_FRAMES,
         "completed_frames": frame_count,
         "sim_duration": frame_count * FRAME_DT,
         "robot_count": len(ROBOT_INITIAL_POSES),
         "default_walk_commands": DEFAULT_WALK_COMMANDS.tolist(),
+        "scripted_fight_enabled": ENABLE_SCRIPTED_FIGHT,
+        "fight_approach_end_time": FIGHT_APPROACH_END_TIME if ENABLE_SCRIPTED_FIGHT else None,
+        "fight_attack_sequence": list(FIGHT_ATTACK_SEQUENCE) if ENABLE_SCRIPTED_FIGHT else [],
         "use_robot_visual_mesh_colliders": USE_ROBOT_VISUAL_MESH_COLLIDERS,
         "dynamic_contact_box_count": len(BOX_POSES) if ENABLE_DYNAMIC_CONTACT_BOXES else 0,
         "interactive_object_pool_size": INTERACTIVE_OBJECT_POOL_SIZE if ENABLE_INTERACTIVE_OBJECT_SPAWNING else 0,
@@ -1018,6 +1165,7 @@ def main() -> None:
 
     if hasattr(viewer, "set_camera"):
         viewer.set_camera(wp.vec3(*CAMERA_POSITION), CAMERA_PITCH, CAMERA_YAW)
+    _configure_viewer_scene_lighting(viewer)
     mophi.log_orientation_and_scale_reference(
         viewer,
         axis_origin=REFERENCE_AXIS_ORIGIN,

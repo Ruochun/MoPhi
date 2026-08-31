@@ -412,6 +412,16 @@ components attached to the same Newton body are merged into a body-local OBJ
 under `output/demo_humanoid_robot_fighting/deme_contact_proxies/`; configure
 the mesh path, padding, line width, colors, or visibility in the demo's
 contact-proxy block.
+The default script waits until the robots have met, then performs four
+alternating punches between 2.05 and 4.85 seconds. Kicks are omitted because
+the locomotion controller does not robustly support the required single-leg
+balance. `FIGHT_ATTACK_SEQUENCE` stores each attack as
+`(start_time, duration, attacker, kind, side)`. The attack trajectory
+is added to the learned locomotion target rather than prescribing body poses,
+so contact forces and loss of balance remain part of the Newton simulation.
+Set `ENABLE_SCRIPTED_FIGHT = False` for the previous approach-only behavior.
+The visualization block provides brighter sky/light colors and a closer camera
+for viewing strike details; these settings affect rendering only.
 
 The humanoid swimming idea demo places the G1 in an XLB fluid domain without a
 ground plane. Newton advances a scripted swimming stroke while analytic
