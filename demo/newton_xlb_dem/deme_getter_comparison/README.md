@@ -12,6 +12,10 @@ getter results, and feedback wrenches move through caller-owned CUDA buffers.
 Only periodic Newton motion snapshots are copied to the CPU for comparison and
 output.
 
+State upload, synchronization, DEME stepping, and direct-wrench retrieval use
+MoPhi's reusable `mophi.couplers.newton_deme` implementation. The comparison
+keeps only its acceleration-specific conversion and A/B force assembly locally.
+
 Each DEME proxy family uses no-expression prescribed pose and velocity. This
 keeps every Newton-fed state unchanged during DEME substeps while allowing the
 proxies to participate in contact and report reaction loads.

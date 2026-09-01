@@ -38,7 +38,13 @@ import warp as wp
 import yaml
 
 import mophi
-from mophi.couplers.newton_deme import NewtonDEMEContactCoupler, NewtonDEMEOwnerMap
+from mophi.couplers.newton_deme import (
+    NewtonDEMEContactCoupler,
+    NewtonDEMEMeshOwnerSpec,
+    add_deme_mesh_owners,
+    combine_triangle_meshes,
+    owner_map_from_mesh_bindings,
+)
 import newton
 import newton.examples
 from newton import JointTargetMode, ShapeFlags
@@ -301,36 +307,30 @@ def _make_scaled_contact_mesh_proxies(
     return proxies
 
 
-def _write_obj(path: Path, vertices: np.ndarray, triangle_indices: np.ndarray) -> None:
-    """Write one generated, body-local DEME proxy mesh."""
-    lines = [f"v {vertex[0]:.9g} {vertex[1]:.9g} {vertex[2]:.9g}\n" for vertex in vertices]
-    triangles = triangle_indices.reshape(-1, 3) + 1
-    lines.extend(f"f {triangle[0]} {triangle[1]} {triangle[2]}\n" for triangle in triangles)
-    path.write_text("".join(lines), encoding="utf-8")
-
-
-def _export_deme_body_contact_meshes(contact_mesh_proxies: list[dict], directory: Path) -> list[tuple[int, int, Path]]:
-    """Merge all scaled unit-box components belonging to each Newton body."""
-    directory.mkdir(parents=True, exist_ok=True)
+def _make_deme_robot_mesh_specs(contact_mesh_proxies: list[dict]) -> list[NewtonDEMEMeshOwnerSpec]:
+    """Group the fighting proxies into one DEME mesh-owner specification per body."""
     proxies_by_body = {}
     for proxy in contact_mesh_proxies:
         key = (proxy["robot_instance"], proxy["body_index"])
         proxies_by_body.setdefault(key, []).append(proxy)
 
-    exported = []
+    specs = []
     for (robot_instance, body_index), body_proxies in sorted(proxies_by_body.items()):
-        vertices = []
-        triangle_indices = []
-        vertex_offset = 0
-        for proxy in body_proxies:
-            proxy_vertices = np.asarray(proxy["body_local_vertices"], dtype=np.float32)
-            vertices.append(proxy_vertices)
-            triangle_indices.append(np.asarray(proxy["triangle_indices"], dtype=np.int32) + vertex_offset)
-            vertex_offset += len(proxy_vertices)
-        obj_path = directory / f"robot_{robot_instance}_body_{body_index}.obj"
-        _write_obj(obj_path, np.concatenate(vertices), np.concatenate(triangle_indices))
-        exported.append((robot_instance, body_index, obj_path))
-    return exported
+        vertices, triangle_indices = combine_triangle_meshes(
+            [(proxy["body_local_vertices"], proxy["triangle_indices"]) for proxy in body_proxies]
+        )
+        specs.append(
+            NewtonDEMEMeshOwnerSpec(
+                name=f"robot_{robot_instance}_body_{body_index}",
+                newton_body_index=body_index,
+                family=DEME_ROBOT_FAMILIES[robot_instance],
+                mass=1.0,
+                principal_moi=(1.0, 1.0, 1.0),
+                vertices=vertices,
+                triangle_indices=triangle_indices,
+            )
+        )
+    return specs
 
 
 def _create_deme_robot_contact_coupler(example) -> NewtonDEMEContactCoupler:
@@ -345,22 +345,16 @@ def _create_deme_robot_contact_coupler(example) -> NewtonDEMEContactCoupler:
 
     solver = DEME_MODULE.DEMSolver([example.device.ordinal])
     material = solver.LoadMaterial(DEME_CONTACT_MATERIAL)
-    exported_meshes = _export_deme_body_contact_meshes(
-        example.contact_mesh_proxies, OUTPUT_DIRECTORY / DEME_PROXY_DIRECTORY_NAME
-    )
-    initial_body_q = example.state_0.body_q.numpy()
-    tracked_owners = []
-    for robot_instance, body_index, obj_path in exported_meshes:
-        mesh_owner = solver.AddWavefrontMeshObject(str(obj_path), material, False)
-        mesh_owner.SetInitPos(initial_body_q[body_index, :3].tolist())
-        mesh_owner.SetInitQuat(initial_body_q[body_index, 3:7].tolist())
-        mesh_owner.SetFamily(DEME_ROBOT_FAMILIES[robot_instance])
-        mesh_owner.SetMass(1.0)
-        mesh_owner.SetMOI([1.0, 1.0, 1.0])
-        tracked_owners.append((body_index, solver.Track(mesh_owner)))
-
-    if not tracked_owners:
-        mophi.fatal("DEME contact is enabled, but no robot body proxy owners were created.")
+    try:
+        mesh_bindings = add_deme_mesh_owners(
+            solver,
+            material,
+            _make_deme_robot_mesh_specs(example.contact_mesh_proxies),
+            example.state_0.body_q.numpy(),
+            OUTPUT_DIRECTORY / DEME_PROXY_DIRECTORY_NAME,
+        )
+    except ValueError as exc:
+        mophi.fatal(str(exc))
     for family in DEME_ROBOT_FAMILIES:
         # The coupling layer uploads Newton's state. DEME holds each supplied
         # velocity constant while integrating the unprescribed pose.
@@ -374,11 +368,8 @@ def _create_deme_robot_contact_coupler(example) -> NewtonDEMEContactCoupler:
     solver.SetErrorOutAvgContacts(1000)
     solver.Initialize()
 
-    owner_map = NewtonDEMEOwnerMap(
-        [body_index for body_index, _ in tracked_owners],
-        [tracker.GetOwnerID() for _, tracker in tracked_owners],
-    )
     try:
+        owner_map = owner_map_from_mesh_bindings(mesh_bindings)
         coupler = NewtonDEMEContactCoupler()
         coupler.initialize(example.model, solver, owner_map, example.device)
     except (RuntimeError, ValueError) as exc:

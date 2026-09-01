@@ -16,6 +16,7 @@ import warp as wp
 
 import mophi
 import newton
+from mophi.couplers.newton_deme import NewtonDEMEContactCoupler, NewtonDEMEOwnerMap
 from mophi.utils import load_package_provider
 
 DEME = load_package_provider("deme")
@@ -94,22 +95,6 @@ if not np.isclose(NEWTON_SUBSTEPS_PER_FRAME * NEWTON_DT, FRAME_DT, rtol=0.0, ato
     raise ValueError("FRAME_DT must be an integer multiple of NEWTON_DT.")
 if not np.isclose(DEME_SUBSTEPS_PER_NEWTON_STEP * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("NEWTON_DT must be an integer multiple of DEME_DT.")
-
-
-@wp.kernel
-def _gather_newton_owner_state(
-    body_q: wp.array(dtype=wp.transform),
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    positions: wp.array(dtype=wp.vec3),
-    orientations: wp.array(dtype=wp.quat),
-    velocities: wp.array(dtype=wp.vec3),
-    angular_velocities: wp.array(dtype=wp.vec3),
-):
-    body_idx = wp.tid()
-    positions[body_idx] = wp.transform_get_translation(body_q[body_idx])
-    orientations[body_idx] = wp.transform_get_rotation(body_q[body_idx])
-    velocities[body_idx] = wp.spatial_top(body_qd[body_idx])
-    angular_velocities[body_idx] = wp.spatial_bottom(body_qd[body_idx])
 
 
 @wp.kernel
@@ -263,7 +248,7 @@ def _build_deme_system(device, initial_specs):
     expected_ids = list(range(owner_ids[0], owner_ids[0] + BODY_COUNT))
     if owner_ids != expected_ids:
         mophi.fatal(f"Comparison owners must be consecutive; got {owner_ids}.")
-    return solver, owner_ids[0]
+    return solver, owner_ids
 
 
 def _lane_motion_errors(body_q: np.ndarray, body_qd: np.ndarray) -> dict[str, float]:
@@ -311,15 +296,18 @@ def main() -> None:
     model, newton_solver, body_indices, shape_indices = _build_newton_system()
     if body_indices != list(range(BODY_COUNT)):
         mophi.fatal(f"Expected comparison bodies [0, 1, 2, 3], got {body_indices}.")
-    deme_solver, first_owner_id = _build_deme_system(device, initial_specs)
+    deme_solver, owner_ids = _build_deme_system(device, initial_specs)
 
     coupler = mophi.NewtonXLBDEMCoupler()
     coupler.initialize(model, newton_solver, None, deme_solver, NEWTON_DT)
+    contact_exchange = NewtonDEMEContactCoupler()
+    contact_exchange.initialize(
+        model,
+        deme_solver,
+        NewtonDEMEOwnerMap(body_indices, owner_ids),
+        device,
+    )
 
-    positions = wp.empty(BODY_COUNT, dtype=wp.vec3, device=device)
-    orientations = wp.empty(BODY_COUNT, dtype=wp.quat, device=device)
-    velocities = wp.empty(BODY_COUNT, dtype=wp.vec3, device=device)
-    angular_velocities = wp.empty(BODY_COUNT, dtype=wp.vec3, device=device)
     contact_accelerations = wp.empty(BODY_COUNT, dtype=wp.vec3, device=device)
     contact_angular_accelerations = wp.empty(BODY_COUNT, dtype=wp.vec3, device=device)
     direct_forces = wp.empty(BODY_COUNT, dtype=wp.vec3, device=device)
@@ -353,35 +341,13 @@ def main() -> None:
     assume_unit_mass_moi = int(ACCELERATION_FEEDBACK_MODE == "assumed_unit_mass_moi")
 
     def exchange_and_step() -> None:
-        wp.launch(
-            _gather_newton_owner_state,
-            dim=BODY_COUNT,
-            inputs=[
-                coupler.newton_state_0.body_q,
-                coupler.newton_state_0.body_qd,
-                positions,
-                orientations,
-                velocities,
-                angular_velocities,
-            ],
-            device=device,
-        )
-        wp.synchronize_device(device)
-        deme_solver.SetOwnerPositionFromDevice(first_owner_id, positions.ptr, device.ordinal, BODY_COUNT)
-        deme_solver.SetOwnerOriQFromDevice(first_owner_id, orientations.ptr, device.ordinal, BODY_COUNT)
-        deme_solver.SetOwnerVelocityFromDevice(first_owner_id, velocities.ptr, device.ordinal, BODY_COUNT)
-        deme_solver.SetOwnerAngVelGlobalFromDevice(first_owner_id, angular_velocities.ptr, device.ordinal, BODY_COUNT)
-        for _ in range(DEME_SUBSTEPS_PER_NEWTON_STEP):
-            coupler.step_deme()
-        deme_solver.GetOwnerAccToDevice(
-            contact_accelerations.ptr, BODY_COUNT, device.ordinal, first_owner_id, BODY_COUNT
-        )
+        contact_exchange.set_deme_owner_state_from_newton(coupler.newton_state_0)
+        contact_exchange.step_deme(DEME_SUBSTEPS_PER_NEWTON_STEP)
+        deme_solver.GetOwnerAccToDevice(contact_accelerations.ptr, BODY_COUNT, device.ordinal, owner_ids[0], BODY_COUNT)
         deme_solver.GetOwnerAngAccGlobalToDevice(
-            contact_angular_accelerations.ptr, BODY_COUNT, device.ordinal, first_owner_id, BODY_COUNT
+            contact_angular_accelerations.ptr, BODY_COUNT, device.ordinal, owner_ids[0], BODY_COUNT
         )
-        deme_solver.GetOwnerContactWrenchToDevice(
-            direct_forces.ptr, direct_torques.ptr, BODY_COUNT, device.ordinal, first_owner_id, BODY_COUNT
-        )
+        contact_exchange.get_deme_contact_wrenches_to_device(direct_forces, direct_torques)
         newton_body_forces.zero_()
         wp.launch(
             _compose_comparison_feedback,
@@ -391,7 +357,7 @@ def main() -> None:
                 contact_angular_accelerations,
                 direct_forces,
                 direct_torques,
-                orientations,
+                contact_exchange.deme_owner_orientations,
                 BOX_MASS,
                 wp.vec3(*BOX_PRINCIPAL_MOI),
                 assume_unit_mass_moi,
@@ -428,6 +394,7 @@ def main() -> None:
             movie_writer.close()
         if visualizer is not None:
             visualizer.close()
+        contact_exchange.finalize()
         coupler.finalize()
 
     error_names = (

@@ -15,9 +15,10 @@ does not create either solver, construct contact geometry, select materials or
 families, run Newton, or decide the relative solver schedule. Those decisions
 remain with the calling workflow.
 
-`NewtonDEMEOwnerMap` maps an arbitrary ordered subset of Newton bodies to one
-increasing, consecutive DEME owner span. The consecutive span is required by
-DEME's bulk device methods.
+`NewtonDEMEOwnerMap` maps an ordered sequence of DEME owners to Newton bodies.
+Newton body indices may repeat, allowing several contact meshes to contribute
+to one Newton body. The DEME owners must form one increasing, consecutive span
+because the transfer uses DEME's bulk device methods.
 
 ## Basic usage
 
@@ -48,27 +49,71 @@ orientation, linear velocity, and global angular velocity. The wrench call
 retrieves global force and torque resultants and scatters them into a
 Newton-sized `wp.spatial_vector` array.
 
+Several DEME owners may map to the same Newton body. Their forces and torques
+are summed before the Newton body-force entry is written. To combine DEME with
+an existing external-force array, pass that array as `destination` and disable
+clearing:
+
+```python
+coupler.write_deme_contact_wrenches_to_newton(
+    destination=combined_body_forces,
+    clear_destination=False,
+)
+```
+
+## Mesh-owner preparation
+
+`NewtonDEMEMeshOwnerSpec` describes one DEME proxy using body-local triangle
+geometry, its Newton body index, DEME family, mass, and principal MOI. Physical
+properties are mandatory so DEME does not silently derive proxy-body dynamics
+from mesh volume.
+
+`combine_triangle_meshes` combines several body-local mesh pieces and adjusts
+their indices. `add_deme_mesh_owners` writes the resulting OBJ files, creates
+DEME mesh owners, assigns their initial Newton transforms and physical
+properties, and retains trackers. After `DEMSolver.Initialize()`, use
+`owner_map_from_mesh_bindings` to obtain the runtime mapping:
+
+```python
+bindings = add_deme_mesh_owners(
+    deme_solver,
+    material,
+    mesh_specs,
+    newton_state.body_q.numpy(),
+    output_directory,
+)
+# Configure DEME and call deme_solver.Initialize() before reading owner IDs.
+owner_map = owner_map_from_mesh_bindings(bindings)
+```
+
+OBJ generation is an initialization-time operation and may use host memory.
+The GPU-only claim applies to recurring state and wrench exchange.
+
 ## Supported behavior
 
 - CUDA-only physics-state and wrench transfer through DEME 3.0.9 device APIs.
-- Arbitrary Newton body order mapped to one consecutive DEME owner range.
+- Arbitrary Newton body order, including multiple owners per Newton body,
+  mapped to one consecutive DEME owner range.
 - Runtime checks for required DEME methods and a shared CUDA device ordinal.
 - Explicit synchronization before DEME consumes Warp-produced buffers.
 - Independent DEME substepping.
-- Zero-filled Newton force entries for bodies outside the coupling map.
+- Per-body wrench accumulation with either replacement or addition to an
+  existing Newton body-force array.
+- Reusable body-local triangle-mesh combination, OBJ serialization, and DEME
+  owner registration with explicit physical properties.
 
 ## Current limitations
 
 - The DEME device calls are synchronous; stream/event interoperability is not
-  yet available, so the CPU still orchestrates the exchange.
-- One DEME owner maps to one distinct Newton body. Multiple owners per body and
-  wrench accumulation are not yet supported.
-- Wrenches replace the coupler's output array. Applications combining multiple
-  external-force sources must perform their own accumulation before Newton's
-  step.
-- Contact mesh preparation and DEME owner creation remain workflow-specific.
-- DEME owner mass and moment of inertia must be configured explicitly by the
-  caller; the coupler does not infer physical properties from proxy geometry.
+  yet available, so the CPU still orchestrates the exchange. Synchronization is
+  isolated behind internal handoff methods so a future DEME stream/event API
+  can replace the device-wide barrier without changing callers.
+- All owners participating in one coupler must occupy one consecutive DEME ID
+  span.
+- Mesh loading still uses OBJ files because DEME does not yet expose equivalent
+  device-resident mesh construction through this integration.
+- The caller still chooses contact materials, family prescriptions, collision
+  filtering, and how source geometry becomes `NewtonDEMEMeshOwnerSpec` objects.
 
 ## Tests
 
