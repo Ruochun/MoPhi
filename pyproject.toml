@@ -13,7 +13,7 @@ dependencies = [
     "newton==1.0.0",
     "warp-lang==1.12.1",
     "mujoco==3.6.0",
-    "deme3>=3.0.5,<4",
+    "deme3>=3.0.9,<4",
     "xlb[cuda]",
     "torch",
     "GitPython",

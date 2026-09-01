@@ -149,7 +149,7 @@ supported distributed install experience:
 - `newton==1.0.0`
 - `warp-lang==1.12.1`
 - `mujoco==3.6.0`
-- `deme3>=3.0.5,<4`
+- `deme3>=3.0.9,<4`
 - `xlb[cuda]`
 - `torch`
 - `GitPython`
@@ -342,11 +342,10 @@ forms the world-space wrench in Newton's external body-force array, which the
 coupler copies device-to-device into Newton before integration. The code marks
 a pending correction to shift torque from the DEME funnel frame to the Newton
 end-effector frame before force feedback is used for quantitative studies. Particle
-positions are likewise copied directly into a Warp array for rendering. In
-deme3 3.0.1, `Tracker.SetPos` and `Tracker.SetOriQ` are still host-only, so the
-Newton-to-DEME proxy pose update is the one host-staged physics boundary; the
-code marks the precise replacement point for future device pose setters. The
-generated movie, USD (when selected), and run metadata are written beneath
+positions are likewise copied directly into a Warp array for rendering. The
+robotic-printing demo still uses tracker host pose setters and marks that
+exchange point for migration to the device-native setters available in deme3
+3.0.9. Its generated movie, USD (when selected), and run metadata are written beneath
 `output/demo_robotic_3d_printing/`.
 
 The initial settling interval advances both Newton and DEME. With the default

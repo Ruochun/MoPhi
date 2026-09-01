@@ -12,6 +12,7 @@
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_complex_environment.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
 #   python demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_swimming.py
+#   python demo/newton_xlb_dem/deme_getter_comparison/demo_deme_contact_getter_comparison.py
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
 #
@@ -95,6 +96,15 @@ add_custom_target(demo_humanoid_swimming
     VERBATIM
 )
 
+# ── Custom target: DEME contact getter comparison ────────────────────────────
+add_custom_target(demo_deme_contact_getter_comparison
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/deme_getter_comparison/demo_deme_contact_getter_comparison.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Comparing DEME contact-acceleration and wrench feedback in Newton"
+    VERBATIM
+)
+
 # ── Custom target: flexible hand Newton cube demo ─────────────────────────────
 add_custom_target(demo_flexible_hand_newton
     COMMAND ${Python3_EXECUTABLE}
@@ -144,6 +154,13 @@ install(
         humanoid_complex_environment/demo_humanoid_swimming.py
         humanoid_complex_environment/README.md
     DESTINATION demo/newton_xlb_dem/humanoid_complex_environment
+)
+
+install(
+    FILES
+        deme_getter_comparison/demo_deme_contact_getter_comparison.py
+        deme_getter_comparison/README.md
+    DESTINATION demo/newton_xlb_dem/deme_getter_comparison
 )
 
 install(

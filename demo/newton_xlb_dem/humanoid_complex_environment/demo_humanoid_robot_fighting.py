@@ -58,7 +58,7 @@ MAX_CONTACT_COUNT = 4096
 MAX_CONSTRAINT_COUNT = 8192
 
 # -- Contact-proxy visualization ---------------------------------------------
-SHOW_CONTACT_PROXY_MESHES = True
+SHOW_CONTACT_PROXY_MESHES = False
 CONTACT_PROXY_MESH_PATH = Path(__file__).resolve().parents[3] / "data" / "mesh" / "cube.obj"
 CONTACT_PROXY_PADDING = 0.005
 CONTACT_PROXY_LINE_WIDTH = 0.006

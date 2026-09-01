@@ -77,6 +77,21 @@ and DEME returns one contact force and torque resultant per proxied body before
 each Newton step. No dynamic boxes, warehouse shelves, or other decorative
 scene objects are added.
 
+With deme3 3.0.9 or newer, the per-step Newton–DEME physics exchange stays in
+CUDA memory. Warp gathers Newton body poses and velocities into contiguous
+device arrays, DEME consumes them through bulk owner setters, and DEME writes
+reduced global-frame contact wrenches directly into Warp arrays for Newton.
+Every proxy explicitly retains unit mass and unit MOI rather than using DEME's
+geometry-derived mesh properties. Its family uses no-expression prescriptions
+for linear and angular velocity only. DEME holds the latest Newton-fed
+velocities constant during its contact substeps, while position and orientation
+remain unprescribed and advance from those velocities until the next Newton
+state update. DEME still calculates reaction wrenches, but those reactions do
+not alter the prescribed proxy velocities. The APIs are synchronous, so the
+CPU orchestrates and waits, but physics payloads avoid host staging. Startup
+mesh loading, rendering, movie encoding, and output snapshots are outside this
+claim.
+
 Set `ROBOT_CONTACT_MODEL = "deme"` for proxy-mesh contact and wrench
 feedback, or `ROBOT_CONTACT_MODEL = "newton"` to restore Newton's coarse
 robot-to-robot collision shapes. The latter is useful as a comparison and can

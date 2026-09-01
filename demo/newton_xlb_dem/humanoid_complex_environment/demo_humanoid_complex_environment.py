@@ -333,6 +333,24 @@ def _export_deme_body_contact_meshes(contact_mesh_proxies: list[dict], directory
 
 
 @wp.kernel
+def _gather_deme_owner_state(
+    body_indices: wp.array(dtype=wp.int32),
+    body_q: wp.array(dtype=wp.transform),
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    positions: wp.array(dtype=wp.vec3),
+    orientations: wp.array(dtype=wp.quat),
+    velocities: wp.array(dtype=wp.vec3),
+    angular_velocities: wp.array(dtype=wp.vec3),
+):
+    proxy_idx = wp.tid()
+    body_idx = body_indices[proxy_idx]
+    positions[proxy_idx] = wp.transform_get_translation(body_q[body_idx])
+    orientations[proxy_idx] = wp.transform_get_rotation(body_q[body_idx])
+    velocities[proxy_idx] = wp.spatial_top(body_qd[body_idx])
+    angular_velocities[proxy_idx] = wp.spatial_bottom(body_qd[body_idx])
+
+
+@wp.kernel
 def _scatter_deme_body_wrenches(
     body_indices: wp.array(dtype=wp.int32),
     forces: wp.array(dtype=wp.vec3),
@@ -359,6 +377,19 @@ class DemeRobotContactResolver:
 
         self.example = example
         self.solver = DEME_MODULE.DEMSolver([example.device.ordinal])
+        required_device_methods = (
+            "SetOwnerPositionFromDevice",
+            "SetOwnerOriQFromDevice",
+            "SetOwnerVelocityFromDevice",
+            "SetOwnerAngVelGlobalFromDevice",
+            "GetOwnerContactWrenchToDevice",
+        )
+        missing_device_methods = [name for name in required_device_methods if not hasattr(self.solver, name)]
+        if missing_device_methods:
+            mophi.fatal(
+                "The Newton-DEME fighting contact path requires deme3>=3.0.9; "
+                f"the loaded DEMSolver is missing {missing_device_methods}."
+            )
         if example.device.ordinal not in self.solver.GetGPUDeviceIDs():
             mophi.fatal(
                 f"DEME workers {self.solver.GetGPUDeviceIDs()} do not share Warp CUDA device "
@@ -382,7 +413,13 @@ class DemeRobotContactResolver:
             self.trackers.append((body_index, self.solver.Track(mesh_owner)))
 
         for family in DEME_ROBOT_FAMILIES:
-            self.solver.SetFamilyFixed(family)
+            # Newton supplies the proxy state at each coupling update. Only
+            # velocity is prescribed: DEME holds the latest Newton-fed linear
+            # and angular velocities constant while integrating position and
+            # orientation through its contact substeps. Contact reactions do
+            # not alter those prescribed velocities.
+            self.solver.SetFamilyPrescribedLinVel(family)
+            self.solver.SetFamilyPrescribedAngVel(family)
             self.solver.DisableContactBetweenFamilies(family, family)
         self.solver.SetMeshUniversalContact(True)
         self.solver.InstructBoxDomainDimension(DEME_DOMAIN_X, DEME_DOMAIN_Y, DEME_DOMAIN_Z)
@@ -392,9 +429,23 @@ class DemeRobotContactResolver:
         self.solver.Initialize()
 
         tracker_count = len(self.trackers)
+        if tracker_count == 0:
+            mophi.fatal("DEME contact is enabled, but no robot body proxy owners were created.")
+        owner_ids = [int(tracker.GetOwnerID()) for _, tracker in self.trackers]
+        expected_owner_ids = list(range(owner_ids[0], owner_ids[0] + tracker_count))
+        if owner_ids != expected_owner_ids:
+            mophi.fatal(
+                "DEME robot proxy owners must form one consecutive range for GPU exchange; "
+                f"got owner IDs {owner_ids}."
+            )
+        self.first_owner_id = owner_ids[0]
         self.body_indices = wp.array(
             [body_index for body_index, _ in self.trackers], dtype=wp.int32, device=example.device
         )
+        self.positions = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
+        self.orientations = wp.empty(tracker_count, dtype=wp.quat, device=example.device)
+        self.velocities = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
+        self.angular_velocities = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
         self.forces = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
         self.torques = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
         self.body_forces = wp.zeros(example.model.body_count, dtype=wp.spatial_vector, device=example.device)
@@ -405,20 +456,42 @@ class DemeRobotContactResolver:
 
     def resolve(self, state) -> None:
         """Advance DEME at Newton's current pose and write the resulting wrenches."""
-        # DEME 3.0 exposes these pose setters and per-owner resultant getters
-        # through host calls. Keep the exchange isolated here so it can switch
-        # to bulk device APIs when DEME provides matching pose/resultant access.
-        body_q = state.body_q.numpy()
-        for body_index, tracker in self.trackers:
-            tracker.SetPos(body_q[body_index, :3].tolist())
-            tracker.SetOriQ(body_q[body_index, 3:7].tolist())
+        tracker_count = len(self.trackers)
+        wp.launch(
+            _gather_deme_owner_state,
+            dim=tracker_count,
+            inputs=[
+                self.body_indices,
+                state.body_q,
+                state.body_qd,
+                self.positions,
+                self.orientations,
+                self.velocities,
+                self.angular_velocities,
+            ],
+            device=self.example.device,
+        )
+        # DEME's pointer APIs are synchronous but do not consume Warp's stream,
+        # so finish the gather before handing its buffers to DEME.
+        wp.synchronize_device(self.example.device)
+        device_ordinal = self.example.device.ordinal
+        self.solver.SetOwnerPositionFromDevice(self.first_owner_id, self.positions.ptr, device_ordinal, tracker_count)
+        self.solver.SetOwnerOriQFromDevice(self.first_owner_id, self.orientations.ptr, device_ordinal, tracker_count)
+        self.solver.SetOwnerVelocityFromDevice(self.first_owner_id, self.velocities.ptr, device_ordinal, tracker_count)
+        self.solver.SetOwnerAngVelGlobalFromDevice(
+            self.first_owner_id, self.angular_velocities.ptr, device_ordinal, tracker_count
+        )
         for _ in range(DEME_SUBSTEPS):
             self.solver.DoStepDynamics()
 
-        force_values = [np.asarray(tracker.ContactAcc(), dtype=np.float32) for _, tracker in self.trackers]
-        torque_values = [np.asarray(tracker.ContactAngAccGlobal(), dtype=np.float32) for _, tracker in self.trackers]
-        self.forces.assign(np.asarray(force_values, dtype=np.float32))
-        self.torques.assign(np.asarray(torque_values, dtype=np.float32))
+        self.solver.GetOwnerContactWrenchToDevice(
+            self.forces.ptr,
+            self.torques.ptr,
+            tracker_count,
+            device_ordinal,
+            self.first_owner_id,
+            tracker_count,
+        )
         self.body_forces.zero_()
         wp.launch(
             _scatter_deme_body_wrenches,
