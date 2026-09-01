@@ -7,9 +7,10 @@ under `python/mophi/` and the pybind11 extension configured by
 ## Canonical source layout
 
 `python/mophi/` is the single canonical location for all installable Python
-code. Utility modules live in `python/mophi/utils/`, and visualization backends
-live in `python/mophi/visualizers/`. Edit these files directly; they are not
-generated or mirrored from `src/`.
+code. Utility modules live in `python/mophi/utils/`, visualization backends live
+in `python/mophi/visualizers/`, and Python-only couplers live in a solver-specific
+subpackage under `python/mophi/couplers/`. Edit these files directly; they are
+not generated or mirrored from `src/`.
 
 Keeping one source copy prevents a CMake configure from modifying the Git
 working tree, eliminates synchronization failures, and makes source-tree and
@@ -35,9 +36,14 @@ modules are ABI-specific.
 
 - Put solver-independent helpers in `python/mophi/utils/`.
 - Put visualization backends in `python/mophi/visualizers/`.
-- Keep solver orchestration in couplers or demos rather than generic utilities.
+- Put reusable Python-only solver coupling in
+  `python/mophi/couplers/<coupling_type>/`.
+- Keep scenario-specific orchestration in demos rather than generic utilities.
 - Add tests that import the module through its installed package path.
 - Do not add a duplicate source file under `src/`.
 
 The G-code utility has its design, supported command subset, usage examples,
 and test instructions documented in [`gcode.md`](gcode.md).
+
+The GPU-native Newton–DEME contact exchange is documented in
+[`newton-deme-coupling.md`](newton-deme-coupling.md).

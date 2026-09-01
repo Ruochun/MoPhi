@@ -6,9 +6,9 @@ march forward together as a tightly-coupled simulation.
 
 MoPhi is aimed at users who want to build cross-solver workflows without
 rewriting the participating solvers into one monolithic codebase. Its
-coupler-first design is meant to make multi-physics experiments, reusable data
-exchange paths, and extensible simulation pipelines easier to assemble as the
-project grows.
+coupler-first design extracts tested, reusable on-device data exchange from
+scenario-specific demos, making multi-physics experiments and extensible
+simulation pipelines easier to assemble as the project grows.
 
 ---
 
@@ -46,6 +46,9 @@ For the solver-independent G-code parser used by printing workflows, see
 
 Newton-backed demos use validated, self-repairing asset downloads described in
 [docs/newton-assets.md](docs/newton-assets.md).
+
+The reusable GPU-native Newton–DEME contact-wrench exchange is described in
+[docs/newton-deme-coupling.md](docs/newton-deme-coupling.md).
 
 ### Linux Python 3.11–3.14 wheels (Newton + XLB + DEME, no FERIS)
 

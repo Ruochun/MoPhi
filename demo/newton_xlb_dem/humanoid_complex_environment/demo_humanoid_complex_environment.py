@@ -38,6 +38,7 @@ import warp as wp
 import yaml
 
 import mophi
+from mophi.couplers.newton_deme import NewtonDEMEContactCoupler, NewtonDEMEOwnerMap
 import newton
 import newton.examples
 from newton import JointTargetMode, ShapeFlags
@@ -332,173 +333,61 @@ def _export_deme_body_contact_meshes(contact_mesh_proxies: list[dict], directory
     return exported
 
 
-@wp.kernel
-def _gather_deme_owner_state(
-    body_indices: wp.array(dtype=wp.int32),
-    body_q: wp.array(dtype=wp.transform),
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    positions: wp.array(dtype=wp.vec3),
-    orientations: wp.array(dtype=wp.quat),
-    velocities: wp.array(dtype=wp.vec3),
-    angular_velocities: wp.array(dtype=wp.vec3),
-):
-    proxy_idx = wp.tid()
-    body_idx = body_indices[proxy_idx]
-    positions[proxy_idx] = wp.transform_get_translation(body_q[body_idx])
-    orientations[proxy_idx] = wp.transform_get_rotation(body_q[body_idx])
-    velocities[proxy_idx] = wp.spatial_top(body_qd[body_idx])
-    angular_velocities[proxy_idx] = wp.spatial_bottom(body_qd[body_idx])
-
-
-@wp.kernel
-def _scatter_deme_body_wrenches(
-    body_indices: wp.array(dtype=wp.int32),
-    forces: wp.array(dtype=wp.vec3),
-    torques: wp.array(dtype=wp.vec3),
-    body_forces: wp.array(dtype=wp.spatial_vector),
-):
-    proxy_idx = wp.tid()
-    body_forces[body_indices[proxy_idx]] = wp.spatial_vector(forces[proxy_idx], torques[proxy_idx])
-
-
-class DemeRobotContactResolver:
-    """Pose-driven DEME mesh contact with body-wrench feedback into Newton."""
-
-    def __init__(self, example) -> None:
-        if DEME_MODULE is None:
-            mophi.fatal("DEME contact is enabled, but the fighting demo did not provide the deme package module.")
-        if not example.device.is_cuda:
-            mophi.fatal("The Newton-DEME fighting contact path requires a CUDA Warp device.")
-        if len(DEME_ROBOT_FAMILIES) != example.robot_count:
-            mophi.fatal(
-                f"DEME_ROBOT_FAMILIES must contain one family per robot ({example.robot_count}), "
-                f"got {len(DEME_ROBOT_FAMILIES)}."
-            )
-
-        self.example = example
-        self.solver = DEME_MODULE.DEMSolver([example.device.ordinal])
-        required_device_methods = (
-            "SetOwnerPositionFromDevice",
-            "SetOwnerOriQFromDevice",
-            "SetOwnerVelocityFromDevice",
-            "SetOwnerAngVelGlobalFromDevice",
-            "GetOwnerContactWrenchToDevice",
-        )
-        missing_device_methods = [name for name in required_device_methods if not hasattr(self.solver, name)]
-        if missing_device_methods:
-            mophi.fatal(
-                "The Newton-DEME fighting contact path requires deme3>=3.0.9; "
-                f"the loaded DEMSolver is missing {missing_device_methods}."
-            )
-        if example.device.ordinal not in self.solver.GetGPUDeviceIDs():
-            mophi.fatal(
-                f"DEME workers {self.solver.GetGPUDeviceIDs()} do not share Warp CUDA device "
-                f"{example.device.ordinal}."
-            )
-        material = self.solver.LoadMaterial(DEME_CONTACT_MATERIAL)
-        exported_meshes = _export_deme_body_contact_meshes(
-            example.contact_mesh_proxies, OUTPUT_DIRECTORY / DEME_PROXY_DIRECTORY_NAME
-        )
-        initial_body_q = example.state_0.body_q.numpy()
-        self.trackers = []
-        for robot_instance, body_index, obj_path in exported_meshes:
-            mesh_owner = self.solver.AddWavefrontMeshObject(str(obj_path), material, False)
-            mesh_owner.SetInitPos(initial_body_q[body_index, :3].tolist())
-            mesh_owner.SetInitQuat(initial_body_q[body_index, 3:7].tolist())
-            mesh_owner.SetFamily(DEME_ROBOT_FAMILIES[robot_instance])
-            # Unit virtual mass and inertia make DEME contact accelerations
-            # numerically equal to force and body-frame moment resultants.
-            mesh_owner.SetMass(1.0)
-            mesh_owner.SetMOI([1.0, 1.0, 1.0])
-            self.trackers.append((body_index, self.solver.Track(mesh_owner)))
-
-        for family in DEME_ROBOT_FAMILIES:
-            # Newton supplies the proxy state at each coupling update. Only
-            # velocity is prescribed: DEME holds the latest Newton-fed linear
-            # and angular velocities constant while integrating position and
-            # orientation through its contact substeps. Contact reactions do
-            # not alter those prescribed velocities.
-            self.solver.SetFamilyPrescribedLinVel(family)
-            self.solver.SetFamilyPrescribedAngVel(family)
-            self.solver.DisableContactBetweenFamilies(family, family)
-        self.solver.SetMeshUniversalContact(True)
-        self.solver.InstructBoxDomainDimension(DEME_DOMAIN_X, DEME_DOMAIN_Y, DEME_DOMAIN_Z)
-        self.solver.SetGravitationalAcceleration([0.0, 0.0, 0.0])
-        self.solver.SetInitTimeStep(DEME_DT)
-        self.solver.SetErrorOutAvgContacts(1000)
-        self.solver.Initialize()
-
-        tracker_count = len(self.trackers)
-        if tracker_count == 0:
-            mophi.fatal("DEME contact is enabled, but no robot body proxy owners were created.")
-        owner_ids = [int(tracker.GetOwnerID()) for _, tracker in self.trackers]
-        expected_owner_ids = list(range(owner_ids[0], owner_ids[0] + tracker_count))
-        if owner_ids != expected_owner_ids:
-            mophi.fatal(
-                "DEME robot proxy owners must form one consecutive range for GPU exchange; "
-                f"got owner IDs {owner_ids}."
-            )
-        self.first_owner_id = owner_ids[0]
-        self.body_indices = wp.array(
-            [body_index for body_index, _ in self.trackers], dtype=wp.int32, device=example.device
-        )
-        self.positions = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
-        self.orientations = wp.empty(tracker_count, dtype=wp.quat, device=example.device)
-        self.velocities = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
-        self.angular_velocities = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
-        self.forces = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
-        self.torques = wp.empty(tracker_count, dtype=wp.vec3, device=example.device)
-        self.body_forces = wp.zeros(example.model.body_count, dtype=wp.spatial_vector, device=example.device)
-        print(
-            f"[DEME] Initialized {tracker_count} articulated body proxy meshes; "
-            "only cross-robot mesh contact is enabled."
+def _create_deme_robot_contact_coupler(example) -> NewtonDEMEContactCoupler:
+    """Create fighting-specific DEME proxies and bind MoPhi's GPU coupler."""
+    if DEME_MODULE is None:
+        mophi.fatal("DEME contact is enabled, but the fighting demo did not provide the deme package module.")
+    if len(DEME_ROBOT_FAMILIES) != example.robot_count:
+        mophi.fatal(
+            f"DEME_ROBOT_FAMILIES must contain one family per robot ({example.robot_count}), "
+            f"got {len(DEME_ROBOT_FAMILIES)}."
         )
 
-    def resolve(self, state) -> None:
-        """Advance DEME at Newton's current pose and write the resulting wrenches."""
-        tracker_count = len(self.trackers)
-        wp.launch(
-            _gather_deme_owner_state,
-            dim=tracker_count,
-            inputs=[
-                self.body_indices,
-                state.body_q,
-                state.body_qd,
-                self.positions,
-                self.orientations,
-                self.velocities,
-                self.angular_velocities,
-            ],
-            device=self.example.device,
-        )
-        # DEME's pointer APIs are synchronous but do not consume Warp's stream,
-        # so finish the gather before handing its buffers to DEME.
-        wp.synchronize_device(self.example.device)
-        device_ordinal = self.example.device.ordinal
-        self.solver.SetOwnerPositionFromDevice(self.first_owner_id, self.positions.ptr, device_ordinal, tracker_count)
-        self.solver.SetOwnerOriQFromDevice(self.first_owner_id, self.orientations.ptr, device_ordinal, tracker_count)
-        self.solver.SetOwnerVelocityFromDevice(self.first_owner_id, self.velocities.ptr, device_ordinal, tracker_count)
-        self.solver.SetOwnerAngVelGlobalFromDevice(
-            self.first_owner_id, self.angular_velocities.ptr, device_ordinal, tracker_count
-        )
-        for _ in range(DEME_SUBSTEPS):
-            self.solver.DoStepDynamics()
+    solver = DEME_MODULE.DEMSolver([example.device.ordinal])
+    material = solver.LoadMaterial(DEME_CONTACT_MATERIAL)
+    exported_meshes = _export_deme_body_contact_meshes(
+        example.contact_mesh_proxies, OUTPUT_DIRECTORY / DEME_PROXY_DIRECTORY_NAME
+    )
+    initial_body_q = example.state_0.body_q.numpy()
+    tracked_owners = []
+    for robot_instance, body_index, obj_path in exported_meshes:
+        mesh_owner = solver.AddWavefrontMeshObject(str(obj_path), material, False)
+        mesh_owner.SetInitPos(initial_body_q[body_index, :3].tolist())
+        mesh_owner.SetInitQuat(initial_body_q[body_index, 3:7].tolist())
+        mesh_owner.SetFamily(DEME_ROBOT_FAMILIES[robot_instance])
+        mesh_owner.SetMass(1.0)
+        mesh_owner.SetMOI([1.0, 1.0, 1.0])
+        tracked_owners.append((body_index, solver.Track(mesh_owner)))
 
-        self.solver.GetOwnerContactWrenchToDevice(
-            self.forces.ptr,
-            self.torques.ptr,
-            tracker_count,
-            device_ordinal,
-            self.first_owner_id,
-            tracker_count,
-        )
-        self.body_forces.zero_()
-        wp.launch(
-            _scatter_deme_body_wrenches,
-            dim=len(self.trackers),
-            inputs=[self.body_indices, self.forces, self.torques, self.body_forces],
-            device=self.example.device,
-        )
+    if not tracked_owners:
+        mophi.fatal("DEME contact is enabled, but no robot body proxy owners were created.")
+    for family in DEME_ROBOT_FAMILIES:
+        # The coupling layer uploads Newton's state. DEME holds each supplied
+        # velocity constant while integrating the unprescribed pose.
+        solver.SetFamilyPrescribedLinVel(family)
+        solver.SetFamilyPrescribedAngVel(family)
+        solver.DisableContactBetweenFamilies(family, family)
+    solver.SetMeshUniversalContact(True)
+    solver.InstructBoxDomainDimension(DEME_DOMAIN_X, DEME_DOMAIN_Y, DEME_DOMAIN_Z)
+    solver.SetGravitationalAcceleration([0.0, 0.0, 0.0])
+    solver.SetInitTimeStep(DEME_DT)
+    solver.SetErrorOutAvgContacts(1000)
+    solver.Initialize()
+
+    owner_map = NewtonDEMEOwnerMap(
+        [body_index for body_index, _ in tracked_owners],
+        [tracker.GetOwnerID() for _, tracker in tracked_owners],
+    )
+    try:
+        coupler = NewtonDEMEContactCoupler()
+        coupler.initialize(example.model, solver, owner_map, example.device)
+    except (RuntimeError, ValueError) as exc:
+        mophi.fatal(str(exc))
+    print(
+        f"[DEME] Initialized {owner_map.owner_count} articulated body proxy meshes; "
+        "only cross-robot mesh contact is enabled."
+    )
+    return coupler
 
 
 def _add_robot_visual_mesh_proxies(builder: newton.ModelBuilder) -> list[int]:
@@ -791,7 +680,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.contact_proxy_world_starts = None
         self.contact_proxy_world_ends = None
         self.contact_proxy_colors = None
-        self.deme_contact_resolver = None
+        self.deme_contact_coupler = None
         if SHOW_CONTACT_PROXY_MESHES or ENABLE_DEME_ROBOT_CONTACT:
             self._initialize_contact_proxy_visualization()
         newton.eval_fk(self.model, self.state_0.joint_q, self.state_0.joint_qd, self.state_0)
@@ -945,16 +834,18 @@ class HumanoidContactExample(newton_robot_policy.Example):
     def initialize_deme_contact(self) -> None:
         """Create DEME after Newton's initial body transforms are available."""
         if ENABLE_DEME_ROBOT_CONTACT:
-            self.deme_contact_resolver = DemeRobotContactResolver(self)
+            self.deme_contact_coupler = _create_deme_robot_contact_coupler(self)
 
     def simulate(self):
         """Advance Newton after applying the current DEME proxy contact resultants."""
         need_state_copy = self.use_cuda_graph and self.sim_substeps % 2 == 1
         for substep in range(self.sim_substeps):
             self.state_0.clear_forces()
-            if self.deme_contact_resolver is not None:
-                self.deme_contact_resolver.resolve(self.state_0)
-                wp.copy(self.state_0.body_f, self.deme_contact_resolver.body_forces)
+            if self.deme_contact_coupler is not None:
+                self.deme_contact_coupler.set_deme_owner_state_from_newton(self.state_0)
+                self.deme_contact_coupler.step_deme(DEME_SUBSTEPS)
+                self.deme_contact_coupler.write_deme_contact_wrenches_to_newton()
+                wp.copy(self.state_0.body_f, self.deme_contact_coupler.newton_body_forces)
             self.viewer.apply_forces(self.state_0)
             self.solver.step(self.state_0, self.state_1, self.control, None, self.sim_dt)
             if need_state_copy and substep == self.sim_substeps - 1:
