@@ -20,6 +20,9 @@ from mophi.utils import load_package_provider
 
 # -- Timing -------------------------------------------------------------------
 RENDER_FPS = 50
+# Keep the number of DEME substeps per Newton step modest. DEME returns the
+# contact result only after all of those substeps, so a large ratio delays
+# Newton's reaction to the developing contact and can destabilize the coupling.
 NEWTON_DT = 1.0 / 200.0
 POLICY_DECIMATION = 4
 DEME_DT = 1.0 / 1000.0
@@ -92,6 +95,7 @@ SAVE_FINAL_STATE = True
 FRAME_DT = 1.0 / RENDER_FPS
 POLICY_DT = POLICY_DECIMATION * NEWTON_DT
 NUM_FRAMES = int(round(SIM_DURATION_SECONDS / FRAME_DT))
+DEME_SUBSTEPS_PER_NEWTON_STEP = int(round(NEWTON_DT / DEME_DT))
 
 
 def _configure_shared_demo() -> None:
@@ -108,7 +112,7 @@ def _configure_shared_demo() -> None:
     humanoid_demo.POLICY_DT = POLICY_DECIMATION * NEWTON_DT
     humanoid_demo.SIM_SUBSTEPS = int(round(humanoid_demo.FRAME_DT / humanoid_demo.POLICY_DT))
     humanoid_demo.DEME_DT = DEME_DT
-    humanoid_demo.DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
+    humanoid_demo.DEME_SUBSTEPS = DEME_SUBSTEPS_PER_NEWTON_STEP
     humanoid_demo.ROBOT_NAME = ROBOT_NAME
     humanoid_demo.ROBOT_INITIAL_POSES = ROBOT_INITIAL_POSES
     humanoid_demo.DEFAULT_WALK_COMMANDS = FIGHTER_COMMANDS

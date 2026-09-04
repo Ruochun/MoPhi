@@ -92,6 +92,18 @@ CPU orchestrates and waits, but physics payloads avoid host staging. Startup
 mesh loading, rendering, movie encoding, and output snapshots are outside this
 claim.
 
+The relative coupling cadence is important for stability. In this explicit
+exchange, Newton supplies one body state, DEME advances all configured
+substeps using the supplied velocities, and only then does Newton receive the
+resulting wrench. A large `NEWTON_DT / DEME_DT` ratio therefore delays Newton's
+reaction while DEME contact develops and can produce an excessive feedback
+wrench at first contact. A ratio of five was observed to converge both for the
+current timestep pair and when both timesteps were reduced by a factor of ten;
+a ratio of fifty diverged. This indicates that the ratio, rather than either
+absolute timestep alone, controls the observed instability. Keep
+`DEME_SUBSTEPS_PER_NEWTON_STEP` modest when tuning the demo and revalidate the
+contact response after changing either timestep.
+
 Set `ROBOT_CONTACT_MODEL = "deme"` for proxy-mesh contact and wrench
 feedback, or `ROBOT_CONTACT_MODEL = "newton"` to restore Newton's coarse
 robot-to-robot collision shapes. The latter is useful as a comparison and can
