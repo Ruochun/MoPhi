@@ -23,10 +23,10 @@ RENDER_FPS = 50
 # Keep the number of DEME substeps per Newton step modest. DEME returns the
 # contact result only after all of those substeps, so a large ratio delays
 # Newton's reaction to the developing contact and can destabilize the coupling.
-NEWTON_DT = 1.0 / 200.0
-POLICY_DECIMATION = 4
-DEME_DT = 1.0 / 1000.0
-SIM_DURATION_SECONDS = 5.0
+NEWTON_DT = 1.0 / 400.0
+POLICY_DECIMATION = 8
+DEME_DT = 1.0 / 2000.0
+SIM_DURATION_SECONDS = 6.0
 
 # -- Robot --------------------------------------------------------------------
 ROBOT_NAME = "g1_29dof"

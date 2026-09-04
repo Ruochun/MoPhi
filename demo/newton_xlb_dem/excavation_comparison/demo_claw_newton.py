@@ -120,8 +120,8 @@ WORLD_COUNT = 1  # number of UR10 arms in the simulation
 # Physics step sizes are explicit; rendering cadence is configured
 # independently; collaboration loop counts are derived from these.
 RENDER_FPS = 50
-NEWTON_DT = 1.0 / 500.0
-DEME_DT = 1.0e-5
+NEWTON_DT = 1.0e-3
+DEME_DT = 1.0e-4
 
 # Debug mode: render one frame then keep the viewer alive for visual
 # inspection until the user closes it.
@@ -391,8 +391,8 @@ deme_solver = DEME.DEMSolver()
 deme_solver.UseFrictionalHertzianModel()
 deme_solver.SetVerbosity("ERROR")
 
-mat_walls = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
-mat_particles = deme_solver.LoadMaterial({"E": 1e8, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+mat_walls = deme_solver.LoadMaterial({"E": 1e6, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
+mat_particles = deme_solver.LoadMaterial({"E": 1e6, "nu": 0.3, "CoR": 0.3, "mu": 0.5})
 # Mixed contact properties between wall and particle materials.
 deme_solver.SetMaterialPropertyPair("CoR", mat_walls, mat_particles, 0.3)
 deme_solver.SetMaterialPropertyPair("mu", mat_walls, mat_particles, 0.5)
