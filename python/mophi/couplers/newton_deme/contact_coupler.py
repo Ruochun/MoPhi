@@ -82,6 +82,38 @@ def _accumulate_deme_owner_wrenches(
         body_forces[body_index] += total
 
 
+@wp.kernel
+def _gather_newton_proxy_pose(
+    body_indices: wp.array(dtype=wp.int32),
+    local_offsets: wp.array(dtype=wp.vec3),
+    body_q: wp.array(dtype=wp.transform),
+    positions: wp.array(dtype=wp.vec3),
+    orientations: wp.array(dtype=wp.quat),
+):
+    index = wp.tid()
+    transform = body_q[body_indices[index]]
+    positions[index] = wp.transform_point(transform, local_offsets[index])
+    orientations[index] = wp.transform_get_rotation(transform)
+
+
+@wp.kernel
+def _contact_accelerations_to_newton_forces(
+    body_indices: wp.array(dtype=wp.int32),
+    orientations: wp.array(dtype=wp.quat),
+    masses: wp.array(dtype=wp.float32),
+    moments: wp.array(dtype=wp.vec3),
+    accelerations: wp.array(dtype=wp.vec3),
+    local_angular_accelerations: wp.array(dtype=wp.vec3),
+    scale: float,
+    body_forces: wp.array(dtype=wp.spatial_vector),
+):
+    index = wp.tid()
+    local_torque = wp.cw_mul(moments[index], local_angular_accelerations[index]) * scale
+    force = accelerations[index] * masses[index] * scale
+    torque = wp.quat_rotate(orientations[index], local_torque)
+    body_forces[body_indices[index]] = wp.spatial_vector(force, torque)
+
+
 class NewtonDEMEContactCoupler:
     """Exchange Newton body motion and DEME contact wrenches on one GPU.
 
@@ -296,4 +328,127 @@ class NewtonDEMEContactCoupler:
         self.newton_body_forces = None
         self.owner_map = None
         self.device = None
+        self.initialized = False
+
+
+class NewtonDEMEContactAccelerationCoupler:
+    """Preserve contact-acceleration semantics with GPU-only runtime exchange."""
+
+    _REQUIRED_METHODS = (
+        "SetOwnerPositionFromDevice",
+        "SetOwnerOriQFromDevice",
+        "GetOwnerAccToDevice",
+        "GetOwnerAngAccLocalToDevice",
+        "GetOwnerMassToDevice",
+        "GetOwnerMOIToDevice",
+    )
+
+    def __init__(self) -> None:
+        self.initialized = False
+
+    def __del__(self) -> None:
+        if self.initialized:
+            self.finalize()
+
+    def initialize(
+        self,
+        newton_model,
+        deme_solver,
+        owner_map: NewtonDEMEOwnerMap,
+        local_offsets: Sequence[Sequence[float]],
+        device,
+        force_scale: float = 1.0,
+    ) -> None:
+        """Bind initialized solvers and allocate acceleration-exchange buffers."""
+        if self.initialized:
+            raise RuntimeError("NewtonDEMEContactAccelerationCoupler is already initialized.")
+        if not device.is_cuda:
+            raise ValueError("Newton--DEME GPU contact exchange requires a CUDA Warp device.")
+        if len(set(owner_map.newton_body_indices)) != owner_map.owner_count:
+            raise ValueError("Acceleration feedback currently requires one DEME proxy per Newton body.")
+        if len(local_offsets) != owner_map.owner_count:
+            raise ValueError("One body-local offset is required per DEME owner.")
+        if max(owner_map.newton_body_indices) >= int(newton_model.body_count):
+            raise ValueError("Newton--DEME mapping contains an out-of-range body index.")
+        missing = [name for name in self._REQUIRED_METHODS if not hasattr(deme_solver, name)]
+        if missing:
+            raise RuntimeError(f"DEMSolver is missing GPU exchange methods {missing}.")
+        if device.ordinal not in tuple(int(value) for value in deme_solver.GetGPUDeviceIDs()):
+            raise ValueError("DEME and Newton must share the selected CUDA device.")
+
+        self.newton_model = newton_model
+        self.deme_solver = deme_solver
+        self.owner_map = owner_map
+        self.device = device
+        self.force_scale = float(force_scale)
+        count = owner_map.owner_count
+        self._body_indices = wp.array(owner_map.newton_body_indices, dtype=wp.int32, device=device)
+        self._local_offsets = wp.array(local_offsets, dtype=wp.vec3, device=device)
+        self._positions = wp.empty(count, dtype=wp.vec3, device=device)
+        self._orientations = wp.empty(count, dtype=wp.quat, device=device)
+        self._accelerations = wp.empty(count, dtype=wp.vec3, device=device)
+        self._local_angular_accelerations = wp.empty(count, dtype=wp.vec3, device=device)
+        self._masses = wp.empty(count, dtype=wp.float32, device=device)
+        self._moments = wp.empty(count, dtype=wp.vec3, device=device)
+        self.newton_body_forces = wp.zeros(int(newton_model.body_count), dtype=wp.spatial_vector, device=device)
+        args = (count, device.ordinal, owner_map.first_deme_owner_id, count)
+        deme_solver.GetOwnerMassToDevice(self._masses.ptr, *args)
+        deme_solver.GetOwnerMOIToDevice(self._moments.ptr, *args)
+        self.initialized = True
+
+    def _require_initialized(self) -> None:
+        if not self.initialized:
+            raise RuntimeError("NewtonDEMEContactAccelerationCoupler must be initialized before use.")
+
+    def set_deme_owner_pose_from_newton(self, newton_state) -> None:
+        """Update offset DEME proxy poses directly from Newton's device state."""
+        self._require_initialized()
+        wp.launch(
+            _gather_newton_proxy_pose,
+            dim=self.owner_map.owner_count,
+            inputs=[self._body_indices, self._local_offsets, newton_state.body_q, self._positions, self._orientations],
+            device=self.device,
+        )
+        wp.synchronize_device(self.device)
+        first_owner = self.owner_map.first_deme_owner_id
+        count = self.owner_map.owner_count
+        self.deme_solver.SetOwnerPositionFromDevice(first_owner, self._positions.ptr, self.device.ordinal, count)
+        self.deme_solver.SetOwnerOriQFromDevice(first_owner, self._orientations.ptr, self.device.ordinal, count)
+
+    def step_deme(self, substeps: int = 1) -> None:
+        """Advance DEME independently."""
+        self._require_initialized()
+        if substeps < 0:
+            raise ValueError(f"DEME substeps must be non-negative, got {substeps}.")
+        for _ in range(substeps):
+            self.deme_solver.DoStepDynamics()
+
+    def write_deme_contact_accelerations_to_newton(self):
+        """Convert DEME contact accelerations and write Newton body forces on-device."""
+        self._require_initialized()
+        count = self.owner_map.owner_count
+        args = (count, self.device.ordinal, self.owner_map.first_deme_owner_id, count)
+        self.deme_solver.GetOwnerAccToDevice(self._accelerations.ptr, *args)
+        self.deme_solver.GetOwnerAngAccLocalToDevice(self._local_angular_accelerations.ptr, *args)
+        self.newton_body_forces.zero_()
+        wp.launch(
+            _contact_accelerations_to_newton_forces,
+            dim=count,
+            inputs=[
+                self._body_indices,
+                self._orientations,
+                self._masses,
+                self._moments,
+                self._accelerations,
+                self._local_angular_accelerations,
+                self.force_scale,
+                self.newton_body_forces,
+            ],
+            device=self.device,
+        )
+        return self.newton_body_forces
+
+    def finalize(self) -> None:
+        """Release solver and device-array references."""
+        self.__dict__.clear()
         self.initialized = False

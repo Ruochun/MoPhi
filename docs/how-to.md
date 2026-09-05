@@ -277,7 +277,7 @@ pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 
 ```bash
 # Install the required Python packages first
-pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" deme3 \
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" "deme3>=3.0.11" \
     torch GitPython PyYAML pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
 
 # Configure and build the coupler
@@ -307,6 +307,16 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_fl
 # Run the robotic 3D-printing co-simulation (Newton arm + DEME spheres)
 PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
 ```
+
+The ANYmal three-way demo is the first demo migrated to MoPhi's centralized
+GPU exchange modules. During its simulation loop, Newton foot-proxy poses flow
+to DEME through device setters; DEME contact accelerations, mass, and inertia
+flow back into Newton body forces through device getters and Warp kernels;
+Newton's base transform updates the XLB obstacle masks on-device; and DEME
+particle positions are read directly into reusable Warp arrays. Host copies of
+the XLB velocity field and rendered frames remain visualization operations, not
+co-simulation data exchange. The demo preserves its historical acceleration-
+based DEME feedback rather than changing to wrench reduction during migration.
 
 ### Robotic 3D printing: Newton/DEME co-simulation
 

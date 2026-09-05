@@ -63,6 +63,12 @@ if find_spec("mophi") is None:
         "       the build directory (python/) is on PYTHONPATH."
     )
 import mophi
+from mophi.couplers.newton_deme import (
+    NewtonDEMEContactAccelerationCoupler,
+    NewtonDEMEOwnerMap,
+)
+from mophi.couplers.newton_xlb import NewtonBodyBoxBoundary
+from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
     mophi.fatal(
@@ -105,14 +111,6 @@ from mophi.utils.package_provider import load_package_provider
 DEME = load_package_provider("deme")
 
 print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===\n")
-
-
-def _rotate_vector_by_quat_xyzw(quat_xyzw: np.ndarray, vec: np.ndarray) -> np.ndarray:
-    """Rotate a 3D vector by a quaternion in [x, y, z, w] convention."""
-    q_xyz = quat_xyzw[:3]
-    q_w = quat_xyzw[3]
-    t = 2.0 * np.cross(q_xyz, vec)
-    return vec + q_w * t + np.cross(q_xyz, t)
 
 
 # ─── Joint-index remapping ─────────────────────────────────────────────────
@@ -321,11 +319,8 @@ _xlb_u_np = None  # velocity in (NX, NY, NZ, 3) layout; updated each vis interva
 # joint_q[:3] (Newton base body world-space position) — no full body-transform
 # query is required.
 #
-# Efficient mask update (no stepper rebuild):
-#   bc_mask and missing_mask are maintained as CPU numpy arrays.  When the
-#   grid-space box changes, the old cells are reset from the stored base masks,
-#   the new cells are stamped analytically, and the arrays are uploaded to the
-#   GPU as fresh Warp arrays.  The stepper is built ONCE and never changed.
+# The reusable NewtonBodyBoxBoundary reads Newton body_q and rewrites XLB's
+# device masks directly. The stepper is built once and never changed.
 #
 # missing_mask correctness (pull-streaming halfway bounce-back):
 #   missing_mask[l, x, y, z] = True iff node (x,y,z) is a solid robot cell AND
@@ -342,8 +337,6 @@ _XLB_ROBOT_BELOW_BASE = 0.62  # m below base centre (base is at ~0.62 m when sta
 _XLB_ROBOT_ABOVE_BASE = 0.28  # m above base centre (to top of torso)
 
 # Per-frame state (populated by the XLB setup block below).
-_xlb_robot_gc_min = None  # last robot box grid-space min corner (int array or None)
-_xlb_robot_gc_max = None  # last robot box grid-space max corner (int array or None)
 _xlb_robot_bc_id = None  # HalfwayBounceBackBC ID assigned to the robot obstacle
 _xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (q, 3) int32
 
@@ -466,12 +459,6 @@ try:
     # Upload the velocity stencil to device once as a Warp array so that
     # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
     _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
-
-    # Record the initial robot box position.  The GPU kernels do not need CPU
-    # base-mask copies: interior cells (guaranteed by _world_to_grid_idx) always
-    # have a fluid base value of 0 / False, so clearing = writing those defaults.
-    _xlb_robot_gc_min = _robot_init_gc_min
-    _xlb_robot_gc_max = _robot_init_gc_max
 
     _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
     _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
@@ -634,6 +621,21 @@ if _xlb_stepper is not None:
     coupler.set_xlb_masks(_xlb_bc_mask, _xlb_missing_mask)
     print("[Coupler] XLB bc_mask and missing_mask device handles bound.\n")
 
+    _newton_xlb_boundary = NewtonBodyBoxBoundary()
+    _newton_xlb_boundary.initialize(
+        _xlb_bc_mask,
+        _xlb_missing_mask,
+        _xlb_vel_c_wp,
+        body_index=0,
+        domain_min=_XLB_DOMAIN_MIN,
+        domain_max=_XLB_DOMAIN_MAX,
+        lower_extents=(_XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y, _XLB_ROBOT_BELOW_BASE),
+        upper_extents=(_XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y, _XLB_ROBOT_ABOVE_BASE),
+        boundary_id=_xlb_robot_bc_id,
+        initial_grid_min=_robot_init_gc_min,
+        initial_grid_max=_robot_init_gc_max,
+    )
+
 # ─── Load the ANYmal C walking policy ────────────────────────────────────
 print("[Policy] Loading ANYmal C walking policy ...")
 policy = torch.jit.load(policy_path, map_location=torch_device)
@@ -652,15 +654,25 @@ command[0, 0] = 1.0  # walk forward (x-direction)
 
 print("[Policy] ANYmal C walking policy loaded.\n")
 
-# ─── DEME → Newton force feedback setup ────────────────────────────────────
-_ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
-_deme_contact_force_np = np.zeros((len(shank_trackers), 3), dtype=np.float32)
-_deme_contact_torque_np = np.zeros((len(shank_trackers), 3), dtype=np.float32)
+# ─── GPU-only runtime exchange setup ───────────────────────────────────────
+_deme_owner_ids = [int(tracker.GetOwnerID()) for tracker in shank_trackers]
+_deme_contact_exchange = NewtonDEMEContactAccelerationCoupler()
+_deme_contact_exchange.initialize(
+    newton_model,
+    deme_solver,
+    NewtonDEMEOwnerMap(foot_tip_body_indices, _deme_owner_ids),
+    [descriptor["local_offset"] for descriptor in foot_tip_descriptors],
+    coupler.newton_state_0.body_q.device,
+    force_scale=DEME_FORCE_FEEDBACK_SCALE,
+)
+_xlb_deme_particles = XLBDEMEParticleExchange()
+_xlb_deme_particles.initialize(
+    deme_solver,
+    int(particles_tracker.GetOwnerID()),
+    _NUM_DEM_SPHERES,
+    coupler.newton_state_0.body_q.device,
+)
 if ENABLE_DEME_FORCE_FEEDBACK:
-    _shank_mass_np = np.asarray([float(tracker.Mass()) for tracker in shank_trackers], dtype=np.float32)
-    _shank_moi_local_np = np.asarray(
-        [np.asarray(tracker.MOI(), dtype=np.float32) for tracker in shank_trackers], dtype=np.float32
-    )
     print(f"[Coupling] DEME force feedback enabled (scale={DEME_FORCE_FEEDBACK_SCALE:.1f}).\n")
 else:
     print("[Coupling] DEME force feedback disabled.\n")
@@ -746,89 +758,29 @@ for frame in range(NUM_FRAMES):
         a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
         wp.copy(coupler.newton_control.joint_target_pos, a_wp)
 
-    # ── Extract foot-tip contact proxy poses ─────────────────────────────────
-    # Retrieve body transforms via get_newton_body_q_array() — this returns the device-
-    # resident Warp array directly, and .numpy() then copies only the body_q
-    # data needed for CPU-side helper logic.
-    # foot_tip_positions / foot_tip_rotations are needed by DEME for contact
-    # geometry and will drive XLB immersed-boundary coupling in future work.
-    body_q_arr = coupler.get_newton_body_q_array()
-    body_q_np = body_q_arr.numpy() if body_q_arr is not None else None
-    foot_tip_positions, foot_tip_rotations = demo_utils.compute_foot_tip_poses(body_q_np, foot_tip_descriptors)
-
-    # Feed the info to DEME
-    if foot_tip_positions:
-        for i in range(len(foot_tip_positions)):
-            shank_trackers[i].SetPos(foot_tip_positions[i])
-            shank_trackers[i].SetOriQ(foot_tip_rotations[i])
+    _deme_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
         if ENABLE_DEME_FORCE_FEEDBACK:
-            _ext_forces_np.fill(0.0)
-            for i, body_idx in enumerate(foot_tip_body_indices):
-                _ext_forces_np[body_idx, :3] += _deme_contact_force_np[i]
-                _ext_forces_np[body_idx, 3:6] += _deme_contact_torque_np[i]
-            coupler.set_newton_body_forces(wp.array(_ext_forces_np, dtype=wp.spatial_vector))
+            coupler.set_newton_body_forces(_deme_contact_exchange.newton_body_forces)
 
         coupler.step_newton()
-        coupler.step_deme()
+        _deme_contact_exchange.step_deme()
 
         if ENABLE_DEME_FORCE_FEEDBACK:
-            for i, tracker in enumerate(shank_trackers):
-                _contact_acc_world_np = np.asarray(tracker.ContactAcc(), dtype=np.float32)
-                _deme_contact_force_np[i, :] = DEME_FORCE_FEEDBACK_SCALE * _shank_mass_np[i] * _contact_acc_world_np
-
-                _contact_ang_acc_local_np = np.asarray(tracker.ContactAngAccLocal(), dtype=np.float32)
-                _contact_torque_local_np = _shank_moi_local_np[i] * _contact_ang_acc_local_np
-                _shank_ori_q_np = np.asarray(tracker.OriQ(), dtype=np.float32)
-                _deme_contact_torque_np[i, :] = DEME_FORCE_FEEDBACK_SCALE * _rotate_vector_by_quat_xyzw(
-                    _shank_ori_q_np, _contact_torque_local_np
-                )
+            _deme_contact_exchange.write_deme_contact_accelerations_to_newton()
 
     sim_time += FRAME_DT
 
     # ── XLB LBM steps with GPU-resident robot obstacle update ─────────────────
-    # The robot AABB is computed from the base-body position already fetched above
-    # for foot-tip extraction.  When the grid-space box changes, _xlb_update_robot_box_gpu()
-    # fires Warp kernels that write directly into the device-resident bc_mask and
-    # missing_mask arrays, with no CPU numpy copies and no GPU reallocation.
+    # The centralized boundary reads Newton body_q and updates XLB masks on-device.
     if _xlb_stepper is not None:
-        _robot_base_pos = body_q_np[0, :3] if body_q_np is not None else None
-        _xlb_new_gc_min, _xlb_new_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
-            _robot_base_pos,
-            _XLB_DOMAIN_MIN,
-            _XLB_DOMAIN_MAX,
-            (_XLB_NX, _XLB_NY, _XLB_NZ),
-            _XLB_ROBOT_HALF_EXT_X,
-            _XLB_ROBOT_HALF_EXT_Y,
-            _XLB_ROBOT_BELOW_BASE,
-            _XLB_ROBOT_ABOVE_BASE,
-        )
-        _bbox_same = (
-            _xlb_new_gc_min is not None
-            and _xlb_robot_gc_min is not None
-            and (
-                np.array_equal(_xlb_new_gc_min, _xlb_robot_gc_min)
-                and np.array_equal(_xlb_new_gc_max, _xlb_robot_gc_max)
-            )
-        )
-        if not _bbox_same:
-            _xlb_robot_gc_min, _xlb_robot_gc_max = demo_utils.xlb_update_robot_box_gpu(
-                _xlb_bc_mask,
-                _xlb_missing_mask,
-                _xlb_robot_gc_min,
-                _xlb_robot_gc_max,
-                _xlb_new_gc_min,
-                _xlb_new_gc_max,
-                _xlb_robot_bc_id,
-                _xlb_vel_c_wp,
-                _xlb_vel_set.q,
-            )
+        _newton_xlb_boundary.update_from_newton(coupler.newton_state_0.body_q)
 
         for _ in range(_XLB_STEPS_PER_FRAME):
             # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
-            # Method _xlb_update_robot_box_gpu may have changed _xlb_bc_mask and _xlb_missing_mask
+            # NewtonBodyBoxBoundary may have changed the two device masks.
             _xlb_f0, _xlb_f1 = _xlb_stepper(
                 _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
             )
@@ -844,21 +796,9 @@ for frame in range(NUM_FRAMES):
                 mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs)
             )
 
-    # ── Print foot-tip positions every frame ──────────────────────────────────
-    # if foot_tip_positions:
-    #     tip_str = "  ".join(
-    #         f"{d['label']}=({p[0]:+.3f},{p[1]:+.3f},{p[2]:+.3f})"
-    #         for d, p in zip(foot_tip_descriptors, foot_tip_positions)
-    #     )
-    #     print(f"[f{frame + 1:04d}] foot_tip_positions: {tip_str}")
-
     # ── Visualization ─────────────────────────────────────────────────────────
     if _vis_available:
-        # Get particles positions
-        particles_positions = particles_tracker.Positions()
-        # Advance sphere positions along -y (towards robot) each frame.
-        _dem_sphere_positions_np = np.array(particles_positions)
-        _dem_sphere_pos_wp = wp.array(_dem_sphere_positions_np.copy(), dtype=wp.vec3)
+        _dem_sphere_pos_wp, _ = _xlb_deme_particles.read_deme_particle_state()
 
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
@@ -913,6 +853,10 @@ if vis is not None:
     vis.close()
 
 print("[Coupler] Finalizing NewtonXLBDEMCoupler ...")
+_deme_contact_exchange.finalize()
+_xlb_deme_particles.finalize()
+if _xlb_stepper is not None:
+    _newton_xlb_boundary.finalize()
 coupler.finalize()
 print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 
@@ -921,9 +865,7 @@ print(f"  Newton version : {newton.__version__}")
 print(f"  Warp   version : {wp.__version__}")
 print(f"  XLB    version : {xlb.__version__}")
 print(
-    "\nSpatial representation summary:\n"
-    "  Each frame produced a list of body transforms "
-    f"({newton_model.body_count} bodies × 7 values each).\n"
-    "  Format: [px, py, pz, qx, qy, qz, qw]  (position [m] + quaternion).\n"
-    "  Future work: feed these transforms to DEM-Engine and XLB for full coupling."
+    "\nRuntime exchange summary:\n"
+    "  Newton body poses, XLB boundary masks, DEME contact feedback, and DEME particle state "
+    "were exchanged through shared-device arrays without host staging."
 )

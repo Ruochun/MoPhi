@@ -47,3 +47,5 @@ and test instructions documented in [`gcode.md`](gcode.md).
 
 The GPU-native Newton–DEME contact exchange is documented in
 [`newton-deme-coupling.md`](newton-deme-coupling.md).
+The additional pairwise device-transfer helpers are documented in
+[`pairwise-gpu-exchange.md`](pairwise-gpu-exchange.md).

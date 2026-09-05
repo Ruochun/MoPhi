@@ -50,6 +50,10 @@ Newton-backed demos use validated, self-repairing asset downloads described in
 The reusable GPU-native Newton–DEME contact-wrench exchange is described in
 [docs/newton-deme-coupling.md](docs/newton-deme-coupling.md).
 
+The reusable Newton–XLB, Newton–DEME particle, and XLB–DEME GPU exchange
+boundaries are described in
+[docs/pairwise-gpu-exchange.md](docs/pairwise-gpu-exchange.md).
+
 ### Linux Python 3.11–3.14 wheels (Newton + XLB + DEME, no FERIS)
 
 For the packaged distribution path, see

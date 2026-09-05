@@ -242,6 +242,77 @@ Key rules for agents:
 
 ---
 
+## Reusable co-simulation extraction rules
+
+MoPhi exists to turn proven co-simulation mechanisms into reusable couplers. After a mechanism is demonstrated in a
+scenario, move the reusable portion into `python/mophi/couplers/<coupling_type>/` (or the corresponding C++ coupler
+directory when a C++ ABI is required) instead of copying it into another demo.
+
+> **Concise ownership rule:** MoPhi owns cross-solver communication and the generic transformations required to make
+> exchanged data compatible. Demos own the physical model, scenario, scheduling choices, and presentation.
+
+### What belongs in MoPhi
+
+Extract and document code whose behavior is determined by solver interfaces and exchange semantics rather than by a
+particular scene:
+
+- Device/host transfer paths, zero-copy views, caller-owned exchange buffers, pointer handoff, and synchronization
+  seams.
+- Stable mappings between solver entities, including validation of IDs, spans, counts, ordering, devices, dtypes, and
+  capacities.
+- Generic gather, scatter, reduction, frame-conversion, and force/acceleration/wrench conversion kernels when their
+  physical meaning is explicit in the API (for example, global force plus local angular acceleration).
+- Per-solver exchange lifecycle and resource ownership: allocation in `initialize`, independent solver stepping where
+  appropriate, and cleanup in `finalize`.
+- Reusable geometry preparation required by a solver interface, such as combining triangle meshes, writing a solver's
+  accepted interchange format, and registering proxy owners with explicit mass and inertia.
+- Parameterized coupling representations that are not tied to one asset, such as a Newton-body AABB written into XLB
+  masks or DEME owner state exposed to an XLB Warp kernel.
+- Compatibility checks and actionable failures for minimum solver capabilities or versions.
+
+Keep distinct, scientifically meaningful exchange semantics as explicit reusable classes or modes. For example,
+DEME reduced-wrench feedback and DEME contact-acceleration feedback are not interchangeable implementations of one
+hidden method; callers must be able to see and deliberately select the semantic model.
+
+### What remains in each demo
+
+A demo owns the particular experiment and must keep these choices visible in its configuration and setup:
+
+- Assets, robot/environment construction, selected bodies or particles, proxy shapes, and the concrete entity mapping
+  supplied to a coupler.
+- Materials, contact laws, fluid/particle interaction laws, boundary conditions, family rules, gravity, and physical
+  coefficients.
+- Policy/controller selection, commands, trajectories, scripted events, and initial conditions.
+- Solver time steps, substep ratios, exchange ordering, feedback enablement, and intentional force-hold semantics.
+- Accuracy/performance choices such as AABB versus mesh boundaries and acceleration versus wrench feedback.
+- Visualization, camera, diagnostics, output paths, and scenario-specific assertions.
+
+### Decision test and migration rule
+
+Use this test when reviewing demo code:
+
+1. If changing the robot, mesh, domain dimensions, or experiment still leaves the operation valid after supplying new
+   data and parameters, it is a candidate for MoPhi.
+2. If changing the operation changes what physical problem is being solved, keep the choice and its parameters in the
+   demo; only extract the generic transport or explicitly named physical operator beneath it.
+3. If a block performs recurring array allocation, `.numpy()` staging, solver-ID bookkeeping, device validation, or
+   gather/scatter work inside a simulation loop, treat it as extraction debt. Centralize it before duplicating it in a
+   second demo.
+4. Initialization-only host work is acceptable when required by solver APIs (for example OBJ loading), but recurring
+   co-simulation payloads should remain device-resident whenever all participating solvers expose device APIs.
+5. Extraction must preserve the demo's prior physics semantics and update order unless the change explicitly announces
+   and validates a new model. Shorter code alone is not evidence of equivalent physics.
+
+Do not turn reusable helpers into a whole-sale multiphysics stepper. Couplers expose per-solver steps and transfer
+operations; the demo retains the visible schedule and decides when each operation runs. Do not introduce adapter
+objects that hide participating solver instances or replace their public APIs.
+
+Every new public reusable module must follow the documentation and test requirements above. When migrating a demo,
+remove the superseded local implementation and note any remaining host staging or unimplemented physical transfer in
+the relevant coupling documentation.
+
+---
+
 ## Demo writing rules
 
 Use these rules for all demo simulation loops.

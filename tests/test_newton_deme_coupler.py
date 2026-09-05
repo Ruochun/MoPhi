@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from mophi.couplers.newton_deme import (
+    NewtonDEMEContactAccelerationCoupler,
     NewtonDEMEContactCoupler,
     NewtonDEMEMeshOwnerSpec,
     NewtonDEMEOwnerMap,
@@ -58,6 +59,12 @@ class NewtonDEMEContactCouplerValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "must be initialized"):
             coupler.step_deme()
+
+    def test_acceleration_mode_methods_require_initialize(self):
+        coupler = NewtonDEMEContactAccelerationCoupler()
+
+        with self.assertRaisesRegex(RuntimeError, "must be initialized"):
+            coupler.write_deme_contact_accelerations_to_newton()
 
 
 class NewtonDEMEMeshOwnerTest(unittest.TestCase):

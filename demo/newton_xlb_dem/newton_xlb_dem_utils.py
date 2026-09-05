@@ -26,13 +26,14 @@ XLB LBM obstacle helpers
   xlb_world_to_grid_idx          -- map world position to interior LBM grid cell
   xlb_prescribed_robot_box_grid  -- compute robot AABB in grid space
   xlb_update_robot_box_gpu       -- update bc_mask / missing_mask via Warp kernels
-  (four private @wp.kernel functions used by xlb_update_robot_box_gpu)
+  (compatibility wrappers around mophi.couplers.newton_xlb)
 """
 
 import numpy as np
 import torch
 import warp as wp
 from newton import GeoType, ShapeFlags
+from mophi.couplers.newton_xlb import update_box_boundary_gpu, world_to_grid_index
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Policy helpers
@@ -314,84 +315,6 @@ def compute_foot_tip_poses(body_q_np, foot_tip_descriptors):
 # ─────────────────────────────────────────────────────────────────────────────
 # XLB LBM obstacle helpers
 # ─────────────────────────────────────────────────────────────────────────────
-# The robot is represented as a prescribed axis-aligned bounding box (AABB) in
-# the LBM grid.  bc_mask and missing_mask are updated in-place by GPU-resident
-# Warp kernels, eliminating the large per-frame host↔device traffic that a
-# numpy-based approach would require.
-#
-# bc_mask layout    : (1, NX, NY, NZ), dtype uint8 — BC-ID per cell; fluid uses the base ID
-# missing_mask layout: (Q, NX, NY, NZ), dtype bool — True when lattice direction
-#   l at cell (x,y,z) pulls from outside the solid box (halfway bounce-back flag)
-
-
-@wp.kernel
-def _kernel_clear_bc_mask_box(
-    bc_mask: wp.array4d(dtype=wp.uint8),
-    x0: int,
-    y0: int,
-    z0: int,
-):
-    """Set one rectangular box region (channel 0) of bc_mask to 0 (fluid)."""
-    xi, yi, zi = wp.tid()
-    bc_mask[0, x0 + xi, y0 + yi, z0 + zi] = wp.uint8(0)
-
-
-@wp.kernel
-def _kernel_stamp_bc_mask_box(
-    bc_mask: wp.array4d(dtype=wp.uint8),
-    x0: int,
-    y0: int,
-    z0: int,
-    robot_bc_id: int,
-):
-    """Stamp one rectangular box region (channel 0) of bc_mask with robot_bc_id."""
-    xi, yi, zi = wp.tid()
-    bc_mask[0, x0 + xi, y0 + yi, z0 + zi] = wp.uint8(robot_bc_id)
-
-
-@wp.kernel
-def _kernel_clear_missing_mask_channel(
-    missing_mask: wp.array4d(dtype=wp.bool),
-    l: int,
-    x0: int,
-    y0: int,
-    z0: int,
-):
-    """Set one (l, box) region of missing_mask to False."""
-    xi, yi, zi = wp.tid()
-    missing_mask[l, x0 + xi, y0 + yi, z0 + zi] = False
-
-
-@wp.kernel
-def _kernel_compute_missing_mask_channel(
-    missing_mask: wp.array4d(dtype=wp.bool),
-    vel_c: wp.array2d(dtype=wp.int32),
-    l: int,
-    x0: int,
-    y0: int,
-    z0: int,
-    x1: int,
-    y1: int,
-    z1: int,
-):
-    """Compute missing_mask for one lattice direction l and a solid box.
-
-    missing_mask[l, x, y, z] = True iff the pull-from source
-    (x - vel_c[l,0], y - vel_c[l,1], z - vel_c[l,2]) lies outside the
-    solid box.  Only surface solid cells end up with True entries; interior
-    cells where every pull source is still inside the box remain False.
-    """
-    xi, yi, zi = wp.tid()
-    x = x0 + xi
-    y = y0 + yi
-    z = z0 + zi
-    src_x = x - vel_c[l, 0]
-    src_y = y - vel_c[l, 1]
-    src_z = z - vel_c[l, 2]
-    outside = src_x < x0 or src_x > x1 or src_y < y0 or src_y > y1 or src_z < z0 or src_z > z1
-    missing_mask[l, x, y, z] = outside
-
-
 def xlb_world_to_grid_idx(world_pos, domain_min, domain_max, grid_dims):
     """Map a world-space 3-D point to the nearest interior LBM grid cell index.
 
@@ -404,11 +327,7 @@ def xlb_world_to_grid_idx(world_pos, domain_min, domain_max, grid_dims):
         domain_max : array-like length-3 — LBM domain max corner [m].
         grid_dims  : (NX, NY, NZ) tuple — LBM grid dimensions.
     """
-    nx, ny, nz = grid_dims
-    t = (np.asarray(world_pos, dtype=np.float64) - domain_min) / (domain_max - domain_min)
-    t = np.clip(t, 0.0, 1.0)
-    idx = (t * np.array([nx, ny, nz], dtype=np.float64)).astype(int)
-    return np.clip(idx, [1, 1, 1], [nx - 2, ny - 2, nz - 2])
+    return world_to_grid_index(world_pos, domain_min, domain_max, grid_dims)
 
 
 def xlb_prescribed_robot_box_grid(
@@ -485,47 +404,6 @@ def xlb_update_robot_box_gpu(
         (new_gc_min, new_gc_max) — the updated box corners (same as inputs).
         Callers should store these to pass as old_gc_min/max on the next call.
     """
-    device = bc_mask.device
-
-    # ── Clear previous robot cells on GPU ─────────────────────────────────────
-    if old_gc_min is not None:
-        ox0 = int(old_gc_min[0])
-        oy0 = int(old_gc_min[1])
-        oz0 = int(old_gc_min[2])
-        ox1 = int(old_gc_max[0])
-        oy1 = int(old_gc_max[1])
-        oz1 = int(old_gc_max[2])
-        onx, ony, onz = ox1 - ox0 + 1, oy1 - oy0 + 1, oz1 - oz0 + 1
-        wp.launch(_kernel_clear_bc_mask_box, dim=(onx, ony, onz), device=device, inputs=[bc_mask, ox0, oy0, oz0])
-        for l in range(q):
-            wp.launch(
-                _kernel_clear_missing_mask_channel,
-                dim=(onx, ony, onz),
-                device=device,
-                inputs=[missing_mask, l, ox0, oy0, oz0],
-            )
-
-    # ── Stamp new robot cells on GPU ──────────────────────────────────────────
-    if new_gc_min is not None:
-        x0 = int(new_gc_min[0])
-        y0 = int(new_gc_min[1])
-        z0 = int(new_gc_min[2])
-        x1 = int(new_gc_max[0])
-        y1 = int(new_gc_max[1])
-        z1 = int(new_gc_max[2])
-        nx, ny, nz = x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1
-        wp.launch(
-            _kernel_stamp_bc_mask_box,
-            dim=(nx, ny, nz),
-            device=device,
-            inputs=[bc_mask, x0, y0, z0, int(robot_bc_id)],
-        )
-        for l in range(q):
-            wp.launch(
-                _kernel_compute_missing_mask_channel,
-                dim=(nx, ny, nz),
-                device=device,
-                inputs=[missing_mask, vel_c_wp, l, x0, y0, z0, x1, y1, z1],
-            )
-
-    return new_gc_min, new_gc_max
+    return update_box_boundary_gpu(
+        bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max, robot_bc_id, vel_c_wp, q
+    )
