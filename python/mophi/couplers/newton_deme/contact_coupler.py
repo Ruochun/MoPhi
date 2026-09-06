@@ -86,6 +86,7 @@ def _accumulate_deme_owner_wrenches(
 def _gather_newton_proxy_pose(
     body_indices: wp.array(dtype=wp.int32),
     local_offsets: wp.array(dtype=wp.vec3),
+    local_orientations: wp.array(dtype=wp.quat),
     body_q: wp.array(dtype=wp.transform),
     positions: wp.array(dtype=wp.vec3),
     orientations: wp.array(dtype=wp.quat),
@@ -93,7 +94,7 @@ def _gather_newton_proxy_pose(
     index = wp.tid()
     transform = body_q[body_indices[index]]
     positions[index] = wp.transform_point(transform, local_offsets[index])
-    orientations[index] = wp.transform_get_rotation(transform)
+    orientations[index] = wp.transform_get_rotation(transform) * local_orientations[index]
 
 
 @wp.kernel
@@ -358,6 +359,7 @@ class NewtonDEMEContactAccelerationCoupler:
         local_offsets: Sequence[Sequence[float]],
         device,
         force_scale: float = 1.0,
+        local_orientations: Sequence[Sequence[float]] | None = None,
     ) -> None:
         """Bind initialized solvers and allocate acceleration-exchange buffers."""
         if self.initialized:
@@ -368,6 +370,10 @@ class NewtonDEMEContactAccelerationCoupler:
             raise ValueError("Acceleration feedback currently requires one DEME proxy per Newton body.")
         if len(local_offsets) != owner_map.owner_count:
             raise ValueError("One body-local offset is required per DEME owner.")
+        if local_orientations is None:
+            local_orientations = [(0.0, 0.0, 0.0, 1.0)] * owner_map.owner_count
+        if len(local_orientations) != owner_map.owner_count:
+            raise ValueError("One body-local orientation is required per DEME owner.")
         if max(owner_map.newton_body_indices) >= int(newton_model.body_count):
             raise ValueError("Newton--DEME mapping contains an out-of-range body index.")
         missing = [name for name in self._REQUIRED_METHODS if not hasattr(deme_solver, name)]
@@ -384,6 +390,7 @@ class NewtonDEMEContactAccelerationCoupler:
         count = owner_map.owner_count
         self._body_indices = wp.array(owner_map.newton_body_indices, dtype=wp.int32, device=device)
         self._local_offsets = wp.array(local_offsets, dtype=wp.vec3, device=device)
+        self._local_orientations = wp.array(local_orientations, dtype=wp.quat, device=device)
         self._positions = wp.empty(count, dtype=wp.vec3, device=device)
         self._orientations = wp.empty(count, dtype=wp.quat, device=device)
         self._accelerations = wp.empty(count, dtype=wp.vec3, device=device)
@@ -406,7 +413,14 @@ class NewtonDEMEContactAccelerationCoupler:
         wp.launch(
             _gather_newton_proxy_pose,
             dim=self.owner_map.owner_count,
-            inputs=[self._body_indices, self._local_offsets, newton_state.body_q, self._positions, self._orientations],
+            inputs=[
+                self._body_indices,
+                self._local_offsets,
+                self._local_orientations,
+                newton_state.body_q,
+                self._positions,
+                self._orientations,
+            ],
             device=self.device,
         )
         wp.synchronize_device(self.device)

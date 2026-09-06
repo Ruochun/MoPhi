@@ -17,6 +17,11 @@ import mujoco
 import newton
 from newton import JointTargetMode
 from newton.selection import ArticulationView
+from mophi.couplers.newton_deme import (
+    NewtonDEMEContactAccelerationCoupler,
+    NewtonDEMEParticleExchange,
+    NewtonDEMEOwnerMap,
+)
 from mophi.utils import load_package_provider
 
 DEME = load_package_provider("deme")
@@ -111,29 +116,6 @@ SIM_SUBSTEPS = int(round(FRAME_DT / NEWTON_DT))
 DEME_SUBSTEPS = int(round(NEWTON_DT / DEME_DT))
 NUM_FRAMES = int(round(PRINT_MOTION_SECONDS / FRAME_DT))
 WARMUP_STEPS = int(round(WARMUP_SECONDS / NEWTON_DT))
-
-
-@wp.kernel
-def _write_deme_proxy_load(
-    contact_acceleration: wp.array(dtype=wp.vec3),
-    angular_acceleration_global: wp.array(dtype=wp.vec3),
-    mass: wp.array(dtype=wp.float32),
-    moi_local: wp.array(dtype=wp.vec3),
-    orientation: wp.array(dtype=wp.quat),
-    body_index: int,
-    body_forces: wp.array(dtype=wp.spatial_vector),
-):
-    """Convert DEME proxy accelerations to a Newton world-space wrench on-device."""
-    force = mass[0] * contact_acceleration[0]
-    q = orientation[0]
-    alpha_local = wp.quat_rotate_inv(q, angular_acceleration_global[0])
-    torque_local = wp.cw_mul(moi_local[0], alpha_local)
-    torque_global = wp.quat_rotate(q, torque_local)
-    # TODO(wrench reference point): DEME reports this torque about its funnel
-    # owner frame, but Newton applies the wrench at the end-effector body. Add
-    # (p_funnel - p_end_effector) x force before enabling feedback for studies
-    # where the arm's rotational response must be physically accurate.
-    body_forces[body_index] = wp.spatial_vector(force, torque_global)
 
 
 def _smoothstep(value: float) -> float:
@@ -390,57 +372,26 @@ def _set_joint_target(target: np.ndarray, set_state: bool = False) -> None:
         arm_view.set_attribute("joint_q", coupler.newton_state_0, target_wp)
 
 
-def _sync_newton_funnel_pose_to_deme() -> None:
-    """Drive DEME's fixed funnel proxy from the corresponding Newton body."""
-    # TODO(deme3 device pose setters): deme3 3.0.1 provides device-pointer getters,
-    # but Tracker.SetPos/SetOriQ remain host-only. This is the sole host-staged
-    # physics exchange in this demo. Replace this block when APIs equivalent to
-    # the prospective calls below become available:
-    # funnel_tracker.SetPositionsFromDevice(newton_body_q.ptr, 1, device.ordinal)
-    # funnel_tracker.SetOrientationQuaternionsFromDevice(newton_body_q.ptr, 1, device.ordinal)
-    ee_transform = coupler.get_newton_body_q_array().numpy()[ee_link_body_idx]
-    ee_position = ee_transform[:3]
-    ee_q = ee_transform[3:7]
-    funnel_position = ee_position + _quat_rotate_xyzw(ee_q, funnel_local_position)
-    funnel_q = _quat_multiply_xyzw(ee_q, funnel_local_q)
-    funnel_tracker.SetPos(funnel_position.tolist())
-    funnel_tracker.SetOriQ(funnel_q.tolist())
-
-
-deme_contact_acceleration = wp.empty(1, dtype=wp.vec3, device=device)
-deme_angular_acceleration = wp.empty(1, dtype=wp.vec3, device=device)
-deme_funnel_mass = wp.empty(1, dtype=wp.float32, device=device)
-deme_funnel_moi = wp.empty(1, dtype=wp.vec3, device=device)
-deme_funnel_orientation = wp.empty(1, dtype=wp.quat, device=device)
-newton_external_body_forces = wp.zeros(newton_model.body_count, dtype=wp.spatial_vector, device=device)
-deme_particle_positions = wp.empty(deme_particle_count, dtype=wp.vec3, device=device)
+deme_contact_exchange = NewtonDEMEContactAccelerationCoupler()
+deme_contact_exchange.initialize(
+    newton_model,
+    deme_solver,
+    NewtonDEMEOwnerMap([ee_link_body_idx], [int(funnel_tracker.GetOwnerID())]),
+    [funnel_local_position],
+    device,
+    local_orientations=[funnel_local_q],
+)
+deme_particle_exchange = NewtonDEMEParticleExchange()
+deme_particle_exchange.initialize(
+    deme_solver,
+    int(particle_tracker.GetOwnerID()),
+    deme_particle_count,
+    device,
+)
 deme_particle_radii = wp.full(deme_particle_count, DEME_PARTICLE_VISUAL_RADIUS, dtype=wp.float32, device=device)
 deme_particle_colors = wp.full(deme_particle_count, DEME_PARTICLE_COLOR, dtype=wp.vec3, device=device)
 if ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK:
-    coupler.set_newton_body_forces(newton_external_body_forces)
-
-
-def _update_deme_funnel_load_on_device() -> None:
-    """Copy DEME contact response into Newton's registered wrench buffer."""
-    funnel_tracker.ContactAccelerationsToDevice(deme_contact_acceleration.ptr, 1, device.ordinal)
-    funnel_tracker.ContactAngularAccelerationsGlobalToDevice(deme_angular_acceleration.ptr, 1, device.ordinal)
-    funnel_tracker.MassesToDevice(deme_funnel_mass.ptr, 1, device.ordinal)
-    funnel_tracker.MOIsToDevice(deme_funnel_moi.ptr, 1, device.ordinal)
-    funnel_tracker.OrientationQuaternionsToDevice(deme_funnel_orientation.ptr, 1, device.ordinal)
-    wp.launch(
-        _write_deme_proxy_load,
-        dim=1,
-        inputs=[
-            deme_contact_acceleration,
-            deme_angular_acceleration,
-            deme_funnel_mass,
-            deme_funnel_moi,
-            deme_funnel_orientation,
-            ee_link_body_idx,
-            newton_external_body_forces,
-        ],
-        device=device,
-    )
+    coupler.set_newton_body_forces(deme_contact_exchange.newton_body_forces)
 
 
 movie_writer = None
@@ -454,7 +405,7 @@ settling_frames_completed = 0
 
 def _render_scene(frame_time: float) -> None:
     """Render the current coupled Newton/DEME state at the configured cadence."""
-    particle_tracker.PositionsToDevice(deme_particle_positions.ptr, deme_particle_count, device.ordinal)
+    deme_particle_positions, _ = deme_particle_exchange.read_deme_particle_state()
     vis.begin_frame(frame_time)
     vis.log_state(coupler.newton_state_0)
     vis.log_points(
@@ -470,14 +421,13 @@ def _render_scene(frame_time: float) -> None:
 
 try:
     _set_joint_target(PRINT_START_Q, set_state=True)
-    _sync_newton_funnel_pose_to_deme()
+    deme_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
     for warmup_step in range(WARMUP_STEPS):
         coupler.step_newton()
-        _sync_newton_funnel_pose_to_deme()
-        for _ in range(DEME_SUBSTEPS):
-            coupler.step_deme()
+        deme_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
+        deme_contact_exchange.step_deme(DEME_SUBSTEPS)
         if ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK:
-            _update_deme_funnel_load_on_device()
+            deme_contact_exchange.write_deme_contact_accelerations_to_newton()
         sim_time += NEWTON_DT
 
         settling_frame_due = (warmup_step + 1) % SIM_SUBSTEPS == 0 or warmup_step + 1 == WARMUP_STEPS
@@ -495,11 +445,10 @@ try:
         _set_joint_target(_motion_target(motion_time))
         for _ in range(SIM_SUBSTEPS):
             coupler.step_newton()
-            _sync_newton_funnel_pose_to_deme()
-            for _ in range(DEME_SUBSTEPS):
-                coupler.step_deme()
+            deme_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
+            deme_contact_exchange.step_deme(DEME_SUBSTEPS)
             if ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK:
-                _update_deme_funnel_load_on_device()
+                deme_contact_exchange.write_deme_contact_accelerations_to_newton()
         sim_time += FRAME_DT
         motion_time += FRAME_DT
         _render_scene(sim_time)
@@ -508,6 +457,8 @@ finally:
     if movie_writer is not None:
         movie_writer.close()
     vis.close()
+    deme_contact_exchange.finalize()
+    deme_particle_exchange.finalize()
     coupler.finalize()
 
 METADATA_OUTPUT_PATH.write_text(
@@ -532,7 +483,7 @@ METADATA_OUTPUT_PATH.write_text(
             "newton_to_deme_pose_coupling_enabled": True,
             "deme_to_newton_force_feedback_enabled": ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK,
             "device_force_exchange": ENABLE_DEME_TO_NEWTON_FORCE_FEEDBACK,
-            "device_pose_exchange": False,
+            "device_pose_exchange": True,
         },
         indent=2,
     )
