@@ -21,6 +21,9 @@ class NewtonDEMEParticleExchange:
         self.device = None
         self.positions = None
         self.velocities = None
+        self.orientations = None
+        self.masses = None
+        self.linear_accelerations = None
         self.initialized = False
 
     def initialize(self, deme_solver, first_owner_id: int, owner_count: int, device):
@@ -34,6 +37,7 @@ class NewtonDEMEParticleExchange:
         for method in (
             "GetOwnerPositionToDevice",
             "GetOwnerVelocityToDevice",
+            "GetOwnerOriQToDevice",
             "GetOwnerMassToDevice",
             "AddOwnerNextStepAccFromDevice",
             "AddOwnerNextStepAngAccFromDevice",
@@ -48,6 +52,7 @@ class NewtonDEMEParticleExchange:
         self.device = device
         self.positions = wp.empty(owner_count, dtype=wp.vec3, device=device)
         self.velocities = wp.empty(owner_count, dtype=wp.vec3, device=device)
+        self.orientations = wp.empty(owner_count, dtype=wp.quat, device=device)
         self.masses = wp.empty(owner_count, dtype=wp.float32, device=device)
         self.linear_accelerations = wp.empty(owner_count, dtype=wp.vec3, device=device)
         deme_solver.GetOwnerMassToDevice(self.masses.ptr, owner_count, device.ordinal, self.first_owner_id, owner_count)
@@ -61,6 +66,15 @@ class NewtonDEMEParticleExchange:
         self.deme_solver.GetOwnerPositionToDevice(self.positions.ptr, *args)
         self.deme_solver.GetOwnerVelocityToDevice(self.velocities.ptr, *args)
         return self.positions, self.velocities
+
+    def read_deme_particle_poses(self):
+        """Synchronously refresh and return device-resident positions and orientations."""
+        if not self.initialized:
+            raise RuntimeError("NewtonDEMEParticleExchange must be initialized before use.")
+        args = (self.owner_count, self.device.ordinal, self.first_owner_id, self.owner_count)
+        self.deme_solver.GetOwnerPositionToDevice(self.positions.ptr, *args)
+        self.deme_solver.GetOwnerOriQToDevice(self.orientations.ptr, *args)
+        return self.positions, self.orientations
 
     def queue_deme_next_step_accelerations(self, linear_accelerations, local_angular_accelerations=None):
         """Queue caller-computed device accelerations for exactly one DEME step."""

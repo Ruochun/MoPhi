@@ -318,6 +318,15 @@ the XLB velocity field and rendered frames remain visualization operations, not
 co-simulation data exchange. The demo preserves its historical acceleration-
 based DEME feedback rather than changing to wrench reduction during migration.
 
+The excavation comparison demo also uses these reusable Newton–DEME exchanges.
+The plow's full local transform is applied to Newton's device state and written
+to its DEME mesh owner without recurring host staging. DEME contact acceleration
+and local angular acceleration are converted with owner mass and inertia into
+Newton's device force array, preserving the demo's acceleration-feedback model
+and one-step-lag update order. Terrain owner positions and orientations are read
+directly into reusable Warp arrays for visualization; movie encoding may still
+copy rendered frames to the host, but it is outside the physics exchange path.
+
 ### Robotic 3D printing: Newton/DEME co-simulation
 
 `demo_robotic_3d_printing.py` is a Newton + DEME additive-manufacturing demo

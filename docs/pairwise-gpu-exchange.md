@@ -31,13 +31,14 @@ geometry, or calculate Newton force feedback by itself.
 ## Newton--DEME particle state
 
 `NewtonDEMEParticleExchange` reads a consecutive span of DEME clump-owner
-positions and velocities directly into reusable Warp arrays on Newton's CUDA
-device:
+positions, velocities, and orientations directly into reusable Warp arrays on
+Newton's CUDA device:
 
 ```python
 exchange = NewtonDEMEParticleExchange()
 exchange.initialize(deme, first_owner_id, owner_count, device)
 positions, velocities = exchange.read_deme_particle_state()
+positions, orientations = exchange.read_deme_particle_poses()
 ```
 
 The caller chooses the owner span and consumes the arrays in Newton-side Warp

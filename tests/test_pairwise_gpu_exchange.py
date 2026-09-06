@@ -48,6 +48,9 @@ class _Solver:
     def GetOwnerVelocityToDevice(self, *args):
         self.calls.append(("velocity", args))
 
+    def GetOwnerOriQToDevice(self, *args):
+        self.calls.append(("orientation", args))
+
     def GetOwnerMassToDevice(self, *args):
         self.calls.append(("mass", args))
 
@@ -61,24 +64,28 @@ class _Solver:
 class ParticleExchangeTest(unittest.TestCase):
     def _exercise(self, exchange_type, module):
         solver = _Solver()
-        with patch(f"{module}.wp.empty", side_effect=[_Array(101), _Array(202), _Array(303), _Array(404)]):
+        pointers = [101, 202, 303, 404, 505] if exchange_type is NewtonDEMEParticleExchange else [101, 202, 303, 404]
+        with patch(f"{module}.wp.empty", side_effect=[_Array(pointer) for pointer in pointers]):
             exchange = exchange_type()
             exchange.initialize(solver, 7, 3, _Device())
         self.assertEqual(exchange.read_deme_particle_state(), (exchange.positions, exchange.velocities))
         self.assertEqual(
             solver.calls,
             [
-                ("mass", (303, 3, 2, 7, 3)),
+                ("mass", ((404 if exchange_type is NewtonDEMEParticleExchange else 303), 3, 2, 7, 3)),
                 ("position", (101, 3, 2, 7, 3)),
                 ("velocity", (202, 3, 2, 7, 3)),
             ],
         )
-        accelerations = _Array(505)
+        if exchange_type is NewtonDEMEParticleExchange:
+            self.assertEqual(exchange.read_deme_particle_poses(), (exchange.positions, exchange.orientations))
+            self.assertEqual(solver.calls[-2:], [("position", (101, 3, 2, 7, 3)), ("orientation", (303, 3, 2, 7, 3))])
+        accelerations = _Array(606)
         accelerations.dtype = wp.vec3
         accelerations.device = exchange.device
         with patch(f"{module}.wp.synchronize_device"):
             exchange.queue_deme_next_step_accelerations(accelerations)
-        self.assertEqual(solver.calls[-1], ("linear_acceleration", (7, 505, 2, 3)))
+        self.assertEqual(solver.calls[-1], ("linear_acceleration", (7, 606, 2, 3)))
 
     def test_newton_deme_device_calls(self):
         self._exercise(NewtonDEMEParticleExchange, "mophi.couplers.newton_deme.particles")

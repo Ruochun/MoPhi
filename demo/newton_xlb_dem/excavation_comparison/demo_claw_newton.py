@@ -68,6 +68,11 @@ import numpy as np
 # Required: build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON and ensure
 # python/ is on PYTHONPATH (the build tree puts the .so next to the package).
 import mophi
+from mophi.couplers.newton_deme import (
+    NewtonDEMEContactAccelerationCoupler,
+    NewtonDEMEParticleExchange,
+    NewtonDEMEOwnerMap,
+)
 from mophi.utils.package_provider import load_package_provider
 
 DEME = load_package_provider("deme")
@@ -87,24 +92,6 @@ mophi.check_newton_warp_mujoco_versions(
     mophi.REQUIRED_WARP_VERSION,
     mophi.REQUIRED_MUJOCO_VERSION,
 )
-
-
-def _sync_deme_plow_pose_from_newton(plow_tracker, body_q_np: np.ndarray, ee_link_body_idx: int) -> list[float]:
-    """Sync DEME plow tracker pose from Newton ee_link transform and return ee position."""
-    _ee_pos = body_q_np[ee_link_body_idx, 0:3].tolist()
-    _ee_quat_np = body_q_np[ee_link_body_idx, 3:7]
-    _plow_world_quat = mophi.quat_mul(_ee_quat_np, _PLOW_LOCAL_ROT_NP).tolist()
-    plow_tracker.SetPos(_ee_pos)
-    plow_tracker.SetOriQ(_plow_world_quat)
-    return _ee_pos
-
-
-def _rotate_vector_by_quat_xyzw(quat_xyzw: np.ndarray, vec: np.ndarray) -> np.ndarray:
-    """Rotate a 3D vector by a quaternion in [x, y, z, w] convention."""
-    q_xyz = quat_xyzw[:3]
-    q_w = quat_xyzw[3]
-    t = 2.0 * np.cross(q_xyz, vec)
-    return vec + q_w * t + np.cross(q_xyz, t)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -456,8 +443,8 @@ deme_solver.DisableAdaptiveBinSize()
 #   _DEME_PLOW_SLEEP_FAMILY — fixed, no contact with terrain family 0.
 #   _DEME_PLOW_ACTIVE_FAMILY — fixed, contact with terrain enabled (default).
 # The mesh switches from sleep to active via ChangeFamily() after settling.
-# Even though both families are "fixed", the tracker allows externally
-# updating the mesh pose each step (see pyDEME_ConePenetration.py pattern).
+# Both families are fixed so the owner pose is controlled by Newton through
+# MoPhi's device exchange instead of DEME dynamics.
 print(f"[DEME] Loading plow mesh from {EXCAVATOR_OBJ_PATH} ...")
 _plow_deme_obj = deme_solver.AddWavefrontMeshObject(EXCAVATOR_OBJ_PATH, mat_walls)
 # Scale from centimetres to metres, matching Newton's plow mesh.
@@ -468,8 +455,8 @@ _plow_deme_obj.SetInitPos([_DEM_BOX_POS_OFF_X, _DEM_BOX_POS_OFF_Y, 2.0])
 # Identity quaternion — will be corrected from Newton state after settling.
 _plow_deme_obj.SetInitQuat([0.0, 0.0, 0.0, 1.0])
 _plow_deme_obj.SetFamily(_DEME_PLOW_SLEEP_FAMILY)
-# Both families are fixed so gravity cannot move the mesh;
-# pose is driven externally via tracker.SetPos / SetOriQ each step.
+# Both families are fixed so gravity cannot move the mesh; its pose is supplied
+# through DEME's device owner-pose setter each Newton substep.
 deme_solver.SetFamilyFixed(_DEME_PLOW_SLEEP_FAMILY)
 deme_solver.SetFamilyFixed(_DEME_PLOW_ACTIVE_FAMILY)
 # Disable contact between terrain (family 0) and sleep family
@@ -487,8 +474,8 @@ deme_solver.Initialize()
 print(f"[DEME] Granular terrain initialized " f"({_dem_num_terrain_particles} ellipsoidal particle(s)).\n")
 
 # ─── Initialize the coupler ────────────────────────────────────────────────
-# XLB is passed as None; DEME terrain solver is connected when available
-# (no Newton–DEME force coupling yet — particles run independently).
+# XLB is passed as None. The main coupler owns Newton and retains its external
+# force array; the focused exchanges below handle DEME pose and contact data.
 coupler = mophi.NewtonXLBDEMCoupler()
 coupler.set_verbosity(mophi.VERBOSITY_INFO)
 
@@ -501,6 +488,25 @@ coupler.initialize(
     sim_dt=SIM_DT,
 )
 print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
+
+_plow_contact_exchange = NewtonDEMEContactAccelerationCoupler()
+_plow_contact_exchange.initialize(
+    newton_model,
+    deme_solver,
+    NewtonDEMEOwnerMap([ee_link_body_idx], [int(_plow_deme_tracker.GetOwnerID())]),
+    [(0.0, 0.0, 0.0)],
+    device,
+    local_orientations=[_PLOW_LOCAL_ROT_NP],
+)
+_terrain_particle_exchange = NewtonDEMEParticleExchange()
+_terrain_particle_exchange.initialize(
+    deme_solver,
+    int(_dem_terrain_tracker.GetOwnerID()),
+    _dem_num_terrain_particles,
+    device,
+)
+if ENABLE_DEME_FORCE_FEEDBACK:
+    coupler.set_newton_body_forces(_plow_contact_exchange.newton_body_forces)
 
 # ─── Fixed joint target setup (after coupler.initialize()) ───────────────
 # ArticulationView provides structured access to the UR10 articulation's DOFs.
@@ -570,7 +576,7 @@ print(f"[Viewer] {_dem_num_terrain_particles} DEME terrain particle(s) registere
 # before introducing plow contact.  The plow mesh is present in DEME but
 # contact with terrain particles is disabled (sleep family).
 # DoDynamicsThenSync() is a blocking call that advances DEME internally and
-# returns with a synchronized state — safe to call tracker.SetPos() after it.
+# returns with synchronized particle state for the following device read.
 if not USE_OMNIVERSE_VISUALIZATION:
     vis.set_camera(
         pos=wp.vec3(3.0, -3.0, 2.5),
@@ -593,10 +599,7 @@ if RENDER_SETTLING_PHASE and not USE_OMNIVERSE_VISUALIZATION:
 
         vis.begin_frame(_settling_time)
         vis.log_state(coupler.newton_state_0)
-        _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-        _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
-        _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-        _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+        _dem_terrain_pos_wp, _dem_terrain_orient_wp = _terrain_particle_exchange.read_deme_particle_poses()
         vis.log_clumps(
             "dem_terrain",
             _dem_terrain_pos_wp,
@@ -613,17 +616,14 @@ print("[DEME] Settling complete.\n")
 # After settling, teleport the DEME plow to match the Newton arm's current
 # end-effector pose, then activate contact.
 #
-# Newton body_q layout (per Warp transform): [px, py, pz, qx, qy, qz, qw].
-# The plow is attached to the ee_link body with local rotation _PLOW_LOCAL_ROT_NP,
-# so the DEME mesh world orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP.
-_body_q_np = coupler.newton_state_0.body_q.numpy()
-_ee_pos = _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
+# The exchange applies the configured plow-local transform to Newton's
+# end-effector transform before writing the DEME owner pose.
+_plow_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
 # Switch from sleep family to active family; contact with terrain is
 # enabled for _DEME_PLOW_ACTIVE_FAMILY by default (never disabled against
 # _DEME_TERRAIN_FAMILY).
 deme_solver.ChangeFamily(_DEME_PLOW_SLEEP_FAMILY, _DEME_PLOW_ACTIVE_FAMILY)
-_ee_pos_str = ", ".join(f"{v:.3f}" for v in _ee_pos)
-print(f"[DEME] Plow contact activated.  Plow placed at ({_ee_pos_str}).\n")
+print("[DEME] Plow contact activated at the Newton end-effector pose.\n")
 
 # ─── Movie recording setup ────────────────────────────────────────────────
 # SAVE_MOVIE, MOVIE_OUTPUT_PATH, and MOVIE_FPS are set in the configuration block.
@@ -674,25 +674,6 @@ _sim_duration = max(NUM_FRAMES * FRAME_DT, _MIN_DURATION_EPSILON)
 _scoop_start_time = max(WRIST_SCOOP_START_FRACTION * _sim_duration, PLOW_DURATION)
 _scoop_phase_dt = max(_sim_duration - _scoop_start_time, _MIN_DURATION_EPSILON)
 
-# ─── DEME → Newton force feedback setup ───────────────────────────────────────
-# A reusable (body_count, 6) float32 scratch buffer for building the external-force
-# wp.array passed to the coupler each substep.  Only the ee_link entry is written;
-# all other entries stay zero.  The DEME force from the previous substep is kept in
-# _deme_contact_force_np and re-used as the injection for the current substep (one
-# substep lag — acceptable for this co-simulation cadence).
-_ext_forces_np = np.zeros((newton_model.body_count, 6), dtype=np.float32)
-_deme_contact_force_np = np.zeros(3, dtype=np.float32)  # net world-space [Fx, Fy, Fz]
-_deme_contact_torque_np = np.zeros(3, dtype=np.float32)  # net world-space [Tx, Ty, Tz]
-# These arrays are only consumed inside ENABLE_DEME_FORCE_FEEDBACK branches.
-# Keeping them always initialized avoids conditional local-name coupling.
-# Force feedback uses a one-Newton-substep lag when enabled: the DEME contact
-# force queried at the end of substep N is injected into Newton at substep N+1.
-# At NEWTON_DT = 2 ms this lag is at most one substep (2 ms), well within the
-# coupling bandwidth of the position-controlled arm at RENDER_FPS = 50 Hz.
-if ENABLE_DEME_FORCE_FEEDBACK:
-    _plow_mass = float(_plow_deme_tracker.Mass())
-    _plow_moi_local_np = np.asarray(_plow_deme_tracker.MOI(), dtype=np.float32)
-
 for frame in range(NUM_FRAMES):
     # Stop early if the OpenGL viewer window has been closed by the user.
     # For OmniverseVisualizer, vis.is_running() always returns True.
@@ -727,11 +708,6 @@ for frame in range(NUM_FRAMES):
         # If force feedback is enabled, inject the DEME contact force (from the
         # previous DEME micro-step cycle) into Newton before this substep so the
         # integrator sees the granular resistance alongside joint-actuator torques.
-        if ENABLE_DEME_FORCE_FEEDBACK:
-            _ext_forces_np[ee_link_body_idx, :3] = _deme_contact_force_np
-            _ext_forces_np[ee_link_body_idx, 3:6] = _deme_contact_torque_np
-            coupler.set_newton_body_forces(wp.array(_ext_forces_np, dtype=wp.spatial_vector))
-
         # Advance Newton one substep with the current joint targets.
         coupler.step_newton()
 
@@ -739,26 +715,18 @@ for frame in range(NUM_FRAMES):
         # The plow mesh is kinematic (SetFamilyFixed), so DEME will not move it
         # on its own; we must update it explicitly every Newton substep.
         # World orientation = ee_link_world_quat * _PLOW_LOCAL_ROT_NP (180° about X).
-        _body_q_np = coupler.newton_state_0.body_q.numpy()
-        _sync_deme_plow_pose_from_newton(_plow_deme_tracker, _body_q_np, ee_link_body_idx)
+        _plow_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
 
         # ── DEME micro-step loop (runs at explicit DEME_DT) ──
-        for _ in range(DEME_SUBSTEPS):
-            coupler.step_deme()
+        _plow_contact_exchange.step_deme(DEME_SUBSTEPS)
 
-        # Query contact-induced acceleration on the tracked plow owner after DEME
-        # micro-steps complete, then convert to equivalent net wrench:
+        # Read contact-induced acceleration after the DEME micro-steps, then let
+        # the centralized exchange convert it to the equivalent net wrench:
         #   force_world = mass * ContactAcc()
         #   torque_local_principal = MOI_principal * ContactAngAccLocal()
         #   torque_world = rotate(local_principal_torque, OriQ()).
         if ENABLE_DEME_FORCE_FEEDBACK:
-            _contact_acc_world_np = np.asarray(_plow_deme_tracker.ContactAcc(), dtype=np.float32)
-            _deme_contact_force_np[:] = _plow_mass * _contact_acc_world_np
-
-            _contact_ang_acc_local_np = np.asarray(_plow_deme_tracker.ContactAngAccLocal(), dtype=np.float32)
-            _contact_torque_local_np = _plow_moi_local_np * _contact_ang_acc_local_np
-            _plow_ori_q_np = np.asarray(_plow_deme_tracker.OriQ(), dtype=np.float32)
-            _deme_contact_torque_np[:] = _rotate_vector_by_quat_xyzw(_plow_ori_q_np, _contact_torque_local_np)
+            _plow_contact_exchange.write_deme_contact_accelerations_to_newton()
 
     sim_time += FRAME_DT
 
@@ -768,11 +736,8 @@ for frame in range(NUM_FRAMES):
 
     # Render live DEME terrain particles as clumps (overlapping-sphere assemblies).
     # Each particle's template geometry matches the ellipsoid_2_1_1.csv clump
-    # fed to the DEME solver; live positions and orientations come from the tracker.
-    _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-    _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
-    _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-    _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+    # fed to DEME; live positions and orientations are read into device arrays.
+    _dem_terrain_pos_wp, _dem_terrain_orient_wp = _terrain_particle_exchange.read_deme_particle_poses()
     vis.log_clumps(
         "dem_terrain",
         _dem_terrain_pos_wp,
@@ -800,10 +765,7 @@ if PAUSE_AFTER_FIRST_FRAME and not USE_OMNIVERSE_VISUALIZATION and vis.is_runnin
         vis.begin_frame(sim_time)
         vis.log_state(coupler.newton_state_0)
 
-        _terrain_pos_np = np.array(_dem_terrain_tracker.Positions(), dtype=np.float32)
-        _terrain_quat_np = np.array(_dem_terrain_tracker.OrientationQuaternions(), dtype=np.float32)
-        _dem_terrain_pos_wp = wp.array(_terrain_pos_np, dtype=wp.vec3)
-        _dem_terrain_orient_wp = wp.array(_terrain_quat_np, dtype=wp.vec4)
+        _dem_terrain_pos_wp, _dem_terrain_orient_wp = _terrain_particle_exchange.read_deme_particle_poses()
         vis.log_clumps(
             "dem_terrain",
             _dem_terrain_pos_wp,
@@ -824,6 +786,8 @@ if _movie_writer is not None:
 vis.close()
 
 print("[Coupler] Finalizing NewtonXLBDEMCoupler ...")
+_plow_contact_exchange.finalize()
+_terrain_particle_exchange.finalize()
 coupler.finalize()
 print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 
