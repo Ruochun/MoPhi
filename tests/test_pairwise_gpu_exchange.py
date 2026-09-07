@@ -5,7 +5,7 @@ import numpy as np
 import warp as wp
 
 from mophi.couplers.newton_deme import NewtonDEMEParticleExchange
-from mophi.couplers.newton_xlb import prescribed_box_grid, world_to_grid_index
+from mophi.couplers.newton_xlb import NewtonXLBHalfwayBounceBackWrench, prescribed_box_grid, world_to_grid_index
 from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
 
@@ -18,6 +18,14 @@ class NewtonXLBGridTest(unittest.TestCase):
 
     def test_box_outside_domain_is_absent(self):
         self.assertEqual(prescribed_box_grid([2, 2, 2], [3, 3, 3], [0, 0, 0], [1, 1, 1], [8, 8, 8]), (None, None))
+
+    def test_halfway_wrench_rejects_host_device(self):
+        class HostDevice:
+            is_cuda = False
+
+        reducer = NewtonXLBHalfwayBounceBackWrench()
+        with self.assertRaisesRegex(ValueError, "requires a CUDA"):
+            reducer.initialize(0, 1, [0, 0, 0], 0.1, 1.0, 0.01, object(), [0], HostDevice())
 
 
 class _Device:

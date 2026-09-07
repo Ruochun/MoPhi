@@ -24,9 +24,31 @@ torque arrays produced by an XLB coupling kernel into a Newton
 `body_f`-compatible device array. Computing those hydrodynamic wrenches remains
 the responsibility of the chosen fluid coupling model.
 
+`NewtonXLBHalfwayBounceBackWrench` provides an explicitly ad-hoc demonstration
+path for stationary halfway-bounce-back masks. It sums reflected lattice-link
+momentum and its moment about a Newton body center on the GPU, applies the
+configured lattice-to-SI scale, and supplies the arrays consumed by
+`NewtonXLBWrenchExchange`. It ignores moving-wall velocity and is not a
+scientifically valid moving-boundary force model; use it only to demonstrate
+the two-way data path until XLB provides a validated moving-wall reaction.
+
+For a runnable two-way proof of concept, `NewtonXLBWrenchExchange` also exposes
+`write_numerically_limited_xlb_wrenches_to_newton(...)`. It applies a gain and
+independent force/torque magnitude caps entirely on the GPU before scattering
+the wrench. This operation is a nonphysical numerical stabilization trick for
+containing moving-mask impulses; it does not improve the boundary model or
+make the resulting wrench quantitatively meaningful. Demos that use it must
+say so at the call site and keep the gain and limits visible as scenario
+configuration.
+
+**TODO:** Remove this numerical treatment when true moving-boundary treatment
+and true force feedback are available.
+
 The current boundary is an axis-aligned, stationary halfway-bounce-back mask.
-It does not encode wall velocity, hydrodynamic force reduction, rotated
-geometry, or calculate Newton force feedback by itself.
+It does not encode wall velocity or rotated geometry. Its optional ad-hoc
+wrench reduction must not be interpreted as validated hydrodynamic feedback.
+
+**TODO:** Replace this path with true moving-boundary treatment and force feedback.
 
 ## Newton--DEME particle state
 

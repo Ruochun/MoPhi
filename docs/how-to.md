@@ -317,6 +317,40 @@ particle positions are read directly into reusable Warp arrays. Host copies of
 the XLB velocity field and rendered frames remain visualization operations, not
 co-simulation data exchange. The demo preserves its historical acceleration-
 based DEME feedback rather than changing to wrench reduction during migration.
+XLB uses an explicit lattice-to-SI mapping and advances several smaller fluid
+steps inside every Newton step; its flow evolution is therefore tied to the
+same physical simulation clock rather than to rendering cadence. The demo can
+also feed an ad-hoc stationary-wall momentum-exchange wrench back to Newton to
+exercise the complete GPU two-way path. Because the moving mask does not impose
+the Newton wall velocity, this feedback is illustrative rather than a validated
+moving-boundary fluid model. To keep that proof of concept runnable, the demo
+applies a small gain and force/torque caps on the GPU. These are explicitly
+nonphysical numerical stabilization tricks that contain mask-change impulses;
+they do not make the feedback hydrodynamically meaningful.
+
+**TODO:** Remove these tricks when true moving-boundary treatment and true force
+feedback are available.
+
+To diagnose that intentionally ad-hoc XLB wrench separately from the robot,
+run the small box-based integration script:
+
+```bash
+PYTHONPATH=python python tests/newton_xlb_halfway_wrench_diagnostic.py
+```
+
+It requires the same CUDA Newton/XLB build as the ANYmal demo and writes its
+JSON results under `output/newton_xlb_halfway_wrench_diagnostic/`. Independent
+cases test a one-step Newton wrench pulse, equilibrium symmetry, fixed-mask
+flow, zero-flow mask motion, and force-only, torque-only, and full feedback.
+Each case runs in a fresh process because XLB's compiled Warp stepper retains
+boundary-condition state that would otherwise contaminate sequential cases.
+The diagnostic intentionally uses a relatively viscous fluid so its BGK
+relaxation time stays safely above the marginal `tau = 0.5` limit; it is not an
+air-property calibration.
+An offset-center-of-mass case reports the torque both about the body origin and
+after the corresponding COM shift.
+The script is diagnostic evidence for the coupling implementation; it does not
+validate stationary bounce-back as a moving-wall physical model.
 
 The excavation comparison demo also uses these reusable Newton–DEME exchanges.
 The plow's full local transform is applied to Newton's device state and written
@@ -460,7 +494,10 @@ the tray with small reproducible random initial velocities. DEME reuses
 Newton's simplified convex hand contact meshes rather than the fine visual
 meshes. These proxies have clump contact disabled during a blocking DEME
 settling phase, then switch into an active-contact family for the hand motion.
-This stage does not feed DEME forces back into Newton.
+Newton body poses are mapped to those owners through reusable GPU pose buffers,
+and DEME clump poses are read directly into reusable Warp arrays for rendering.
+This stage does not feed DEME forces back into Newton. Host copies remain only
+for configured diagnostics, final-state metrics, and movie output.
 
 Newton stores assets under the platform user cache by default, normally
 `~/.cache/newton/` on Linux. Set `NEWTON_CACHE_PATH` to choose a different

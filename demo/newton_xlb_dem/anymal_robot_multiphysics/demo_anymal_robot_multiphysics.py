@@ -9,12 +9,10 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                learning walking policy.  The robot walks forward on a flat ground
                plane, and its spatial representation (body transforms) is extracted
                at every step.
-  • XLB      — a real LBM fluid solver (D3Q19 Incompressible Navier-Stokes).
-               The robot is represented as a prescribed axis-aligned bounding
-               box that moves with the Newton base body position each frame.
-               bc_mask and missing_mask are updated in-place without rebuilding
-               the stepper, keeping per-frame overhead to a GPU upload of the
-               two mask arrays (~21 MB) instead of a full JIT re-compilation.
+  • XLB      — a D3Q19 incompressible Navier-Stokes LBM fluid with an explicit
+               lattice-to-SI mapping. The fluid takes several smaller physical
+               steps inside every Newton step. The robot is represented by a
+               prescribed axis-aligned box whose device masks follow its base.
   • DEME     — a real discrete-element solver (pip install deme3).  A
                deme.DEMSolver is created in Python, populated with particles and
                contact proxies, stepped every substep, and its live particle
@@ -67,7 +65,11 @@ from mophi.couplers.newton_deme import (
     NewtonDEMEContactAccelerationCoupler,
     NewtonDEMEOwnerMap,
 )
-from mophi.couplers.newton_xlb import NewtonBodyBoxBoundary
+from mophi.couplers.newton_xlb import (
+    NewtonBodyBoxBoundary,
+    NewtonXLBHalfwayBounceBackWrench,
+    NewtonXLBWrenchExchange,
+)
 from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
 if not hasattr(mophi, "NewtonXLBDEMCoupler"):
@@ -290,19 +292,46 @@ if _vis_available:
 #   • Outlet at the downstream y-face, using extrapolation outflow.
 #   • All other faces are left open (no explicit BC — acceptable for a low-Re demo).
 #
-# LBM unit convention:
-#   Inlet lattice speed   _XLB_INLET_SPEED  [lu/ts], kept in a low-Mach regime.
-#   Kinematic viscosity   _XLB_NU           [lu],    BGK relaxation ω = 1/(3ν+0.5).
+# LBM physical mapping uses dx = world-domain length / lattice resolution and
+# dt = _XLB_DT. Velocities map as u_lattice = u_SI * dt / dx, while kinematic
+# viscosity maps as nu_lattice = nu_SI * dt / dx^2.
 _XLB_SCALE = 4
 _XLB_NX, _XLB_NY, _XLB_NZ = 32 * _XLB_SCALE, 32 * _XLB_SCALE, 16 * _XLB_SCALE
 _XLB_DOMAIN_MIN = np.array([-2.0, -1.0, 0.0], dtype=np.float64)
 _XLB_DOMAIN_MAX = np.array([2.0, 3.0, 2.0], dtype=np.float64)
-_XLB_INLET_SPEED = 0.02  # LBM inlet speed [lattice units/timestep]; Ma ≈ 0.035
-_XLB_NU = 0.01  # LBM kinematic viscosity [lattice units]
-_XLB_OMEGA = 1.0 / (3.0 * _XLB_NU + 0.5)  # BGK relaxation parameter
-_XLB_WARMUP_STEPS = 600  # LBM steps to advance before the main loop
-_XLB_STEPS_PER_FRAME = 4  # LBM steps advanced per Newton co-simulation frame
+_XLB_DT = 1.0e-3  # physical seconds represented by one lattice step
+_XLB_PHYSICAL_INLET_SPEED = 0.625  # m/s
+_XLB_PHYSICAL_KINEMATIC_VISCOSITY = 9.765625e-3  # m^2/s; deliberately viscous
+_XLB_PHYSICAL_DENSITY = 1.0  # kg/m^3; keeps this intentionally approximate feedback gentle
+# This closes the XLB -> Newton device path by treating each stationary-wall
+# bounce-back as a momentum exchange. The mask moves but the BC does not use
+# Newton wall velocity, so this is an ad-hoc demonstration, not a validated
+# moving-boundary hydrodynamic force model.
+# TODO: Remove this path when true moving-boundary treatment and force feedback are available.
+ENABLE_XLB_AD_HOC_FORCE_FEEDBACK = True
+# These limits are numerical tricks, not physics. Stationary halfway bounce-back
+# produces artificial impulses when its voxel mask moves, so the two-way PoC
+# deliberately weakens and caps that invalid reaction until a moving-wall BC exists.
+# TODO: Remove these limits when true moving-boundary treatment and force feedback are available.
+XLB_NONPHYSICAL_WRENCH_FEEDBACK_GAIN = 0.01
+XLB_NONPHYSICAL_MAX_FORCE_TO_WEIGHT_RATIO = 0.1
+XLB_NONPHYSICAL_MAX_TORQUE = 5.0  # N m
+_XLB_CELL_SIZE = float((_XLB_DOMAIN_MAX[0] - _XLB_DOMAIN_MIN[0]) / _XLB_NX)
+_XLB_CELL_SIZES = (_XLB_DOMAIN_MAX - _XLB_DOMAIN_MIN) / np.array([_XLB_NX, _XLB_NY, _XLB_NZ])
+if not np.allclose(_XLB_CELL_SIZES, _XLB_CELL_SIZE):
+    raise ValueError("XLB physical scaling currently requires isotropic lattice cells.")
+_XLB_INLET_SPEED = float(_XLB_PHYSICAL_INLET_SPEED * _XLB_DT / _XLB_CELL_SIZE)
+_XLB_NU = float(_XLB_PHYSICAL_KINEMATIC_VISCOSITY * _XLB_DT / (_XLB_CELL_SIZE * _XLB_CELL_SIZE))
+_XLB_OMEGA = float(1.0 / (3.0 * _XLB_NU + 0.5))  # BGK relaxation parameter
+_XLB_WARMUP_SECONDS = 0.6
+_XLB_WARMUP_STEPS = int(round(_XLB_WARMUP_SECONDS / _XLB_DT))
 _XLB_VIS_INTERVAL = 5  # refresh streamline visualisation every N Newton frames
+# This cap is intentionally based on robot weight only to bound the nonphysical
+# mask-change impulse. It is not a fluid-derived force scale.
+# TODO: Remove this cap when true moving-boundary treatment and force feedback are available.
+_XLB_NONPHYSICAL_MAX_FORCE = (
+    XLB_NONPHYSICAL_MAX_FORCE_TO_WEIGHT_RATIO * float(np.sum(newton_model.body_mass.numpy())) * 9.81
+)
 
 # State variables for the XLB solver (populated during setup below).
 xlb_simulation = None  # passed to coupler.initialize() as a reference handle
@@ -320,7 +349,8 @@ _xlb_u_np = None  # velocity in (NX, NY, NZ, 3) layout; updated each vis interva
 # query is required.
 #
 # The reusable NewtonBodyBoxBoundary reads Newton body_q and rewrites XLB's
-# device masks directly. The stepper is built once and never changed.
+# device masks directly before each group of smaller XLB physical substeps.
+# The stepper is built once and never changed.
 #
 # missing_mask correctness (pull-streaming halfway bounce-back):
 #   missing_mask[l, x, y, z] = True iff node (x,y,z) is a solid robot cell AND
@@ -481,7 +511,10 @@ try:
     xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
     print(
         f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
-        f"(robot BC id={_xlb_robot_bc_id}, "
+        f"(dx={_XLB_CELL_SIZE:.5f} m, dt={_XLB_DT:.4g} s, "
+        f"inlet={_XLB_PHYSICAL_INLET_SPEED:.3f} m/s, "
+        f"nu={_XLB_PHYSICAL_KINEMATIC_VISCOSITY:.6g} m²/s, "
+        f"robot BC id={_xlb_robot_bc_id}, "
         f"initial box {_robot_init_gc_min}–{_robot_init_gc_max}).\n"
     )
 except Exception as exc:
@@ -672,6 +705,31 @@ _xlb_deme_particles.initialize(
     _NUM_DEM_SPHERES,
     coupler.newton_state_0.body_q.device,
 )
+_xlb_wrench_reducer = NewtonXLBHalfwayBounceBackWrench()
+_xlb_wrench_reducer.initialize(
+    body_index=0,
+    boundary_id=_xlb_robot_bc_id,
+    domain_min=_XLB_DOMAIN_MIN,
+    cell_size=_XLB_CELL_SIZE,
+    physical_density=_XLB_PHYSICAL_DENSITY,
+    xlb_dt=_XLB_DT,
+    lattice_velocities=_xlb_vel_c_wp,
+    opposite_indices=np.asarray(_xlb_vel_set.opp_indices, dtype=np.int32),
+    device=coupler.newton_state_0.body_q.device,
+)
+_xlb_wrench_exchange = NewtonXLBWrenchExchange()
+_xlb_wrench_exchange.initialize(newton_model, [0], coupler.newton_state_0.body_q.device)
+_combined_body_forces = wp.zeros(
+    int(newton_model.body_count), dtype=wp.spatial_vector, device=coupler.newton_state_0.body_q.device
+)
+coupler.set_newton_body_forces(_combined_body_forces)
+if ENABLE_XLB_AD_HOC_FORCE_FEEDBACK:
+    print(
+        "[Coupling] Ad-hoc XLB halfway-bounce-back wrench feedback enabled. "
+        "This demonstrates two-way GPU exchange but is not a validated moving-wall force model.\n"
+        f"[Coupling] NONPHYSICAL numerical moderation: gain={XLB_NONPHYSICAL_WRENCH_FEEDBACK_GAIN:g}, "
+        f"force cap={_XLB_NONPHYSICAL_MAX_FORCE:.3f} N, torque cap={XLB_NONPHYSICAL_MAX_TORQUE:.3f} N m.\n"
+    )
 if ENABLE_DEME_FORCE_FEEDBACK:
     print(f"[Coupling] DEME force feedback enabled (scale={DEME_FORCE_FEEDBACK_SCALE:.1f}).\n")
 else:
@@ -683,6 +741,9 @@ else:
 SIM_SUBSTEPS = 4  # physics substeps per policy frame
 FRAME_DT = SIM_DT * SIM_SUBSTEPS  # policy control rate
 NUM_FRAMES = 250  # ≈ 5 s at 50 Hz (or until the viewer is closed)
+XLB_SUBSTEPS_PER_NEWTON_STEP = int(round(SIM_DT / _XLB_DT))
+if not np.isclose(XLB_SUBSTEPS_PER_NEWTON_STEP * _XLB_DT, SIM_DT, rtol=0.0, atol=1.0e-12):
+    raise ValueError("Newton dt must be an integer multiple of the physical XLB dt.")
 sim_time = 0.0
 
 # ─── Movie recording settings ────────────────────────────────────────────
@@ -705,7 +766,8 @@ if SAVE_MOVIE and _vis_available and not USE_OMNIVERSE_VISUALIZATION:
 
 print(
     f"Running up to {NUM_FRAMES} policy frame(s) "
-    f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} substeps × {SIM_DT * 1000:.1f} ms) ...\n"
+    f"(frame_dt={FRAME_DT * 1000:.1f} ms, {SIM_SUBSTEPS} Newton steps × {SIM_DT * 1000:.1f} ms, "
+    f"{XLB_SUBSTEPS_PER_NEWTON_STEP} XLB steps per Newton step × {_XLB_DT * 1000:.1f} ms) ...\n"
 )
 # print(f"{'Frame':>5}  {'Base X [m]':>12}  {'Base Y [m]':>12}  {'Base Z [m]':>12}  Representation")
 # print("-" * 72)
@@ -762,8 +824,23 @@ for frame in range(NUM_FRAMES):
 
     # ── Physics substeps ──────────────────────────────────────────────────────
     for _ in range(SIM_SUBSTEPS):
+        _combined_body_forces.zero_()
         if ENABLE_DEME_FORCE_FEEDBACK:
-            coupler.set_newton_body_forces(_deme_contact_exchange.newton_body_forces)
+            wp.copy(_combined_body_forces, _deme_contact_exchange.newton_body_forces)
+        if ENABLE_XLB_AD_HOC_FORCE_FEEDBACK:
+            # This gain and clamp are explicitly a nonphysical numerical trick:
+            # they keep the moving-mask PoC runnable, but do not correct its
+            # stationary-wall momentum exchange or make the wrench scientific.
+            # TODO: Remove this treatment when true moving-boundary treatment and force feedback are available.
+            _xlb_wrench_exchange.write_numerically_limited_xlb_wrenches_to_newton(
+                _xlb_wrench_reducer.forces,
+                _xlb_wrench_reducer.torques,
+                _combined_body_forces,
+                feedback_gain=XLB_NONPHYSICAL_WRENCH_FEEDBACK_GAIN,
+                maximum_force=_XLB_NONPHYSICAL_MAX_FORCE,
+                maximum_torque=XLB_NONPHYSICAL_MAX_TORQUE,
+                clear_destination=False,
+            )
 
         coupler.step_newton()
         _deme_contact_exchange.step_deme()
@@ -771,30 +848,30 @@ for frame in range(NUM_FRAMES):
         if ENABLE_DEME_FORCE_FEEDBACK:
             _deme_contact_exchange.write_deme_contact_accelerations_to_newton()
 
-    sim_time += FRAME_DT
-
-    # ── XLB LBM steps with GPU-resident robot obstacle update ─────────────────
-    # The centralized boundary reads Newton body_q and updates XLB masks on-device.
-    if _xlb_stepper is not None:
+        # XLB has its own smaller physical time step. Hold the newly advanced
+        # Newton body transform fixed while the fluid catches up to this time.
         _newton_xlb_boundary.update_from_newton(coupler.newton_state_0.body_q)
-
-        for _ in range(_XLB_STEPS_PER_FRAME):
-            # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
-            # NewtonBodyBoxBoundary may have changed the two device masks.
+        for _ in range(XLB_SUBSTEPS_PER_NEWTON_STEP):
             _xlb_f0, _xlb_f1 = _xlb_stepper(
                 _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
             )
-            _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
+            _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0
             _xlb_timestep += 1
-        if _vis_available and frame % _XLB_VIS_INTERVAL == 0:
-            _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
-            _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
-            _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
-                _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
-            )
-            _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
-                mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs)
-            )
+        if ENABLE_XLB_AD_HOC_FORCE_FEEDBACK:
+            _xlb_wrench_reducer.reduce(_xlb_f0, _xlb_bc_mask, _xlb_missing_mask, coupler.newton_state_0.body_q)
+
+    sim_time += FRAME_DT
+
+    # Visualization sampling is deliberately separate from physical XLB cadence.
+    if _vis_available and frame % _XLB_VIS_INTERVAL == 0:
+        _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
+        _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
+        _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
+            _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
+        )
+        _xlb_streamline_pos_wp, _xlb_streamline_radii_wp, _xlb_streamline_colors_wp = (
+            mophi.xlb_make_streamline_warp_arrays(_xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs)
+        )
 
     # ── Visualization ─────────────────────────────────────────────────────────
     if _vis_available:
@@ -855,6 +932,8 @@ if vis is not None:
 print("[Coupler] Finalizing NewtonXLBDEMCoupler ...")
 _deme_contact_exchange.finalize()
 _xlb_deme_particles.finalize()
+_xlb_wrench_reducer.finalize()
+_xlb_wrench_exchange.finalize()
 if _xlb_stepper is not None:
     _newton_xlb_boundary.finalize()
 coupler.finalize()
@@ -866,6 +945,6 @@ print(f"  Warp   version : {wp.__version__}")
 print(f"  XLB    version : {xlb.__version__}")
 print(
     "\nRuntime exchange summary:\n"
-    "  Newton body poses, XLB boundary masks, DEME contact feedback, and DEME particle state "
-    "were exchanged through shared-device arrays without host staging."
+    "  Newton body poses, XLB boundary masks and ad-hoc reaction wrench, DEME contact feedback, "
+    "and DEME particle state were exchanged through shared-device arrays without host staging."
 )

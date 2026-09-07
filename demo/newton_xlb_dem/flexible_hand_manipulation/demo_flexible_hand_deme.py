@@ -15,6 +15,7 @@ import warp as wp
 
 import mophi
 import newton
+from mophi.couplers.newton_deme import NewtonDEMEParticleExchange, NewtonDEMEOwnerMap, NewtonDEMEOwnerPoseExchange
 from mophi.utils.package_provider import load_package_provider
 from newton import JointTargetMode
 
@@ -400,13 +401,6 @@ def _build_deme_granular_system(hand: newton.ModelBuilder, model):
     return deme_solver, clump_tracker, hand_proxy_trackers, len(clump_positions)
 
 
-def _sync_deme_hand_proxy_poses(hand_proxy_trackers, body_q: np.ndarray) -> None:
-    """Update every fixed DEME hand mesh owner from its Newton body transform."""
-    for body_idx, tracker in hand_proxy_trackers:
-        tracker.SetPos(body_q[body_idx, :3].tolist())
-        tracker.SetOriQ(body_q[body_idx, 3:7].tolist())
-
-
 def _add_static_tray(builder: newton.ModelBuilder) -> list[int]:
     """Add one non-moving shallow tray and return its shape indices."""
     hx, hy, hz = TRAY_FLOOR_HALF_EXTENTS
@@ -671,6 +665,23 @@ def main() -> None:
     coupler.initialize(model, solver, None, deme_solver, NEWTON_DT)
 
     device = wp.get_device()
+    hand_proxy_pose_exchange = NewtonDEMEOwnerPoseExchange()
+    hand_proxy_pose_exchange.initialize(
+        model,
+        deme_solver,
+        NewtonDEMEOwnerMap(
+            [body_idx for body_idx, _ in deme_hand_proxy_trackers],
+            [int(tracker.GetOwnerID()) for _, tracker in deme_hand_proxy_trackers],
+        ),
+        device,
+    )
+    clump_pose_exchange = NewtonDEMEParticleExchange()
+    clump_pose_exchange.initialize(
+        deme_solver,
+        int(deme_clump_tracker.GetOwnerID()),
+        clump_count,
+        device,
+    )
     target_indices_wp = wp.array(target_indices, dtype=wp.int32, device=device)
     centers_wp = wp.array(centers, dtype=wp.float32, device=device)
     amplitudes_wp = wp.array(amplitudes, dtype=wp.float32, device=device)
@@ -742,12 +753,11 @@ def main() -> None:
 
                 vis.begin_frame(settling_time - DEME_SETTLE_TIME)
                 vis.log_state(coupler.newton_state_0)
-                settling_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32)
-                settling_clump_orientations = np.asarray(deme_clump_tracker.OrientationQuaternions(), dtype=np.float32)
+                settling_clump_positions, settling_clump_orientations = clump_pose_exchange.read_deme_particle_poses()
                 vis.log_clumps(
                     "deme_granular_material",
-                    wp.array(settling_clump_positions, dtype=wp.vec3),
-                    wp.array(settling_clump_orientations, dtype=wp.vec4),
+                    settling_clump_positions,
+                    settling_clump_orientations,
                     DEME_CLUMP_SPHERE_RADII,
                     DEME_CLUMP_SPHERE_OFFSETS,
                     colors=deme_clump_colors_wp,
@@ -758,10 +768,11 @@ def main() -> None:
         else:
             deme_solver.DoDynamics(DEME_SETTLE_TIME)
 
-        settled_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32)
+        settled_clump_positions_wp, _ = clump_pose_exchange.read_deme_particle_poses()
+        settled_clump_positions = settled_clump_positions_wp.numpy()
         print(_format_clump_position_bounds("[DEME] Bounds after settling", settled_clump_positions))
         initial_clump_positions = settled_clump_positions.copy()
-        _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
+        hand_proxy_pose_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
         deme_solver.ChangeFamily(DEME_HAND_PROXY_SLEEP_FAMILY, DEME_HAND_PROXY_ACTIVE_FAMILY)
         print("[DEME] Settling complete; hand mesh contact enabled.")
 
@@ -815,20 +826,23 @@ def main() -> None:
                     coupler.newton_state_0,
                 )
                 coupler.step_newton()
-                _sync_deme_hand_proxy_poses(deme_hand_proxy_trackers, coupler.newton_state_0.body_q.numpy())
+                hand_proxy_pose_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
                 for _ in range(DEME_SUBSTEPS):
                     coupler.step_deme()
 
             vis.begin_frame(sim_time)
             vis.log_state(coupler.newton_state_0)
-            current_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32)
-            current_clump_orientations = np.asarray(deme_clump_tracker.OrientationQuaternions(), dtype=np.float32)
+            current_clump_positions, current_clump_orientations = clump_pose_exchange.read_deme_particle_poses()
             if frame == 0:
-                print(_format_clump_position_bounds("[DEME] Bounds at first rendered frame", current_clump_positions))
+                print(
+                    _format_clump_position_bounds(
+                        "[DEME] Bounds at first rendered frame", current_clump_positions.numpy()
+                    )
+                )
             vis.log_clumps(
                 "deme_granular_material",
-                wp.array(current_clump_positions, dtype=wp.vec3),
-                wp.array(current_clump_orientations, dtype=wp.vec4),
+                current_clump_positions,
+                current_clump_orientations,
                 DEME_CLUMP_SPHERE_RADII,
                 DEME_CLUMP_SPHERE_OFFSETS,
                 colors=deme_clump_colors_wp,
@@ -840,12 +854,15 @@ def main() -> None:
     finally:
         elapsed_wall_seconds = time.perf_counter() - start_wall_time
         final_body_q = coupler.newton_state_0.body_q.numpy()
-        final_clump_positions = np.asarray(deme_clump_tracker.Positions(), dtype=np.float32).copy()
+        final_clump_positions_wp, _ = clump_pose_exchange.read_deme_particle_poses()
+        final_clump_positions = final_clump_positions_wp.numpy()
         if SAVE_FINAL_STATE:
             final_joint_q = coupler.newton_state_0.joint_q.numpy()
         if movie_writer is not None:
             movie_writer.close()
         vis.close()
+        hand_proxy_pose_exchange.finalize()
+        clump_pose_exchange.finalize()
         coupler.finalize()
 
     if SAVE_FINAL_STATE:

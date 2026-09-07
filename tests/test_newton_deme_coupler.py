@@ -9,6 +9,7 @@ from mophi.couplers.newton_deme import (
     NewtonDEMEContactCoupler,
     NewtonDEMEMeshOwnerSpec,
     NewtonDEMEOwnerMap,
+    NewtonDEMEOwnerPoseExchange,
     add_deme_mesh_owners,
     combine_triangle_meshes,
     owner_map_from_mesh_bindings,
@@ -65,6 +66,12 @@ class NewtonDEMEContactCouplerValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "must be initialized"):
             coupler.write_deme_contact_accelerations_to_newton()
+
+    def test_pose_exchange_methods_require_initialize(self):
+        exchange = NewtonDEMEOwnerPoseExchange()
+
+        with self.assertRaisesRegex(RuntimeError, "must be initialized"):
+            exchange.set_deme_owner_pose_from_newton(object())
 
 
 class NewtonDEMEMeshOwnerTest(unittest.TestCase):

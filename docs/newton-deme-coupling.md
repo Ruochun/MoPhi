@@ -20,6 +20,12 @@ Newton body indices may repeat, allowing several contact meshes to contribute
 to one Newton body. The DEME owners must form one increasing, consecutive span
 because the transfer uses DEME's bulk device methods.
 
+For one-way kinematic coupling, `NewtonDEMEOwnerPoseExchange` applies optional
+body-local offsets and orientations, then writes Newton body poses to DEME
+owners through the same bulk device interface. It deliberately does not send
+velocities, retrieve contact response, or step either solver, so adopting it
+does not silently change a pose-driven demo's contact semantics.
+
 ## Basic usage
 
 Create and initialize the Newton and DEME solvers and their bodies first. The
@@ -41,6 +47,17 @@ coupler.set_deme_owner_state_from_newton(newton_state)
 coupler.step_deme(deme_substeps)
 coupler.write_deme_contact_wrenches_to_newton()
 warp.copy(newton_state.body_f, coupler.newton_body_forces)
+```
+
+A pose-only workflow uses the same mapping without allocating contact-feedback
+buffers:
+
+```python
+from mophi.couplers.newton_deme import NewtonDEMEOwnerPoseExchange
+
+pose_exchange = NewtonDEMEOwnerPoseExchange()
+pose_exchange.initialize(newton_model, deme_solver, owner_map, device)
+pose_exchange.set_deme_owner_pose_from_newton(newton_state)
 ```
 
 The three calls remain separate so the application controls each solver's
@@ -92,6 +109,7 @@ The GPU-only claim applies to recurring state and wrench exchange.
 ## Supported behavior
 
 - CUDA-only physics-state and wrench transfer through DEME 3.0.9 device APIs.
+- CUDA-only pose transfer for one-way kinematic DEME owners.
 - Arbitrary Newton body order, including multiple owners per Newton body,
   mapped to one consecutive DEME owner range.
 - Runtime checks for required DEME methods and a shared CUDA device ordinal.

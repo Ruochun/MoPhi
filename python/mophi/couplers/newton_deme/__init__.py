@@ -1,6 +1,11 @@
 """GPU-native coupling between Newton rigid bodies and DEME mesh owners."""
 
-from .contact_coupler import NewtonDEMEContactAccelerationCoupler, NewtonDEMEContactCoupler, NewtonDEMEOwnerMap
+from .contact_coupler import (
+    NewtonDEMEContactAccelerationCoupler,
+    NewtonDEMEContactCoupler,
+    NewtonDEMEOwnerMap,
+    NewtonDEMEOwnerPoseExchange,
+)
 from .mesh_owners import (
     NewtonDEMEMeshOwnerBinding,
     NewtonDEMEMeshOwnerSpec,
@@ -19,6 +24,7 @@ __all__ = [
     "NewtonDEMEMeshOwnerBinding",
     "NewtonDEMEMeshOwnerSpec",
     "NewtonDEMEOwnerMap",
+    "NewtonDEMEOwnerPoseExchange",
     "NewtonDEMEParticleExchange",
     "owner_map_from_mesh_bindings",
     "write_wavefront_mesh",

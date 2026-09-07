@@ -115,6 +115,92 @@ def _contact_accelerations_to_newton_forces(
     body_forces[body_indices[index]] = wp.spatial_vector(force, torque)
 
 
+class NewtonDEMEOwnerPoseExchange:
+    """Write mapped Newton body poses to a consecutive DEME owner span on-device."""
+
+    _REQUIRED_METHODS = ("SetOwnerPositionFromDevice", "SetOwnerOriQFromDevice")
+
+    def __init__(self) -> None:
+        self.initialized = False
+
+    def __del__(self) -> None:
+        if self.initialized:
+            self.finalize()
+
+    def initialize(
+        self,
+        newton_model,
+        deme_solver,
+        owner_map: NewtonDEMEOwnerMap,
+        device,
+        local_offsets: Sequence[Sequence[float]] | None = None,
+        local_orientations: Sequence[Sequence[float]] | None = None,
+    ) -> None:
+        """Bind initialized solvers and allocate reusable pose buffers."""
+        if self.initialized:
+            raise RuntimeError("NewtonDEMEOwnerPoseExchange is already initialized.")
+        if not device.is_cuda:
+            raise ValueError("Newton--DEME GPU pose exchange requires a CUDA Warp device.")
+        if max(owner_map.newton_body_indices) >= int(newton_model.body_count):
+            raise ValueError("Newton--DEME pose mapping contains an out-of-range body index.")
+        missing = [name for name in self._REQUIRED_METHODS if not hasattr(deme_solver, name)]
+        if missing:
+            raise RuntimeError(f"DEMSolver is missing GPU pose exchange methods {missing}.")
+        if device.ordinal not in tuple(int(value) for value in deme_solver.GetGPUDeviceIDs()):
+            raise ValueError("DEME and Newton must share the selected CUDA device.")
+
+        count = owner_map.owner_count
+        local_offsets = [(0.0, 0.0, 0.0)] * count if local_offsets is None else local_offsets
+        local_orientations = [(0.0, 0.0, 0.0, 1.0)] * count if local_orientations is None else local_orientations
+        if len(local_offsets) != count or len(local_orientations) != count:
+            raise ValueError("Pose exchange requires one local transform per DEME owner.")
+
+        self.deme_solver = deme_solver
+        self.owner_map = owner_map
+        self.device = device
+        self._body_indices = wp.array(owner_map.newton_body_indices, dtype=wp.int32, device=device)
+        self._local_offsets = wp.array(local_offsets, dtype=wp.vec3, device=device)
+        self._local_orientations = wp.array(local_orientations, dtype=wp.quat, device=device)
+        self._positions = wp.empty(count, dtype=wp.vec3, device=device)
+        self._orientations = wp.empty(count, dtype=wp.quat, device=device)
+        self.initialized = True
+
+    def set_deme_owner_pose_from_newton(self, newton_state) -> None:
+        """Apply local transforms and write DEME owner poses from Newton device state."""
+        if not self.initialized:
+            raise RuntimeError("NewtonDEMEOwnerPoseExchange must be initialized before use.")
+        count = self.owner_map.owner_count
+        wp.launch(
+            _gather_newton_proxy_pose,
+            dim=count,
+            inputs=[
+                self._body_indices,
+                self._local_offsets,
+                self._local_orientations,
+                newton_state.body_q,
+                self._positions,
+                self._orientations,
+            ],
+            device=self.device,
+        )
+        wp.synchronize_device(self.device)
+        first_owner = self.owner_map.first_deme_owner_id
+        self.deme_solver.SetOwnerPositionFromDevice(first_owner, self._positions.ptr, self.device.ordinal, count)
+        self.deme_solver.SetOwnerOriQFromDevice(first_owner, self._orientations.ptr, self.device.ordinal, count)
+
+    def finalize(self) -> None:
+        """Release solver and device-array references."""
+        self.deme_solver = None
+        self.owner_map = None
+        self.device = None
+        self._body_indices = None
+        self._local_offsets = None
+        self._local_orientations = None
+        self._positions = None
+        self._orientations = None
+        self.initialized = False
+
+
 class NewtonDEMEContactCoupler:
     """Exchange Newton body motion and DEME contact wrenches on one GPU.
 
