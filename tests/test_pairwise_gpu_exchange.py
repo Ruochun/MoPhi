@@ -5,7 +5,12 @@ import numpy as np
 import warp as wp
 
 from mophi.couplers.newton_deme import NewtonDEMEParticleExchange
-from mophi.couplers.newton_xlb import NewtonXLBHalfwayBounceBackWrench, prescribed_box_grid, world_to_grid_index
+from mophi.couplers.newton_xlb import (
+    NewtonBodiesBoxBoundary,
+    NewtonXLBHalfwayBounceBackWrench,
+    prescribed_box_grid,
+    world_to_grid_index,
+)
 from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
 
@@ -26,6 +31,11 @@ class NewtonXLBGridTest(unittest.TestCase):
         reducer = NewtonXLBHalfwayBounceBackWrench()
         with self.assertRaisesRegex(ValueError, "requires a CUDA"):
             reducer.initialize(0, 1, [0, 0, 0], 0.1, 1.0, 0.01, object(), [0], HostDevice())
+
+    def test_multi_body_boundary_rejects_inconsistent_mapping(self):
+        boundary = NewtonBodiesBoxBoundary()
+        with self.assertRaisesRegex(ValueError, "equally sized"):
+            boundary.initialize(object(), object(), object(), [0, 1], [(0.1, 0.1, 0.1)], [2, 3], [0] * 3, [1] * 3)
 
 
 class _Device:

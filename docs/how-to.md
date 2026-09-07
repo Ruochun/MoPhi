@@ -478,7 +478,10 @@ The humanoid swimming idea demo places the G1 in an XLB fluid domain without a
 ground plane. Newton advances a scripted swimming stroke while analytic
 buoyancy, drag, and propulsion keep the robot suspended and moving. Ten
 axis-aligned XLB obstacle boxes follow the torso, pelvis, arms, and legs so the
-visualized flow responds to the prescribed limb motion. Edit the
+visualized flow responds to the prescribed limb motion. The recurring analytic
+force evaluation and multi-body Newton-to-XLB mask exchange stay on the shared
+GPU; host copies are limited to initialization, visualization, and output.
+Edit the
 `PRESCRIBED_SWIM_MOTION` configuration block to change each swimming joint's
 pose offset, amplitude, and phase. This first stage is intentionally one-way:
 XLB does not yet calculate forces that feed back into Newton.

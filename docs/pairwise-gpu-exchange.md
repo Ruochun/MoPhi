@@ -18,6 +18,9 @@ For end-to-end device transport, `NewtonBodyBoxBoundary.update_from_newton(...)`
 reads Newton's device-resident `body_q` array and rewrites the XLB masks without
 computing grid bounds on the host. It retains copies of the original masks so
 cells vacated by the moving body recover their configured boundary values.
+`NewtonBodiesBoxBoundary` performs the same exchange for several potentially
+overlapping body AABBs in one full-mask rebuild; later entries retain the
+historical sequential-stamping precedence in overlap cells.
 
 In the reverse direction, `NewtonXLBWrenchExchange` scatters global force and
 torque arrays produced by an XLB coupling kernel into a Newton

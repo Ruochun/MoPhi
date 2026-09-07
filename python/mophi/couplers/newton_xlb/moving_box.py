@@ -314,3 +314,198 @@ class NewtonBodyBoxBoundary:
         """Release retained solver-array references."""
         self.__dict__.clear()
         self.initialized = False
+
+
+@wp.kernel
+def _stamp_newton_bodies_bc(
+    bc_mask: wp.array4d(dtype=wp.uint8),
+    base_bc_mask: wp.array4d(dtype=wp.uint8),
+    body_q: wp.array(dtype=wp.transform),
+    body_indices: wp.array(dtype=wp.int32),
+    half_extents: wp.array(dtype=wp.vec3),
+    boundary_ids: wp.array(dtype=wp.int32),
+    box_count: int,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+):
+    x, y, z = wp.tid()
+    dims = wp.vec3(float(bc_mask.shape[1]), float(bc_mask.shape[2]), float(bc_mask.shape[3]))
+    domain_extent = domain_max - domain_min
+    value = base_bc_mask[0, x, y, z]
+    for box_index in range(box_count):
+        center = wp.transform_get_translation(body_q[body_indices[box_index]])
+        extent = half_extents[box_index]
+        lo = wp.vec3i(
+            wp.max(1, int(wp.floor((center[0] - extent[0] - domain_min[0]) / domain_extent[0] * dims[0]))),
+            wp.max(1, int(wp.floor((center[1] - extent[1] - domain_min[1]) / domain_extent[1] * dims[1]))),
+            wp.max(1, int(wp.floor((center[2] - extent[2] - domain_min[2]) / domain_extent[2] * dims[2]))),
+        )
+        hi = wp.vec3i(
+            wp.min(
+                int(dims[0]) - 2,
+                int(wp.floor((center[0] + extent[0] - domain_min[0]) / domain_extent[0] * dims[0])),
+            ),
+            wp.min(
+                int(dims[1]) - 2,
+                int(wp.floor((center[1] + extent[1] - domain_min[1]) / domain_extent[1] * dims[1])),
+            ),
+            wp.min(
+                int(dims[2]) - 2,
+                int(wp.floor((center[2] + extent[2] - domain_min[2]) / domain_extent[2] * dims[2])),
+            ),
+        )
+        if x >= lo[0] and x <= hi[0] and y >= lo[1] and y <= hi[1] and z >= lo[2] and z <= hi[2]:
+            # Later boxes intentionally win, matching sequential mask stamping.
+            value = wp.uint8(boundary_ids[box_index])
+    bc_mask[0, x, y, z] = value
+
+
+@wp.kernel
+def _stamp_newton_bodies_missing(
+    missing_mask: wp.array4d(dtype=wp.bool),
+    base_missing_mask: wp.array4d(dtype=wp.bool),
+    lattice_velocities: wp.array2d(dtype=wp.int32),
+    body_q: wp.array(dtype=wp.transform),
+    body_indices: wp.array(dtype=wp.int32),
+    half_extents: wp.array(dtype=wp.vec3),
+    box_count: int,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+):
+    direction, x, y, z = wp.tid()
+    dims = wp.vec3(float(missing_mask.shape[1]), float(missing_mask.shape[2]), float(missing_mask.shape[3]))
+    domain_extent = domain_max - domain_min
+    value = base_missing_mask[direction, x, y, z]
+    for box_index in range(box_count):
+        center = wp.transform_get_translation(body_q[body_indices[box_index]])
+        extent = half_extents[box_index]
+        lo = wp.vec3i(
+            wp.max(1, int(wp.floor((center[0] - extent[0] - domain_min[0]) / domain_extent[0] * dims[0]))),
+            wp.max(1, int(wp.floor((center[1] - extent[1] - domain_min[1]) / domain_extent[1] * dims[1]))),
+            wp.max(1, int(wp.floor((center[2] - extent[2] - domain_min[2]) / domain_extent[2] * dims[2]))),
+        )
+        hi = wp.vec3i(
+            wp.min(
+                int(dims[0]) - 2,
+                int(wp.floor((center[0] + extent[0] - domain_min[0]) / domain_extent[0] * dims[0])),
+            ),
+            wp.min(
+                int(dims[1]) - 2,
+                int(wp.floor((center[1] + extent[1] - domain_min[1]) / domain_extent[1] * dims[1])),
+            ),
+            wp.min(
+                int(dims[2]) - 2,
+                int(wp.floor((center[2] + extent[2] - domain_min[2]) / domain_extent[2] * dims[2])),
+            ),
+        )
+        if x >= lo[0] and x <= hi[0] and y >= lo[1] and y <= hi[1] and z >= lo[2] and z <= hi[2]:
+            sx = x - lattice_velocities[direction, 0]
+            sy = y - lattice_velocities[direction, 1]
+            sz = z - lattice_velocities[direction, 2]
+            value = sx < lo[0] or sx > hi[0] or sy < lo[1] or sy > hi[1] or sz < lo[2] or sz > hi[2]
+    missing_mask[direction, x, y, z] = value
+
+
+class NewtonBodiesBoxBoundary:
+    """Rebuild multiple overlapping XLB AABBs from Newton device transforms."""
+
+    def __init__(self):
+        self.initialized = False
+
+    def initialize(
+        self,
+        bc_mask,
+        missing_mask,
+        lattice_velocities,
+        body_indices,
+        half_extents,
+        boundary_ids,
+        domain_min,
+        domain_max,
+        initial_grid_bounds=None,
+    ):
+        """Bind one boundary box per mapped Newton body."""
+        if self.initialized:
+            raise RuntimeError("NewtonBodiesBoxBoundary is already initialized.")
+        body_indices = tuple(int(index) for index in body_indices)
+        half_extents = tuple(tuple(map(float, extent)) for extent in half_extents)
+        boundary_ids = tuple(int(boundary_id) for boundary_id in boundary_ids)
+        if not body_indices or len(body_indices) != len(half_extents) or len(body_indices) != len(boundary_ids):
+            raise ValueError("Multi-body XLB boundaries require equally sized, non-empty body/extent/ID mappings.")
+        if not bc_mask.device.is_cuda or missing_mask.device != bc_mask.device:
+            raise ValueError("Newton--XLB boundary arrays must share one CUDA Warp device.")
+        self.bc_mask = bc_mask
+        self.missing_mask = missing_mask
+        self.base_bc_mask = wp.clone(bc_mask)
+        self.base_missing_mask = wp.clone(missing_mask)
+        if initial_grid_bounds is not None:
+            if len(initial_grid_bounds) != len(body_indices):
+                raise ValueError("initial_grid_bounds must contain one entry per boundary box.")
+            for (grid_min, grid_max), boundary_id in zip(initial_grid_bounds, boundary_ids):
+                update_box_boundary_gpu(
+                    self.base_bc_mask,
+                    self.base_missing_mask,
+                    grid_min,
+                    grid_max,
+                    None,
+                    None,
+                    boundary_id,
+                    lattice_velocities,
+                    int(missing_mask.shape[0]),
+                )
+        self.body_indices = wp.array(body_indices, dtype=wp.int32, device=bc_mask.device)
+        self.box_count = len(body_indices)
+        self.maximum_body_index = max(body_indices)
+        self.half_extents = wp.array(half_extents, dtype=wp.vec3, device=bc_mask.device)
+        self.boundary_ids = wp.array(boundary_ids, dtype=wp.int32, device=bc_mask.device)
+        self.lattice_velocities = lattice_velocities
+        self.domain_min = wp.vec3(*map(float, domain_min))
+        self.domain_max = wp.vec3(*map(float, domain_max))
+        self.device = bc_mask.device
+        self.initialized = True
+
+    def update_from_newton(self, body_q):
+        """Rebuild all mapped boxes directly from Newton's device state."""
+        if not self.initialized:
+            raise RuntimeError("NewtonBodiesBoxBoundary must be initialized before use.")
+        if body_q.device != self.device or body_q.dtype != wp.transform:
+            raise ValueError("Newton body_q must be a wp.transform array on the XLB CUDA device.")
+        if self.maximum_body_index >= len(body_q):
+            raise ValueError("A mapped Newton body index exceeds body_q length.")
+        wp.launch(
+            _stamp_newton_bodies_bc,
+            dim=tuple(self.bc_mask.shape[1:]),
+            inputs=[
+                self.bc_mask,
+                self.base_bc_mask,
+                body_q,
+                self.body_indices,
+                self.half_extents,
+                self.boundary_ids,
+                self.box_count,
+                self.domain_min,
+                self.domain_max,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            _stamp_newton_bodies_missing,
+            dim=tuple(self.missing_mask.shape),
+            inputs=[
+                self.missing_mask,
+                self.base_missing_mask,
+                self.lattice_velocities,
+                body_q,
+                self.body_indices,
+                self.half_extents,
+                self.box_count,
+                self.domain_min,
+                self.domain_max,
+            ],
+            device=self.device,
+        )
+
+    def finalize(self):
+        """Release retained solver-array references."""
+        self.__dict__.clear()
+        self.initialized = False

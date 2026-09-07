@@ -9,7 +9,6 @@ are intentionally not extracted from XLB in this first-stage demonstration.
 import json
 import math
 from pathlib import Path
-import sys
 
 import imageio.v2 as imageio
 import numpy as np
@@ -20,6 +19,7 @@ import mophi
 import newton
 import newton.examples
 import xlb
+from mophi.couplers.newton_xlb import NewtonBodiesBoxBoundary
 from newton import JointTargetMode
 from xlb.compute_backend import ComputeBackend
 from xlb.grid import grid_factory
@@ -27,9 +27,6 @@ from xlb.operator.boundary_condition import HalfwayBounceBackBC, ZouHeBC, Extrap
 from xlb.operator.macroscopic import Macroscopic
 from xlb.operator.stepper import IncompressibleNavierStokesStepper
 from xlb.precision_policy import Precision, PrecisionPolicy
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import newton_xlb_dem_utils as demo_utils  # noqa: E402
 
 # =============================================================================
 # Simulation configuration
@@ -190,48 +187,7 @@ def _build_newton_robot(robot_config, config, asset_directory: Path):
     return builder
 
 
-def _make_box_grid(body_position: np.ndarray, half_extents: np.ndarray):
-    return demo_utils.xlb_prescribed_robot_box_grid(
-        body_position,
-        XLB_DOMAIN_MIN,
-        XLB_DOMAIN_MAX,
-        XLB_GRID_DIMS,
-        float(half_extents[0]),
-        float(half_extents[1]),
-        float(half_extents[2]),
-        float(half_extents[2]),
-    )
-
-
-def _update_xlb_boxes(bc_mask, missing_mask, old_boxes, new_boxes, box_bcs, vel_c_wp, q) -> None:
-    """Clear every old box before stamping new boxes so overlaps remain solid."""
-    for old_box in old_boxes:
-        demo_utils.xlb_update_robot_box_gpu(
-            bc_mask,
-            missing_mask,
-            old_box[0],
-            old_box[1],
-            None,
-            None,
-            0,
-            vel_c_wp,
-            q,
-        )
-    for new_box, box_bc in zip(new_boxes, box_bcs):
-        demo_utils.xlb_update_robot_box_gpu(
-            bc_mask,
-            missing_mask,
-            None,
-            None,
-            new_box[0],
-            new_box[1],
-            box_bc.id,
-            vel_c_wp,
-            q,
-        )
-
-
-def _setup_xlb(initial_boxes):
+def _setup_xlb(obstacle_count):
     velocity_set = xlb.velocity_set.D3Q19(
         precision_policy=PrecisionPolicy.FP32FP32,
         compute_backend=ComputeBackend.WARP,
@@ -247,7 +203,7 @@ def _setup_xlb(initial_boxes):
     outlet = ExtrapolationOutflowBC(indices=faces["back"])
     box_bcs = []
     placeholder_boxes = []
-    for box_idx in range(len(initial_boxes)):
+    for box_idx in range(obstacle_count):
         placeholder = np.array([2 + box_idx, 2, 2], dtype=np.int32)
         placeholder_boxes.append((placeholder, placeholder.copy()))
         box_bcs.append(HalfwayBounceBackBC(indices=[[int(placeholder[0])], [2], [2]]))
@@ -282,41 +238,39 @@ def _setup_xlb(initial_boxes):
         dtype=np.int32,
     )
     vel_c_wp = wp.array(c_np, dtype=wp.int32, device=bc_mask.device)
-    _update_xlb_boxes(
-        bc_mask,
-        missing_mask,
-        placeholder_boxes,
-        initial_boxes,
-        box_bcs,
-        vel_c_wp,
-        velocity_set.q,
-    )
-    for timestep in range(XLB_WARMUP_STEPS):
-        f0, f1 = stepper(f0, f1, bc_mask, missing_mask, XLB_OMEGA, timestep)
-        f0, f1 = f1, f0
     macro = Macroscopic(velocity_set, PrecisionPolicy.FP32FP32, ComputeBackend.WARP)
     rho = grid.create_field(cardinality=1, dtype=Precision.FP32)
     velocity = grid.create_field(cardinality=3, dtype=Precision.FP32)
-    return stepper, f0, f1, bc_mask, missing_mask, box_bcs, vel_c_wp, macro, rho, velocity
+    return stepper, f0, f1, bc_mask, missing_mask, box_bcs, placeholder_boxes, vel_c_wp, macro, rho, velocity
 
 
-def _underwater_forces(
-    body_q: np.ndarray,
-    body_qd: np.ndarray,
-    body_mass: np.ndarray,
+@wp.kernel
+def _write_underwater_forces(
+    body_q: wp.array(dtype=wp.transform),
+    body_qd: wp.array(dtype=wp.spatial_vector),
     propulsion_idx: int,
+    total_mass: float,
     target_depth: float,
-) -> np.ndarray:
-    """Return a stable net flotation-pack wrench applied at the pelvis."""
-    forces = np.zeros((len(body_q), 6), dtype=np.float32)
-    forces[propulsion_idx, 2] += float(body_mass.sum()) * BUOYANCY_GRAVITY * BUOYANCY_SCALE
-    forces[propulsion_idx, :3] -= LINEAR_DRAG_COEFFICIENT * body_qd[propulsion_idx, :3]
-    forces[propulsion_idx, 3:] -= ANGULAR_DRAG_COEFFICIENT * body_qd[propulsion_idx, 3:]
-    depth_error = target_depth - body_q[propulsion_idx, 2]
-    forces[propulsion_idx, 2] += DEPTH_HOLD_STIFFNESS * depth_error
-    forces[propulsion_idx, 2] -= DEPTH_HOLD_DAMPING * body_qd[propulsion_idx, 2]
-    forces[propulsion_idx, 1] += SWIM_FORWARD_FORCE
-    return forces
+    body_forces: wp.array(dtype=wp.spatial_vector),
+):
+    """Evaluate the demo-specific analytic swimming force law on the GPU."""
+    body_idx = wp.tid()
+    force = wp.vec3(0.0)
+    torque = wp.vec3(0.0)
+    if body_idx == propulsion_idx:
+        velocity = wp.vec3(body_qd[body_idx][0], body_qd[body_idx][1], body_qd[body_idx][2])
+        angular_velocity = wp.vec3(body_qd[body_idx][3], body_qd[body_idx][4], body_qd[body_idx][5])
+        force = -LINEAR_DRAG_COEFFICIENT * velocity
+        torque = -ANGULAR_DRAG_COEFFICIENT * angular_velocity
+        depth_error = target_depth - wp.transform_get_translation(body_q[body_idx])[2]
+        force = force + wp.vec3(
+            0.0,
+            SWIM_FORWARD_FORCE,
+            total_mass * BUOYANCY_GRAVITY * BUOYANCY_SCALE
+            + DEPTH_HOLD_STIFFNESS * depth_error
+            - DEPTH_HOLD_DAMPING * velocity[2],
+        )
+    body_forces[body_idx] = wp.spatial_vector(force, torque)
 
 
 def main() -> None:
@@ -351,21 +305,35 @@ def main() -> None:
     newton.eval_fk(model, initial_state.joint_q, initial_state.joint_qd, initial_state)
     initial_body_q = initial_state.body_q.numpy()
     target_depth = float(initial_body_q[propulsion_idx, 2])
-    initial_boxes = [
-        _make_box_grid(initial_body_q[body_idx, :3], half_extents)
-        for body_idx, (_, half_extents) in zip(obstacle_body_indices, XLB_OBSTACLE_SPECS)
-    ]
-    if any(gc_min is None for gc_min, _ in initial_boxes):
-        mophi.fatal("An initial swimming-robot XLB box lies outside the fluid domain.")
 
     solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=False, solver="newton", nconmax=1024, njmax=2048)
-    stepper, f0, f1, bc_mask, missing_mask, box_bcs, vel_c_wp, macro, rho, velocity = _setup_xlb(initial_boxes)
+    stepper, f0, f1, bc_mask, missing_mask, box_bcs, placeholder_boxes, vel_c_wp, macro, rho, velocity = _setup_xlb(
+        len(obstacle_body_indices)
+    )
 
     coupler = mophi.NewtonXLBDEMCoupler()
     coupler.initialize(model, solver, stepper, None, NEWTON_DT)
     coupler.set_xlb_masks(bc_mask, missing_mask)
     initial_targets = coupler.newton_control.joint_target_pos.numpy().copy()
-    body_mass = model.body_mass.numpy()
+    total_robot_mass = float(np.sum(model.body_mass.numpy()))
+    newton_body_forces = wp.zeros(int(model.body_count), dtype=wp.spatial_vector, device=wp.get_device())
+    coupler.set_newton_body_forces(newton_body_forces)
+    xlb_robot_boundary = NewtonBodiesBoxBoundary()
+    xlb_robot_boundary.initialize(
+        bc_mask,
+        missing_mask,
+        vel_c_wp,
+        obstacle_body_indices,
+        [half_extents for _, half_extents in XLB_OBSTACLE_SPECS],
+        [box_bc.id for box_bc in box_bcs],
+        XLB_DOMAIN_MIN,
+        XLB_DOMAIN_MAX,
+        initial_grid_bounds=placeholder_boxes,
+    )
+    xlb_robot_boundary.update_from_newton(coupler.newton_state_0.body_q)
+    for xlb_timestep in range(XLB_WARMUP_STEPS):
+        f0, f1 = stepper(f0, f1, bc_mask, missing_mask, XLB_OMEGA, xlb_timestep)
+        f0, f1 = f1, f0
 
     vis = mophi.create_opengl_visualizer_or_fatal(model)
     vis.set_camera(wp.vec3(*CAMERA_POSITION), CAMERA_PITCH, CAMERA_YAW)
@@ -385,7 +353,6 @@ def main() -> None:
         XLB_DOMAIN_MAX,
         flow_direction=XLB_FLOW_DIRECTION_Y,
     )
-    old_boxes = initial_boxes
     xlb_timestep = XLB_WARMUP_STEPS
     movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS) if SAVE_MOVIE else None
     completed_frames = 0
@@ -399,19 +366,22 @@ def main() -> None:
             wp.copy(coupler.newton_control.joint_target_pos, wp.array(target, dtype=wp.float32, device=wp.get_device()))
 
             for _ in range(SIM_SUBSTEPS):
-                body_q = coupler.newton_state_0.body_q.numpy()
-                body_qd = coupler.newton_state_0.body_qd.numpy()
-                forces = _underwater_forces(body_q, body_qd, body_mass, propulsion_idx, target_depth)
-                coupler.set_newton_body_forces(wp.array(forces, dtype=wp.spatial_vector, device=wp.get_device()))
+                wp.launch(
+                    _write_underwater_forces,
+                    dim=int(model.body_count),
+                    inputs=[
+                        coupler.newton_state_0.body_q,
+                        coupler.newton_state_0.body_qd,
+                        propulsion_idx,
+                        total_robot_mass,
+                        target_depth,
+                        newton_body_forces,
+                    ],
+                    device=newton_body_forces.device,
+                )
                 coupler.step_newton()
 
-            body_q = coupler.newton_state_0.body_q.numpy()
-            new_boxes = [
-                _make_box_grid(body_q[body_idx, :3], half_extents)
-                for body_idx, (_, half_extents) in zip(obstacle_body_indices, XLB_OBSTACLE_SPECS)
-            ]
-            _update_xlb_boxes(bc_mask, missing_mask, old_boxes, new_boxes, box_bcs, vel_c_wp, 19)
-            old_boxes = new_boxes
+            xlb_robot_boundary.update_from_newton(coupler.newton_state_0.body_q)
             for _ in range(XLB_STEPS_PER_FRAME):
                 f0, f1 = stepper(f0, f1, bc_mask, missing_mask, XLB_OMEGA, xlb_timestep)
                 f0, f1 = f1, f0
@@ -442,6 +412,7 @@ def main() -> None:
         if movie_writer is not None:
             movie_writer.close()
         vis.close()
+        xlb_robot_boundary.finalize()
         coupler.finalize()
 
     metadata = {

@@ -361,6 +361,32 @@ class NewtonDEMEContactCoupler:
         self._synchronize_deme_to_newton()
         return forces, torques
 
+    def get_deme_contact_accelerations_to_device(self, accelerations, angular_accelerations, angular_frame="global"):
+        """Write mapped DEME contact accelerations into caller-owned GPU arrays.
+
+        This raw getter intentionally leaves acceleration-to-wrench semantics to
+        the caller, which is useful for diagnostics comparing physical models.
+        """
+        self._require_initialized()
+        if angular_frame not in ("global", "local"):
+            raise ValueError(f"angular_frame must be 'global' or 'local', got {angular_frame!r}.")
+        angular_method_name = (
+            "GetOwnerAngAccGlobalToDevice" if angular_frame == "global" else "GetOwnerAngAccLocalToDevice"
+        )
+        required_methods = ("GetOwnerAccToDevice", angular_method_name)
+        missing = [name for name in required_methods if not hasattr(self.deme_solver, name)]
+        if missing:
+            raise RuntimeError(f"DEMSolver is missing GPU contact-acceleration getters {missing}.")
+        owner_count = self.owner_map.owner_count
+        for label, array in (("linear acceleration", accelerations), ("angular acceleration", angular_accelerations)):
+            if len(array) < owner_count or array.dtype != wp.vec3 or array.device != self.device:
+                raise ValueError(f"DEME {label} output must contain {owner_count} wp.vec3 entries on {self.device}.")
+        args = (owner_count, self.device.ordinal, self.owner_map.first_deme_owner_id, owner_count)
+        self.deme_solver.GetOwnerAccToDevice(accelerations.ptr, *args)
+        getattr(self.deme_solver, angular_method_name)(angular_accelerations.ptr, *args)
+        self._synchronize_deme_to_newton()
+        return accelerations, angular_accelerations
+
     def _synchronize_deme_to_newton(self) -> None:
         """Complete DEME writes before Warp consumes their destination buffers."""
         # DEME 3.0.9 device getters are synchronous, so returning from the call

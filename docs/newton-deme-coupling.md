@@ -66,6 +66,12 @@ orientation, linear velocity, and global angular velocity. The wrench call
 retrieves global force and torque resultants and scatters them into a
 Newton-sized `wp.spatial_vector` array.
 
+Diagnostics that deliberately compare feedback semantics can call
+`get_deme_contact_accelerations_to_device(...)` to fill caller-owned CUDA
+arrays with DEME linear and local/global angular contact accelerations. The
+diagnostic retains the explicit acceleration-to-wrench operator, while MoPhi
+owns the device validation, owner-span arguments, and solver API calls.
+
 Several DEME owners may map to the same Newton body. Their forces and torques
 are summed before the Newton body-force entry is written. To combine DEME with
 an existing external-force array, pass that array as `destination` and disable

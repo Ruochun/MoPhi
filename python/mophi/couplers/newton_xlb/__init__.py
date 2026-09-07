@@ -2,6 +2,7 @@
 
 from .moving_box import (
     MovingBoxBoundary,
+    NewtonBodiesBoxBoundary,
     NewtonBodyBoxBoundary,
     prescribed_box_grid,
     update_box_boundary_gpu,
@@ -11,6 +12,7 @@ from .wrenches import NewtonXLBHalfwayBounceBackWrench, NewtonXLBWrenchExchange
 
 __all__ = [
     "MovingBoxBoundary",
+    "NewtonBodiesBoxBoundary",
     "NewtonBodyBoxBoundary",
     "NewtonXLBWrenchExchange",
     "NewtonXLBHalfwayBounceBackWrench",

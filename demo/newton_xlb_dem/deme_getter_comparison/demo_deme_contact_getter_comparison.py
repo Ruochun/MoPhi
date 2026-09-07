@@ -196,21 +196,7 @@ def _build_newton_system():
 
 
 def _build_deme_system(device, initial_specs):
-    required_methods = (
-        "SetOwnerPositionFromDevice",
-        "SetOwnerOriQFromDevice",
-        "SetOwnerVelocityFromDevice",
-        "SetOwnerAngVelGlobalFromDevice",
-        "GetOwnerAccToDevice",
-        "GetOwnerAngAccGlobalToDevice",
-        "GetOwnerContactWrenchToDevice",
-    )
     solver = DEME.DEMSolver([device.ordinal])
-    missing_methods = [name for name in required_methods if not hasattr(solver, name)]
-    if missing_methods:
-        mophi.fatal(f"This comparison requires deme3>=3.0.9; missing DEMSolver methods: {missing_methods}.")
-    if device.ordinal not in solver.GetGPUDeviceIDs():
-        mophi.fatal(f"DEME workers {solver.GetGPUDeviceIDs()} do not share Warp device {device.ordinal}.")
     if not CONTACT_PROXY_MESH_PATH.is_file():
         mophi.fatal(f"Required contact proxy mesh is missing: {CONTACT_PROXY_MESH_PATH}")
 
@@ -343,9 +329,10 @@ def main() -> None:
     def exchange_and_step() -> None:
         contact_exchange.set_deme_owner_state_from_newton(coupler.newton_state_0)
         contact_exchange.step_deme(DEME_SUBSTEPS_PER_NEWTON_STEP)
-        deme_solver.GetOwnerAccToDevice(contact_accelerations.ptr, BODY_COUNT, device.ordinal, owner_ids[0], BODY_COUNT)
-        deme_solver.GetOwnerAngAccGlobalToDevice(
-            contact_angular_accelerations.ptr, BODY_COUNT, device.ordinal, owner_ids[0], BODY_COUNT
+        contact_exchange.get_deme_contact_accelerations_to_device(
+            contact_accelerations,
+            contact_angular_accelerations,
+            angular_frame="global",
         )
         contact_exchange.get_deme_contact_wrenches_to_device(direct_forces, direct_torques)
         newton_body_forces.zero_()

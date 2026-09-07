@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import warp as wp
 
 from mophi.couplers.newton_deme import (
     NewtonDEMEContactAccelerationCoupler,
@@ -72,6 +73,45 @@ class NewtonDEMEContactCouplerValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "must be initialized"):
             exchange.set_deme_owner_pose_from_newton(object())
+
+    def test_raw_contact_acceleration_getter_uses_solver_device_api(self):
+        class Device:
+            ordinal = 2
+
+        device = Device()
+
+        class Array:
+            dtype = wp.vec3
+
+            def __init__(self, pointer):
+                self.ptr = pointer
+                self.device = device
+
+            def __len__(self):
+                return 2
+
+        class Solver:
+            def __init__(self):
+                self.calls = []
+
+            def GetOwnerAccToDevice(self, *args):
+                self.calls.append(("linear", args))
+
+            def GetOwnerAngAccGlobalToDevice(self, *args):
+                self.calls.append(("angular_global", args))
+
+        coupler = NewtonDEMEContactCoupler()
+        coupler.initialized = True
+        coupler.device = device
+        coupler.owner_map = NewtonDEMEOwnerMap([0, 1], [7, 8])
+        coupler.deme_solver = Solver()
+        coupler.get_deme_contact_accelerations_to_device(Array(101), Array(202), angular_frame="global")
+
+        self.assertEqual(
+            coupler.deme_solver.calls,
+            [("linear", (101, 2, 2, 7, 2)), ("angular_global", (202, 2, 2, 7, 2))],
+        )
+        coupler.initialized = False
 
 
 class NewtonDEMEMeshOwnerTest(unittest.TestCase):
