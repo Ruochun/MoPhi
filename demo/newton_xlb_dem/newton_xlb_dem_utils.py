@@ -22,18 +22,12 @@ Robot geometry helpers (pre-finalize, from Newton ModelBuilder)
 Per-frame pose helper
   compute_foot_tip_poses  -- world-space foot sphere centres + shank orientations
 
-XLB LBM obstacle helpers
-  xlb_world_to_grid_idx          -- map world position to interior LBM grid cell
-  xlb_prescribed_robot_box_grid  -- compute robot AABB in grid space
-  xlb_update_robot_box_gpu       -- update bc_mask / missing_mask via Warp kernels
-  (compatibility wrappers around mophi.couplers.newton_xlb)
 """
 
 import numpy as np
 import torch
 import warp as wp
 from newton import GeoType, ShapeFlags
-from mophi.couplers.newton_xlb import update_box_boundary_gpu, world_to_grid_index
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Policy helpers
@@ -310,100 +304,3 @@ def compute_foot_tip_poses(body_q_np, foot_tip_descriptors):
         )
         foot_tip_rotations.append([qx, qy, qz, qw])
     return foot_tip_positions, foot_tip_rotations
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# XLB LBM obstacle helpers
-# ─────────────────────────────────────────────────────────────────────────────
-def xlb_world_to_grid_idx(world_pos, domain_min, domain_max, grid_dims):
-    """Map a world-space 3-D point to the nearest interior LBM grid cell index.
-
-    Returns a 3-element int numpy array clamped to [1, N−2] so the obstacle
-    never overlaps the wall / inlet / outlet cells at grid indices 0 and N−1.
-
-    Args:
-        world_pos  : array-like length-3 — world-space position [m].
-        domain_min : array-like length-3 — LBM domain min corner [m].
-        domain_max : array-like length-3 — LBM domain max corner [m].
-        grid_dims  : (NX, NY, NZ) tuple — LBM grid dimensions.
-    """
-    return world_to_grid_index(world_pos, domain_min, domain_max, grid_dims)
-
-
-def xlb_prescribed_robot_box_grid(
-    base_pos, domain_min, domain_max, grid_dims, half_ext_x, half_ext_y, below_base, above_base
-):
-    """Return (gc_min, gc_max) integer grid arrays for the prescribed robot AABB.
-
-    The box is centred on base_pos (world-space [x, y, z]) with fixed half-extents
-    that enclose the full ANYmal C geometry (torso + leg reach) with margin.
-    Returns (None, None) when the box is entirely outside the LBM domain.
-
-    Args:
-        base_pos   : array-like length-3 | None — Newton base body world position [m].
-        domain_min : array-like length-3 — LBM domain min corner [m].
-        domain_max : array-like length-3 — LBM domain max corner [m].
-        grid_dims  : (NX, NY, NZ) tuple.
-        half_ext_x : float — box half-extent in x (walking direction) [m].
-        half_ext_y : float — box half-extent in y (lateral direction) [m].
-        below_base : float — box extent below the base centre [m].
-        above_base : float — box extent above the base centre [m].
-    """
-    if base_pos is None:
-        return None, None
-    world_min = np.array(
-        [
-            base_pos[0] - half_ext_x,
-            base_pos[1] - half_ext_y,
-            # z_min is clamped to the lower domain boundary so the box remains inside
-            # the fluid domain and does not extend below the ground region.
-            max(0.0, base_pos[2] - below_base),
-        ]
-    )
-    world_max = np.array(
-        [
-            base_pos[0] + half_ext_x,
-            base_pos[1] + half_ext_y,
-            base_pos[2] + above_base,
-        ]
-    )
-    if np.any(world_max <= domain_min) or np.any(world_min >= domain_max):
-        return None, None
-    gc_min = xlb_world_to_grid_idx(np.maximum(world_min, domain_min), domain_min, domain_max, grid_dims)
-    gc_max = xlb_world_to_grid_idx(np.minimum(world_max, domain_max), domain_min, domain_max, grid_dims)
-    if np.any(gc_max < gc_min):
-        return None, None
-    return gc_min, gc_max
-
-
-def xlb_update_robot_box_gpu(
-    bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max, robot_bc_id, vel_c_wp, q
-):
-    """Update bc_mask and missing_mask in-place on the GPU for the moving robot AABB.
-
-    Clears the old robot box region and stamps the new one using Warp GPU kernels,
-    with no CPU round-trip and no GPU reallocation.  The robot box region is always
-    in the LBM interior (guaranteed by xlb_world_to_grid_idx clamping), so the
-    fluid base value for those cells is always 0 / False — clearing simply writes
-    those defaults without needing a stored base-mask copy.
-
-    Pass new_gc_min = None to clear the robot obstacle entirely.
-
-    Args:
-        bc_mask      : wp.array4d(uint8) — device-resident bc_mask (1, NX, NY, NZ).
-        missing_mask : wp.array4d(bool)  — device-resident missing_mask (Q, NX, NY, NZ).
-        old_gc_min   : int[3] numpy array | None — previous box min corner.
-        old_gc_max   : int[3] numpy array | None — previous box max corner.
-        new_gc_min   : int[3] numpy array | None — new box min corner (None = clear only).
-        new_gc_max   : int[3] numpy array | None — new box max corner.
-        robot_bc_id  : int  — HalfwayBounceBackBC ID for the robot obstacle.
-        vel_c_wp     : wp.array2d(int32) (Q, 3) — D3Q19 velocity stencil on device.
-        q            : int  — number of lattice velocity directions (19 for D3Q19).
-
-    Returns:
-        (new_gc_min, new_gc_max) — the updated box corners (same as inputs).
-        Callers should store these to pass as old_gc_min/max on the next call.
-    """
-    return update_box_boundary_gpu(
-        bc_mask, missing_mask, old_gc_min, old_gc_max, new_gc_min, new_gc_max, robot_bc_id, vel_c_wp, q
-    )

@@ -43,6 +43,7 @@ from mophi.couplers.newton_deme import (
     NewtonDEMEMeshOwnerSpec,
     add_deme_mesh_owners,
     combine_triangle_meshes,
+    extract_newton_shape_triangle_meshes,
     owner_map_from_mesh_bindings,
 )
 import newton
@@ -283,10 +284,7 @@ def _make_scaled_contact_mesh_proxies(
 
     proxies = []
     for mesh_info in visual_meshes:
-        vertices = np.asarray(mesh_info["mesh"].vertices, dtype=np.float32)
-        shape_scale = mesh_info["shape_scale"]
-        scale = np.asarray([shape_scale[0], shape_scale[1], shape_scale[2]], dtype=np.float32)
-        scaled_vertices = vertices * scale
+        scaled_vertices = mesh_info["scaled_vertices"]
         bounds_min = scaled_vertices.min(axis=0) - CONTACT_PROXY_PADDING
         bounds_max = scaled_vertices.max(axis=0) + CONTACT_PROXY_PADDING
         proxy_center = 0.5 * (bounds_min + bounds_max)
@@ -431,7 +429,7 @@ def _collect_robot_visual_meshes(
     robot_instance: int,
 ) -> list[dict]:
     """Retain the visual mesh sources and describe their future DEME inputs."""
-    visual_meshes = []
+    shape_indices = []
     for shape_idx, shape_type in enumerate(builder.shape_type):
         body_idx = builder.shape_body[shape_idx]
         flags = builder.shape_flags[shape_idx]
@@ -443,26 +441,27 @@ def _collect_robot_visual_meshes(
         ):
             continue
 
-        mesh = builder.shape_source[shape_idx]
-        vertices = getattr(mesh, "vertices", None)
-        indices = getattr(mesh, "indices", None)
-        if vertices is None or indices is None:
-            mophi.fatal(
-                f"Visual mesh '{builder.shape_label[shape_idx]}' does not expose vertices and indices; "
-                "it cannot be handed to a future DEME mesh tracker."
-            )
+        shape_indices.append(shape_idx)
+
+    try:
+        extracted_meshes = extract_newton_shape_triangle_meshes(builder, shape_indices)
+    except ValueError as exc:
+        mophi.fatal(str(exc))
+    visual_meshes = []
+    for extracted in extracted_meshes:
+        shape_idx = extracted.shape_index
+        body_idx = extracted.body_index
         visual_meshes.append(
             {
                 "shape_index": shape_idx,
                 "robot_instance": robot_instance,
-                "shape_label": builder.shape_label[shape_idx],
+                "shape_label": extracted.shape_label,
                 "body_index": body_idx,
-                "body_label": builder.body_label[body_idx],
-                "mesh": mesh,
+                "body_label": extracted.body_label,
                 "shape_transform": builder.shape_transform[shape_idx],
-                "shape_scale": builder.shape_scale[shape_idx],
-                "vertex_count": len(vertices),
-                "triangle_count": len(indices) // 3,
+                "scaled_vertices": extracted.scaled_vertices,
+                "vertex_count": len(extracted.scaled_vertices),
+                "triangle_count": len(extracted.triangle_indices),
             }
         )
     if not visual_meshes:

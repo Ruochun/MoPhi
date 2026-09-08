@@ -13,6 +13,7 @@ from mophi.couplers.newton_deme import (
     NewtonDEMEOwnerPoseExchange,
     add_deme_mesh_owners,
     combine_triangle_meshes,
+    extract_newton_shape_triangle_meshes,
     owner_map_from_mesh_bindings,
 )
 
@@ -115,6 +116,29 @@ class NewtonDEMEContactCouplerValidationTest(unittest.TestCase):
 
 
 class NewtonDEMEMeshOwnerTest(unittest.TestCase):
+    def test_extracts_scaled_body_local_newton_mesh(self):
+        class Source:
+            vertices = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
+            indices = [0, 1, 2]
+
+        class Transform:
+            p = (1, 2, 3)
+            q = (0, 0, 0, 1)
+
+        class Builder:
+            shape_type = ["mesh"]
+            shape_body = [0]
+            shape_source = [Source()]
+            shape_scale = [(2, 3, 4)]
+            shape_transform = [Transform()]
+            shape_label = ["triangle"]
+            body_label = ["body"]
+
+        mesh = extract_newton_shape_triangle_meshes(Builder(), [0])[0]
+        np.testing.assert_array_equal(mesh.scaled_vertices, [[0, 0, 0], [2, 0, 0], [0, 3, 0]])
+        np.testing.assert_array_equal(mesh.body_local_vertices, [[1, 2, 3], [3, 2, 3], [1, 5, 3]])
+        np.testing.assert_array_equal(mesh.triangle_indices, [[0, 1, 2]])
+
     def test_combines_mesh_parts_with_adjusted_indices(self):
         vertices, triangles = combine_triangle_meshes(
             [

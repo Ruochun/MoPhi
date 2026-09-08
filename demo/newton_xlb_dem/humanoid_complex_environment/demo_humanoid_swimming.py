@@ -19,7 +19,12 @@ import mophi
 import newton
 import newton.examples
 import xlb
-from mophi.couplers.newton_xlb import NewtonBodiesBoxBoundary
+from mophi.couplers.newton_xlb import (
+    NewtonBodiesBoxBoundary,
+    XLBStepperState,
+    bgk_omega_from_lattice_viscosity,
+    velocity_stencil_to_warp,
+)
 from newton import JointTargetMode
 from xlb.compute_backend import ComputeBackend
 from xlb.grid import grid_factory
@@ -82,7 +87,7 @@ XLB_DOMAIN_MAX = np.array([2.0, 4.0, 3.0], dtype=np.float64)
 XLB_FLOW_DIRECTION_Y = 1
 XLB_INLET_SPEED = 0.015
 XLB_KINEMATIC_VISCOSITY = 0.02
-XLB_OMEGA = 1.0 / (3.0 * XLB_KINEMATIC_VISCOSITY + 0.5)
+XLB_OMEGA = bgk_omega_from_lattice_viscosity(XLB_KINEMATIC_VISCOSITY)
 XLB_STREAMLINE_STEP_SIZE = 0.12
 XLB_OBSTACLE_SPECS = (
     ("pelvis", np.array([0.20, 0.14, 0.16])),
@@ -212,36 +217,12 @@ def _setup_xlb(obstacle_count):
         boundary_conditions=[inlet, outlet, *box_bcs],
         collision_type="BGK",
     )
-    f0, f1, bc_mask, missing_mask = stepper.prepare_fields()
-    c_np = np.array(
-        [
-            [0, 0, 0],
-            [1, 0, 0],
-            [-1, 0, 0],
-            [0, 1, 0],
-            [0, -1, 0],
-            [0, 0, 1],
-            [0, 0, -1],
-            [1, 1, 0],
-            [-1, -1, 0],
-            [1, -1, 0],
-            [-1, 1, 0],
-            [1, 0, 1],
-            [-1, 0, -1],
-            [1, 0, -1],
-            [-1, 0, 1],
-            [0, 1, 1],
-            [0, -1, -1],
-            [0, 1, -1],
-            [0, -1, 1],
-        ],
-        dtype=np.int32,
-    )
-    vel_c_wp = wp.array(c_np, dtype=wp.int32, device=bc_mask.device)
+    runtime = XLBStepperState().initialize(stepper, XLB_OMEGA)
+    vel_c_wp = velocity_stencil_to_warp(velocity_set, runtime.bc_mask.device)
     macro = Macroscopic(velocity_set, PrecisionPolicy.FP32FP32, ComputeBackend.WARP)
     rho = grid.create_field(cardinality=1, dtype=Precision.FP32)
     velocity = grid.create_field(cardinality=3, dtype=Precision.FP32)
-    return stepper, f0, f1, bc_mask, missing_mask, box_bcs, placeholder_boxes, vel_c_wp, macro, rho, velocity
+    return runtime, box_bcs, placeholder_boxes, vel_c_wp, macro, rho, velocity
 
 
 @wp.kernel
@@ -307,12 +288,11 @@ def main() -> None:
     target_depth = float(initial_body_q[propulsion_idx, 2])
 
     solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=False, solver="newton", nconmax=1024, njmax=2048)
-    stepper, f0, f1, bc_mask, missing_mask, box_bcs, placeholder_boxes, vel_c_wp, macro, rho, velocity = _setup_xlb(
-        len(obstacle_body_indices)
-    )
+    xlb_runtime, box_bcs, placeholder_boxes, vel_c_wp, macro, rho, velocity = _setup_xlb(len(obstacle_body_indices))
+    bc_mask, missing_mask = xlb_runtime.bc_mask, xlb_runtime.missing_mask
 
     coupler = mophi.NewtonXLBDEMCoupler()
-    coupler.initialize(model, solver, stepper, None, NEWTON_DT)
+    coupler.initialize(model, solver, xlb_runtime, None, NEWTON_DT)
     coupler.set_xlb_masks(bc_mask, missing_mask)
     initial_targets = coupler.newton_control.joint_target_pos.numpy().copy()
     total_robot_mass = float(np.sum(model.body_mass.numpy()))
@@ -331,9 +311,8 @@ def main() -> None:
         initial_grid_bounds=placeholder_boxes,
     )
     xlb_robot_boundary.update_from_newton(coupler.newton_state_0.body_q)
-    for xlb_timestep in range(XLB_WARMUP_STEPS):
-        f0, f1 = stepper(f0, f1, bc_mask, missing_mask, XLB_OMEGA, xlb_timestep)
-        f0, f1 = f1, f0
+    for _ in range(XLB_WARMUP_STEPS):
+        coupler.step_xlb()
 
     vis = mophi.create_opengl_visualizer_or_fatal(model)
     vis.set_camera(wp.vec3(*CAMERA_POSITION), CAMERA_PITCH, CAMERA_YAW)
@@ -353,7 +332,6 @@ def main() -> None:
         XLB_DOMAIN_MAX,
         flow_direction=XLB_FLOW_DIRECTION_Y,
     )
-    xlb_timestep = XLB_WARMUP_STEPS
     movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS) if SAVE_MOVIE else None
     completed_frames = 0
 
@@ -383,14 +361,12 @@ def main() -> None:
 
             xlb_robot_boundary.update_from_newton(coupler.newton_state_0.body_q)
             for _ in range(XLB_STEPS_PER_FRAME):
-                f0, f1 = stepper(f0, f1, bc_mask, missing_mask, XLB_OMEGA, xlb_timestep)
-                f0, f1 = f1, f0
-                xlb_timestep += 1
+                coupler.step_xlb()
 
             vis.begin_frame(sim_time)
             vis.log_state(coupler.newton_state_0)
             if frame % XLB_VIS_INTERVAL == 0:
-                rho, velocity = macro(f0, rho, velocity)
+                rho, velocity = macro(xlb_runtime.f0, rho, velocity)
                 velocity_np = velocity.numpy().transpose(1, 2, 3, 0).astype(np.float32)
                 points, speeds, directions = mophi.xlb_build_streamlines(
                     velocity_np,
@@ -413,6 +389,7 @@ def main() -> None:
             movie_writer.close()
         vis.close()
         xlb_robot_boundary.finalize()
+        xlb_runtime.finalize()
         coupler.finalize()
 
     metadata = {

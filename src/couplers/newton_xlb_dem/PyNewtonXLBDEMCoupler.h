@@ -31,8 +31,7 @@
 // Per-solver stepping methods (no whole-sale stepper):
 //   StepNewton() — advance Newton by one substep (clear forces → collide → step → swap states).
 //   StepDEME()   — advance DEME by one substep (calls DoStepDynamics() on the Python object).
-//   StepXLB()    — reserved hook for XLB stepping; currently a no-op because
-//                  the Python demo advances the XLB stepper directly.
+//   StepXLB()    — advance the bound Python XLB runtime by one substep.
 //
 // The demo controls the pace of each system independently.  For example, Newton and DEME
 // may be advanced every substep while XLB is advanced only once per policy frame.
@@ -136,8 +135,7 @@ struct PyNewtonXLBDEMCoupler {
 
     /// @brief Advance XLB by one substep.
     ///
-    /// Placeholder — calls \c xlb_simulation.step() once future fluid–robot
-    /// coupling is implemented.  When no XLB simulation was provided this
+    /// Calls \c xlb_simulation.step(). When no XLB simulation was provided this
     /// method is a no-op.
     void StepXLB();
 

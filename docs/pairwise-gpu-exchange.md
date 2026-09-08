@@ -5,6 +5,9 @@ transport from the Newton + XLB + DEME demos. They move solver-owned state or
 update coupling masks; they do not implement contact, fluid, or particle-force
 models.
 
+XLB field ownership, independent stepping, and physical/lattice conversion are
+documented in [xlb-runtime.md](xlb-runtime.md).
+
 ## Newton--XLB moving boundaries
 
 `mophi.couplers.newton_xlb` maps world-space axis-aligned boxes into an XLB

@@ -86,6 +86,11 @@ coupler.write_deme_contact_wrenches_to_newton(
 
 ## Mesh-owner preparation
 
+`extract_newton_shape_triangle_meshes(...)` reads selected Newton mesh shapes,
+validates their triangle topology, applies shape scale and local transform, and
+returns both scaled source-space and body-local vertices. This keeps generic
+Newton mesh extraction out of robot-specific demos.
+
 `NewtonDEMEMeshOwnerSpec` describes one DEME proxy using body-local triangle
 geometry, its Newton body index, DEME family, mass, and principal MOI. Physical
 properties are mandatory so DEME does not silently derive proxy-body dynamics

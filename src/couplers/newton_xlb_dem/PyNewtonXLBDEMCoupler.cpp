@@ -74,9 +74,8 @@ void PyNewtonXLBDEMCoupler::Initialize(pybind11::object newton_model_in,
     }
 
     // ── XLB ──────────────────────────────────────────────────────────────────
-    // Accept a pre-built XLB simulation from the Python caller.  The Python
-    // demo currently advances the XLB stepper directly while this coupler stores
-    // the simulation object and exposes mask arrays for GPU-side updates.
+    // Accept a pre-built Python XLB runtime. The coupler advances it through
+    // step() and exposes its mask arrays for GPU-side updates.
     if (!xlb_simulation_in.is_none()) {
         xlb_simulation = xlb_simulation_in;
         xlb_available = true;
@@ -137,10 +136,8 @@ void PyNewtonXLBDEMCoupler::StepXLB() {
         return;
     }
 
-    // XLB physics is stepped directly by the Python demo for now.  This hook is
-    // kept so the coupler can own XLB stepping later without changing the API.
     if (xlb_available) {
-        // MOPHI_INFO("PyNewtonXLBDEMCoupler: XLB step hook (currently no-op)");
+        xlb_simulation.attr("step")();
     }
 }
 

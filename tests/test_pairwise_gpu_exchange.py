@@ -8,13 +8,52 @@ from mophi.couplers.newton_deme import NewtonDEMEParticleExchange
 from mophi.couplers.newton_xlb import (
     NewtonBodiesBoxBoundary,
     NewtonXLBHalfwayBounceBackWrench,
+    XLBPhysicalScaling,
+    XLBStepperState,
+    bgk_omega_from_lattice_viscosity,
     prescribed_box_grid,
+    velocity_stencil_array,
     world_to_grid_index,
 )
 from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
 
 class NewtonXLBGridTest(unittest.TestCase):
+    def test_velocity_stencil_supports_xlb_matrix_objects(self):
+        class Matrix:
+            values = ((0, 1, -1), (0, 0, 0))
+
+            def __getitem__(self, key):
+                return self.values[key[0]][key[1]]
+
+        class VelocitySet:
+            c = Matrix()
+            d = 2
+            q = 3
+
+        np.testing.assert_array_equal(velocity_stencil_array(VelocitySet()), [[0, 0], [1, 0], [-1, 0]])
+
+    def test_stepper_state_owns_buffer_swap_and_timestep(self):
+        class Stepper:
+            def prepare_fields(self):
+                return "f0", "f1", "bc", "missing"
+
+            def __call__(self, f0, f1, bc, missing, omega, timestep):
+                self.args = (f0, f1, bc, missing, omega, timestep)
+                return "result0", "result1"
+
+        stepper = Stepper()
+        runtime = XLBStepperState().initialize(stepper, 1.25, timestep=4)
+        self.assertEqual(runtime.step(), "result1")
+        self.assertEqual(stepper.args, ("f0", "f1", "bc", "missing", 1.25, 4))
+        self.assertEqual((runtime.f0, runtime.f1, runtime.timestep), ("result1", "result0", 5))
+
+    def test_physical_scaling_maps_velocity_and_viscosity(self):
+        scaling = XLBPhysicalScaling.from_domain([0, 0, 0], [1, 1, 1], [10, 10, 10], 0.01, 0.1)
+        np.testing.assert_allclose(scaling.velocity_to_lattice([1, 0, 0]), [0.1, 0, 0])
+        self.assertAlmostEqual(scaling.lattice_kinematic_viscosity, 0.1)
+        self.assertAlmostEqual(scaling.omega, bgk_omega_from_lattice_viscosity(0.1))
+
     def test_world_mapping_clamps_to_interior(self):
         np.testing.assert_array_equal(
             world_to_grid_index([-2.0, 0.5, 3.0], [0, 0, 0], [1, 1, 1], [10, 20, 30]),

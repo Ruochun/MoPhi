@@ -60,6 +60,64 @@ class NewtonDEMEMeshOwnerBinding:
     mesh_path: Path
 
 
+@dataclass(frozen=True)
+class NewtonShapeTriangleMesh:
+    """Triangle geometry extracted from one Newton shape in body-local coordinates."""
+
+    shape_index: int
+    body_index: int
+    shape_label: str
+    body_label: str
+    scaled_vertices: np.ndarray
+    body_local_vertices: np.ndarray
+    triangle_indices: np.ndarray
+
+
+def _rotate_xyzw(points: np.ndarray, quaternion) -> np.ndarray:
+    q = np.asarray(quaternion, dtype=np.float32)
+    vector = q[:3]
+    return points + 2.0 * (q[3] * np.cross(vector, points) + np.cross(vector, np.cross(vector, points)))
+
+
+def extract_newton_shape_triangle_meshes(builder, shape_indices: Sequence[int]) -> list[NewtonShapeTriangleMesh]:
+    """Extract selected Newton mesh shapes with scale and local transform applied."""
+    meshes = []
+    for shape_index in map(int, shape_indices):
+        if shape_index < 0 or shape_index >= len(builder.shape_type):
+            raise ValueError(f"Newton shape index {shape_index} is out of range.")
+        body_index = int(builder.shape_body[shape_index])
+        if body_index < 0:
+            raise ValueError(f"Newton shape {shape_index} is not attached to a body.")
+        source = builder.shape_source[shape_index]
+        vertices = getattr(source, "vertices", None)
+        indices = getattr(source, "indices", None)
+        if vertices is None or indices is None:
+            raise ValueError(f"Newton shape {shape_index} does not expose triangle vertices and indices.")
+        scaled = np.asarray(vertices, dtype=np.float32).reshape(-1, 3) * np.asarray(
+            builder.shape_scale[shape_index], dtype=np.float32
+        )
+        transform = builder.shape_transform[shape_index]
+        body_local = _rotate_xyzw(scaled, transform.q) + np.asarray(transform.p, dtype=np.float32)
+        triangles = np.asarray(indices, dtype=np.int32)
+        if triangles.size % 3 != 0:
+            raise ValueError(f"Newton shape {shape_index} has an incomplete triangle index array.")
+        triangles = triangles.reshape(-1, 3)
+        if np.any(triangles < 0) or np.any(triangles >= len(scaled)):
+            raise ValueError(f"Newton shape {shape_index} has out-of-range triangle indices.")
+        meshes.append(
+            NewtonShapeTriangleMesh(
+                shape_index,
+                body_index,
+                str(builder.shape_label[shape_index]),
+                str(builder.body_label[body_index]),
+                scaled,
+                body_local,
+                triangles,
+            )
+        )
+    return meshes
+
+
 def combine_triangle_meshes(
     mesh_parts: Sequence[tuple[np.ndarray, np.ndarray]],
 ) -> tuple[np.ndarray, np.ndarray]:

@@ -79,8 +79,8 @@ void register_newton_xlb_dem(py::module_& m) {
              "No-op when no DEME solver was provided.")
         .def("step_xlb", &PyNewtonXLBDEMCoupler::StepXLB,
              "Advance XLB by one substep.\n\n"
-             "Currently a no-op hook because the Python demo advances the XLB solver directly.\n"
-             "Call once per policy frame, independently of Newton / DEME.")
+             "Calls step() on the bound XLB runtime, independently of Newton / DEME.\n"
+             "No-op when no XLB runtime was provided.")
         .def("finalize", &PyNewtonXLBDEMCoupler::Finalize,
              "Finalize all solvers and release all resources including Python references.")
         .def("set_verbosity", &PyNewtonXLBDEMCoupler::SetVerbosity, py::arg("verbose"),

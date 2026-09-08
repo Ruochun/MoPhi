@@ -24,6 +24,9 @@ from mophi.couplers.newton_xlb import (
     NewtonBodyBoxBoundary,
     NewtonXLBHalfwayBounceBackWrench,
     NewtonXLBWrenchExchange,
+    XLBPhysicalScaling,
+    XLBStepperState,
+    velocity_stencil_to_warp,
 )
 from xlb.compute_backend import ComputeBackend
 from xlb.grid import grid_factory
@@ -58,15 +61,15 @@ PULSE_TORQUE = (0.0, 0.0, 1.0)
 OUTPUT_DIRECTORY = Path(__file__).resolve().parents[1] / "output" / Path(__file__).stem
 OUTPUT_PATH = OUTPUT_DIRECTORY / "diagnostics.json"
 
-CELL_SIZE = float((DOMAIN_MAX[0] - DOMAIN_MIN[0]) / GRID_SHAPE[0])
-CELL_SIZES = (DOMAIN_MAX - DOMAIN_MIN) / np.asarray(GRID_SHAPE)
-if not np.allclose(CELL_SIZES, CELL_SIZE):
-    raise ValueError("The diagnostic requires isotropic XLB cells.")
+XLB_SCALING = XLBPhysicalScaling.from_domain(
+    DOMAIN_MIN, DOMAIN_MAX, GRID_SHAPE, XLB_DT, PHYSICAL_KINEMATIC_VISCOSITY, PHYSICAL_DENSITY
+)
+CELL_SIZE = XLB_SCALING.cell_size
 if not np.isclose(XLB_SUBSTEPS * XLB_DT, NEWTON_DT):
     raise ValueError("NEWTON_DT must be an integer multiple of XLB_DT.")
-LATTICE_NU = float(PHYSICAL_KINEMATIC_VISCOSITY * XLB_DT / CELL_SIZE**2)
-OMEGA = float(1.0 / (3.0 * LATTICE_NU + 0.5))
-RELAXATION_TIME = 1.0 / OMEGA
+LATTICE_NU = XLB_SCALING.lattice_kinematic_viscosity
+OMEGA = XLB_SCALING.omega
+RELAXATION_TIME = XLB_SCALING.relaxation_time
 if RELAXATION_TIME < 0.55:
     raise ValueError("The diagnostic BGK relaxation time must remain safely above 0.5.")
 
@@ -125,22 +128,6 @@ def _build_newton(com_offset=(0.0, 0.0, 0.0)):
     return model, coupler
 
 
-def _velocity_stencil(velocity_set) -> np.ndarray:
-    source = velocity_set.c.numpy() if hasattr(velocity_set.c, "numpy") else velocity_set.c
-    values = np.asarray(source, dtype=np.int32)
-    if values.ndim == 1 and values.size == velocity_set.d * velocity_set.q:
-        values = np.asarray(
-            [
-                [int(velocity_set.c[axis, direction]) for direction in range(velocity_set.q)]
-                for axis in range(velocity_set.d)
-            ],
-            dtype=np.int32,
-        )
-    if values.ndim != 2:
-        raise ValueError(f"XLB velocity stencil must represent a matrix, got shape {values.shape}.")
-    return values.T if values.shape[0] == velocity_set.d else values
-
-
 def _robot_indices(center=(0.0, 0.0, 0.0)):
     lo = np.floor((np.asarray(center) - BOX_HALF_EXTENTS - DOMAIN_MIN) / CELL_SIZE).astype(int)
     hi = np.floor((np.asarray(center) + BOX_HALF_EXTENTS - DOMAIN_MIN) / CELL_SIZE).astype(int)
@@ -163,7 +150,7 @@ def _build_xlb(model, coupler, flow_speed: float):
         boundary_conditions = []
     else:
         wall_faces = ("bottom", "top")
-        inlet_speed = float(flow_speed * XLB_DT / CELL_SIZE)
+        inlet_speed = float(XLB_SCALING.velocity_to_lattice(flow_speed))
         boundary_conditions = [
             ZouHeBC(
                 bc_type="velocity",
@@ -182,8 +169,9 @@ def _build_xlb(model, coupler, flow_speed: float):
         boundary_conditions=[wall, *boundary_conditions, robot],
         collision_type="BGK",
     )
-    f0, f1, bc_mask, missing_mask = stepper.prepare_fields()
-    stencil = wp.array(_velocity_stencil(velocity_set), dtype=wp.int32, device=device)
+    runtime = XLBStepperState().initialize(stepper, OMEGA)
+    bc_mask, missing_mask = runtime.bc_mask, runtime.missing_mask
+    stencil = velocity_stencil_to_warp(velocity_set, device)
     boundary = NewtonBodyBoxBoundary()
     boundary.initialize(
         bc_mask,
@@ -211,18 +199,16 @@ def _build_xlb(model, coupler, flow_speed: float):
     )
     exchange = NewtonXLBWrenchExchange()
     exchange.initialize(model, [0], device)
-    return stepper, f0, f1, bc_mask, missing_mask, boundary, reducer, exchange
+    return runtime, boundary, reducer, exchange
 
 
-def _step_xlb(system, timestep: int):
-    stepper, f0, f1, bc_mask, missing_mask, _, _, _ = system
-    f0, f1 = stepper(f0, f1, bc_mask, missing_mask, OMEGA, timestep)
-    system[1], system[2] = f1, f0
+def _step_xlb(system):
+    system[0].step()
 
 
 def _sample_wrench(system, body_q):
-    _, f0, _, bc_mask, missing_mask, _, reducer, _ = system
-    reducer.reduce(f0, bc_mask, missing_mask, body_q)
+    runtime, _, reducer, _ = system
+    reducer.reduce(runtime.f0, runtime.bc_mask, runtime.missing_mask, body_q)
     wp.synchronize()
     return {"force": _vec(reducer.forces), "torque": _vec(reducer.torques)}
 
@@ -255,14 +241,12 @@ def _run_newton_pulse():
 def _run_xlb_case(flow_speed: float, move_mask: bool, feedback_mode: str, com_offset=(0.0, 0.0, 0.0)):
     model, coupler = _build_newton(com_offset)
     system = list(_build_xlb(model, coupler, flow_speed))
-    boundary, reducer, exchange = system[5], system[6], system[7]
+    boundary, reducer, exchange = system[1], system[2], system[3]
     body_forces = wp.zeros(model.body_count, dtype=wp.spatial_vector, device=reducer.device)
     zero = wp.zeros(1, dtype=wp.vec3, device=reducer.device)
     coupler.set_newton_body_forces(body_forces)
-    timestep = 0
     for _ in range(FLOW_WARMUP_STEPS):
-        _step_xlb(system, timestep)
-        timestep += 1
+        _step_xlb(system)
     initial_wrench = _sample_wrench(system, coupler.newton_state_0.body_q)
     initial_force = np.asarray(initial_wrench["force"])
     torque_about_com = np.asarray(initial_wrench["torque"]) - np.cross(np.asarray(com_offset), initial_force)
@@ -287,8 +271,7 @@ def _run_xlb_case(flow_speed: float, move_mask: bool, feedback_mode: str, com_of
             )
         boundary.update_from_newton(coupler.newton_state_0.body_q)
         for _ in range(XLB_SUBSTEPS):
-            _step_xlb(system, timestep)
-            timestep += 1
+            _step_xlb(system)
         wrench = _sample_wrench(system, coupler.newton_state_0.body_q)
         history.append(
             {
@@ -301,6 +284,7 @@ def _run_xlb_case(flow_speed: float, move_mask: bool, feedback_mode: str, com_of
     boundary.finalize()
     reducer.finalize()
     exchange.finalize()
+    system[0].finalize()
     coupler.finalize()
     return {
         "initial_wrench_about_body_origin": initial_wrench,

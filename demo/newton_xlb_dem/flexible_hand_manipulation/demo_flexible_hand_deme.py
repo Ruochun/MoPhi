@@ -15,7 +15,13 @@ import warp as wp
 
 import mophi
 import newton
-from mophi.couplers.newton_deme import NewtonDEMEParticleExchange, NewtonDEMEOwnerMap, NewtonDEMEOwnerPoseExchange
+from mophi.couplers.newton_deme import (
+    NewtonDEMEParticleExchange,
+    NewtonDEMEOwnerMap,
+    NewtonDEMEOwnerPoseExchange,
+    extract_newton_shape_triangle_meshes,
+    write_wavefront_mesh,
+)
 from mophi.utils.package_provider import load_package_provider
 from newton import JointTargetMode
 
@@ -251,16 +257,6 @@ def _replicated_world_offsets() -> np.ndarray:
     return offsets
 
 
-def _rotate_points_by_quat_xyzw(points: np.ndarray, quat_xyzw) -> np.ndarray:
-    """Rotate an ``(N, 3)`` point array by an xyzw quaternion."""
-    quat = np.asarray(quat_xyzw, dtype=np.float32)
-    q_xyz = quat[:3]
-    q_w = quat[3]
-    q_xyz_batch = np.broadcast_to(q_xyz, points.shape)
-    cross = np.cross(q_xyz_batch, points)
-    return points + 2.0 * (q_w * cross + np.cross(q_xyz_batch, cross))
-
-
 def _format_clump_position_bounds(label: str, positions: np.ndarray) -> str:
     """Return compact min/max diagnostics for DEME clump positions."""
     if len(positions) == 0:
@@ -277,30 +273,17 @@ def _export_hand_contact_mesh_proxies(hand: newton.ModelBuilder, directory: Path
     """Bake each Newton Allegro convex contact mesh into body-local OBJ coordinates for DEME."""
     directory.mkdir(parents=True, exist_ok=True)
     proxies = []
-    for shape_idx, shape_type in enumerate(hand.shape_type):
-        if shape_type != newton.GeoType.CONVEX_MESH:
-            continue
-        flags = hand.shape_flags[shape_idx]
-        if not (flags & newton.ShapeFlags.COLLIDE_SHAPES):
-            continue
-        body_idx = int(hand.shape_body[shape_idx])
-        if body_idx < 0:
-            continue
-
-        mesh = hand.shape_source[shape_idx]
-        vertices = np.asarray(mesh.vertices, dtype=np.float32).reshape(-1, 3)
-        scale = np.asarray(hand.shape_scale[shape_idx], dtype=np.float32)
-        local_xform = hand.shape_transform[shape_idx]
-        vertices = vertices * scale
-        vertices = _rotate_points_by_quat_xyzw(vertices, local_xform.q)
-        vertices += np.asarray(local_xform.p, dtype=np.float32)
-        indices = np.asarray(mesh.indices, dtype=np.int64).reshape(-1, 3) + 1
-
-        obj_path = directory / f"hand_body_{body_idx:02d}_shape_{shape_idx:02d}.obj"
-        lines = [f"v {v[0]:.9g} {v[1]:.9g} {v[2]:.9g}\n" for v in vertices]
-        lines.extend(f"f {tri[0]} {tri[1]} {tri[2]}\n" for tri in indices)
-        obj_path.write_text("".join(lines), encoding="ascii")
-        proxies.append((body_idx, obj_path))
+    shape_indices = [
+        shape_idx
+        for shape_idx, shape_type in enumerate(hand.shape_type)
+        if shape_type == newton.GeoType.CONVEX_MESH
+        and hand.shape_flags[shape_idx] & newton.ShapeFlags.COLLIDE_SHAPES
+        and int(hand.shape_body[shape_idx]) >= 0
+    ]
+    for mesh in extract_newton_shape_triangle_meshes(hand, shape_indices):
+        obj_path = directory / f"hand_body_{mesh.body_index:02d}_shape_{mesh.shape_index:02d}.obj"
+        write_wavefront_mesh(obj_path, mesh.body_local_vertices, mesh.triangle_indices)
+        proxies.append((mesh.body_index, obj_path))
     return proxies
 
 

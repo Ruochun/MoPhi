@@ -69,6 +69,11 @@ from mophi.couplers.newton_xlb import (
     NewtonBodyBoxBoundary,
     NewtonXLBHalfwayBounceBackWrench,
     NewtonXLBWrenchExchange,
+    XLBPhysicalScaling,
+    XLBStepperState,
+    prescribed_box_grid,
+    velocity_stencil_array,
+    velocity_stencil_to_warp,
 )
 from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
@@ -316,13 +321,17 @@ ENABLE_XLB_AD_HOC_FORCE_FEEDBACK = True
 XLB_NONPHYSICAL_WRENCH_FEEDBACK_GAIN = 0.01
 XLB_NONPHYSICAL_MAX_FORCE_TO_WEIGHT_RATIO = 0.1
 XLB_NONPHYSICAL_MAX_TORQUE = 5.0  # N m
-_XLB_CELL_SIZE = float((_XLB_DOMAIN_MAX[0] - _XLB_DOMAIN_MIN[0]) / _XLB_NX)
-_XLB_CELL_SIZES = (_XLB_DOMAIN_MAX - _XLB_DOMAIN_MIN) / np.array([_XLB_NX, _XLB_NY, _XLB_NZ])
-if not np.allclose(_XLB_CELL_SIZES, _XLB_CELL_SIZE):
-    raise ValueError("XLB physical scaling currently requires isotropic lattice cells.")
-_XLB_INLET_SPEED = float(_XLB_PHYSICAL_INLET_SPEED * _XLB_DT / _XLB_CELL_SIZE)
-_XLB_NU = float(_XLB_PHYSICAL_KINEMATIC_VISCOSITY * _XLB_DT / (_XLB_CELL_SIZE * _XLB_CELL_SIZE))
-_XLB_OMEGA = float(1.0 / (3.0 * _XLB_NU + 0.5))  # BGK relaxation parameter
+_XLB_SCALING = XLBPhysicalScaling.from_domain(
+    _XLB_DOMAIN_MIN,
+    _XLB_DOMAIN_MAX,
+    (_XLB_NX, _XLB_NY, _XLB_NZ),
+    _XLB_DT,
+    _XLB_PHYSICAL_KINEMATIC_VISCOSITY,
+    _XLB_PHYSICAL_DENSITY,
+)
+_XLB_CELL_SIZE = _XLB_SCALING.cell_size
+_XLB_INLET_SPEED = float(_XLB_SCALING.velocity_to_lattice(_XLB_PHYSICAL_INLET_SPEED))
+_XLB_OMEGA = _XLB_SCALING.omega
 _XLB_WARMUP_SECONDS = 0.6
 _XLB_WARMUP_STEPS = int(round(_XLB_WARMUP_SECONDS / _XLB_DT))
 _XLB_VIS_INTERVAL = 5  # refresh streamline visualisation every N Newton frames
@@ -336,10 +345,9 @@ _XLB_NONPHYSICAL_MAX_FORCE = (
 # State variables for the XLB solver (populated during setup below).
 xlb_simulation = None  # passed to coupler.initialize() as a reference handle
 _xlb_stepper = None
-_xlb_f0 = _xlb_f1 = _xlb_bc_mask = _xlb_missing_mask = None
+_xlb_runtime = None
 _xlb_macro = None
 _xlb_rho_field = _xlb_u_field = None
-_xlb_timestep = 0
 _xlb_u_np = None  # velocity in (NX, NY, NZ, 3) layout; updated each vis interval
 
 # ─── XLB robot-obstacle: constants, helpers, and per-frame state ──────────────
@@ -416,20 +424,17 @@ try:
 
     # Build the robot obstacle BC at a representative initial base-body position.
     # The BC is added to the stepper once and never removed; bc_mask and
-    # missing_mask are updated in-place by _xlb_update_robot_box() each frame.
-    _robot_init_gc_min, _robot_init_gc_max = demo_utils.xlb_prescribed_robot_box_grid(
-        np.array([0.0, 0.0, 0.62]),
+    # missing_mask are updated in-place by NewtonBodyBoxBoundary each frame.
+    _robot_init_gc_min, _robot_init_gc_max = prescribed_box_grid(
+        np.array([-_XLB_ROBOT_HALF_EXT_X, -_XLB_ROBOT_HALF_EXT_Y, 0.0]),
+        np.array([_XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y, 0.62 + _XLB_ROBOT_ABOVE_BASE]),
         _XLB_DOMAIN_MIN,
         _XLB_DOMAIN_MAX,
         (_XLB_NX, _XLB_NY, _XLB_NZ),
-        _XLB_ROBOT_HALF_EXT_X,
-        _XLB_ROBOT_HALF_EXT_Y,
-        _XLB_ROBOT_BELOW_BASE,
-        _XLB_ROBOT_ABOVE_BASE,
     )
     if _robot_init_gc_min is None:
         # Fallback: if the initial position is outside the domain, use a single interior cell
-        # so robot_bc gets an ID.  _xlb_update_robot_box() will position it
+        # so robot_bc gets an ID. NewtonBodyBoxBoundary will position it
         # correctly on the very first simulation frame.
         _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
         _robot_init_gc_max = _robot_init_gc_min.copy()
@@ -446,49 +451,13 @@ try:
         boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
         collision_type="BGK",
     )
-    _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask = _xlb_stepper.prepare_fields()
+    _xlb_runtime = XLBStepperState().initialize(_xlb_stepper, _XLB_OMEGA)
+    _xlb_bc_mask, _xlb_missing_mask = _xlb_runtime.bc_mask, _xlb_runtime.missing_mask
 
     # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
     _xlb_robot_bc_id = _xlb_robot_bc.id
-    _c = _xlb_vel_set.c
-    try:
-        _c_arr = np.asarray(_c.numpy() if hasattr(_c, "numpy") else _c, dtype=np.int32)
-        if _c_arr.ndim != 2:
-            raise ValueError(f"vel_set.c has unexpected ndim={_c_arr.ndim}")
-        # vel_set.c is stored as (d, q) = (3, 19); transpose to (q, d) = (19, 3).
-        _xlb_vel_c_np = _c_arr.T if _c_arr.shape[0] == _xlb_vel_set.d else _c_arr
-        if _xlb_vel_c_np.shape != (_xlb_vel_set.q, _xlb_vel_set.d):
-            raise ValueError(f"Unexpected vel_c shape after transpose: {_xlb_vel_c_np.shape}")
-    except (AttributeError, ValueError, AssertionError):
-        # Hardcoded fallback: standard D3Q19 velocity ordering.
-        _xlb_vel_c_np = np.array(
-            [
-                [0, 0, 0],
-                [1, 0, 0],
-                [-1, 0, 0],
-                [0, 1, 0],
-                [0, -1, 0],
-                [0, 0, 1],
-                [0, 0, -1],
-                [1, 1, 0],
-                [-1, -1, 0],
-                [1, -1, 0],
-                [-1, 1, 0],
-                [1, 0, 1],
-                [-1, 0, -1],
-                [1, 0, -1],
-                [-1, 0, 1],
-                [0, 1, 1],
-                [0, -1, -1],
-                [0, 1, -1],
-                [0, -1, 1],
-            ],
-            dtype=np.int32,
-        )
-
-    # Upload the velocity stencil to device once as a Warp array so that
-    # the GPU kernels in _xlb_update_robot_box_gpu() can read it on-device.
-    _xlb_vel_c_wp = wp.array(_xlb_vel_c_np, dtype=wp.int32, device=_xlb_bc_mask.device)
+    _xlb_vel_c_np = velocity_stencil_array(_xlb_vel_set)
+    _xlb_vel_c_wp = velocity_stencil_to_warp(_xlb_vel_set, _xlb_bc_mask.device)
 
     _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
     _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
@@ -498,17 +467,14 @@ try:
     # robot obstacle already in place at its initial position.
     print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
     for _ws in range(_XLB_WARMUP_STEPS):
-        # This is IncompressibleNavierStokesStepper's usage (f_0, f_1, bc_mask, missing_mask, omega, timestep)
-        _xlb_f0, _xlb_f1 = _xlb_stepper(_xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep)
-        _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0  # double-buffer swap
-        _xlb_timestep += 1
+        _xlb_runtime.step()
 
     # Extract macro state; XLB stores fields as (Q/D, NX, NY, NZ) — transpose
     # to (NX, NY, NZ, 3) for the streamline helper.
-    _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
+    _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_runtime.f0, _xlb_rho_field, _xlb_u_field)
     _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
 
-    xlb_simulation = _xlb_stepper  # coupler stores this as an opaque reference
+    xlb_simulation = _xlb_runtime
     print(
         f"[XLB] LBM simulation ready: {_XLB_NX}×{_XLB_NY}×{_XLB_NZ} grid "
         f"(dx={_XLB_CELL_SIZE:.5f} m, dt={_XLB_DT:.4g} s, "
@@ -647,9 +613,8 @@ print("[Coupler] NewtonXLBDEMCoupler initialized.\n")
 
 # ── Bind XLB device-resident mask arrays to the coupler ──────────────────────
 # After initialization, hand the coupler the device handles for XLB's bc_mask
-# and missing_mask.  The GPU kernels in _xlb_update_robot_box_gpu() then
-# retrieve them via coupler.get_xlb_bc_mask_array() / coupler.get_xlb_missing_mask_array()
-# and write to them in-place, with no CPU round-trip.
+# and missing_mask. MoPhi's Newton-body boundary helper writes them in-place
+# from Newton's device transforms, with no CPU round-trip.
 if _xlb_stepper is not None:
     coupler.set_xlb_masks(_xlb_bc_mask, _xlb_missing_mask)
     print("[Coupler] XLB bc_mask and missing_mask device handles bound.\n")
@@ -852,19 +817,15 @@ for frame in range(NUM_FRAMES):
         # Newton body transform fixed while the fluid catches up to this time.
         _newton_xlb_boundary.update_from_newton(coupler.newton_state_0.body_q)
         for _ in range(XLB_SUBSTEPS_PER_NEWTON_STEP):
-            _xlb_f0, _xlb_f1 = _xlb_stepper(
-                _xlb_f0, _xlb_f1, _xlb_bc_mask, _xlb_missing_mask, _XLB_OMEGA, _xlb_timestep
-            )
-            _xlb_f0, _xlb_f1 = _xlb_f1, _xlb_f0
-            _xlb_timestep += 1
+            coupler.step_xlb()
         if ENABLE_XLB_AD_HOC_FORCE_FEEDBACK:
-            _xlb_wrench_reducer.reduce(_xlb_f0, _xlb_bc_mask, _xlb_missing_mask, coupler.newton_state_0.body_q)
+            _xlb_wrench_reducer.reduce(_xlb_runtime.f0, _xlb_bc_mask, _xlb_missing_mask, coupler.newton_state_0.body_q)
 
     sim_time += FRAME_DT
 
     # Visualization sampling is deliberately separate from physical XLB cadence.
     if _vis_available and frame % _XLB_VIS_INTERVAL == 0:
-        _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_f0, _xlb_rho_field, _xlb_u_field)
+        _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_runtime.f0, _xlb_rho_field, _xlb_u_field)
         _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
         _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
             _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
@@ -936,6 +897,7 @@ _xlb_wrench_reducer.finalize()
 _xlb_wrench_exchange.finalize()
 if _xlb_stepper is not None:
     _newton_xlb_boundary.finalize()
+    _xlb_runtime.finalize()
 coupler.finalize()
 print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 
