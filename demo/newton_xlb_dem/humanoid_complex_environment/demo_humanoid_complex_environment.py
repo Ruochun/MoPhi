@@ -38,11 +38,13 @@ import warp as wp
 import yaml
 
 import mophi
+from humanoid_fight_control import scripted_attack_offsets
+from humanoid_proxy_geometry import make_deme_mesh_owner_specs, make_scaled_box_mesh_proxies
+from humanoid_visualization import configure_scene_lighting, transform_contact_proxy_lines
 from mophi.couplers.newton_deme import (
     NewtonDEMEContactCoupler,
     NewtonDEMEMeshOwnerSpec,
     add_deme_mesh_owners,
-    combine_triangle_meshes,
     extract_newton_shape_triangle_meshes,
     owner_map_from_mesh_bindings,
 )
@@ -150,121 +152,12 @@ if not np.isclose(DEME_SUBSTEPS * DEME_DT, NEWTON_DT, rtol=0.0, atol=1.0e-12):
     raise ValueError("NEWTON_DT must be an integer multiple of DEME_DT.")
 
 
-@wp.kernel
-def _transform_contact_proxy_lines(
-    body_q: wp.array(dtype=wp.transform),
-    body_indices: wp.array(dtype=wp.int32),
-    local_starts: wp.array(dtype=wp.vec3),
-    local_ends: wp.array(dtype=wp.vec3),
-    world_starts: wp.array(dtype=wp.vec3),
-    world_ends: wp.array(dtype=wp.vec3),
-):
-    line_idx = wp.tid()
-    body_q_i = body_q[body_indices[line_idx]]
-    world_starts[line_idx] = wp.transform_point(body_q_i, local_starts[line_idx])
-    world_ends[line_idx] = wp.transform_point(body_q_i, local_ends[line_idx])
-
-
-def _transform_points(points: np.ndarray, transform) -> np.ndarray:
-    """Apply a Warp XYZW transform to NumPy points."""
-    position = np.asarray([transform[0], transform[1], transform[2]], dtype=np.float32)
-    quaternion_xyz = np.asarray([transform[3], transform[4], transform[5]], dtype=np.float32)
-    quaternion_w = float(transform[6])
-    cross = np.cross(quaternion_xyz, points)
-    rotated = points + 2.0 * np.cross(quaternion_xyz, cross + quaternion_w * points)
-    return rotated + position
-
-
 def _configure_viewer_scene_lighting(viewer) -> None:
-    """Apply the configured sky gradient and directional-light intensity."""
-    if not hasattr(viewer, "renderer"):
-        return
-    viewer.renderer.sky_upper = tuple(SCENE_SKY_UPPER_COLOR)
-    viewer.renderer.sky_lower = tuple(SCENE_SKY_LOWER_COLOR)
-    viewer.renderer.background_color = tuple(SCENE_SKY_UPPER_COLOR)
-    viewer.renderer._light_color = tuple(SCENE_LIGHT_COLOR)
-
-
-def _interpolate_joint_keyframes(progress: float, keyframes: tuple[tuple[float, dict[str, float]], ...]) -> dict:
-    """Linearly interpolate sparse named-joint offsets for one attack."""
-    progress = float(np.clip(progress, 0.0, 1.0))
-    for keyframe_idx in range(len(keyframes) - 1):
-        time_0, offsets_0 = keyframes[keyframe_idx]
-        time_1, offsets_1 = keyframes[keyframe_idx + 1]
-        if progress <= time_1:
-            blend = (progress - time_0) / (time_1 - time_0)
-            joint_names = offsets_0.keys() | offsets_1.keys()
-            return {
-                name: (1.0 - blend) * offsets_0.get(name, 0.0) + blend * offsets_1.get(name, 0.0)
-                for name in joint_names
-            }
-    return dict(keyframes[-1][1])
+    configure_scene_lighting(viewer, SCENE_SKY_UPPER_COLOR, SCENE_SKY_LOWER_COLOR, SCENE_LIGHT_COLOR)
 
 
 def _scripted_attack_offsets(attack_kind: str, side: str, progress: float) -> dict[str, float]:
-    """Return a whole-body residual trajectory for a punch or kick."""
-    side_sign = -1.0 if side == "left" else 1.0
-    if side not in ("left", "right"):
-        raise ValueError(f"Attack side must be 'left' or 'right', got {side!r}.")
-
-    if attack_kind == "punch":
-        prefix = f"{side}_"
-        fist = {
-            f"{prefix}hand_index_0_joint": FIGHT_FIST_CURL,
-            f"{prefix}hand_index_1_joint": FIGHT_FIST_CURL,
-            f"{prefix}hand_middle_0_joint": FIGHT_FIST_CURL,
-            f"{prefix}hand_middle_1_joint": FIGHT_FIST_CURL,
-            f"{prefix}hand_thumb_0_joint": 0.6 * FIGHT_FIST_CURL,
-            f"{prefix}hand_thumb_1_joint": FIGHT_FIST_CURL,
-            f"{prefix}hand_thumb_2_joint": FIGHT_FIST_CURL,
-        }
-        windup = {
-            **fist,
-            f"{prefix}shoulder_pitch_joint": 0.45,
-            f"{prefix}shoulder_roll_joint": 0.25 * side_sign,
-            f"{prefix}shoulder_yaw_joint": -0.35 * side_sign,
-            f"{prefix}elbow_joint": 1.25,
-            "waist_yaw_joint": -0.25 * side_sign,
-        }
-        strike = {
-            **fist,
-            f"{prefix}shoulder_pitch_joint": -1.25,
-            f"{prefix}shoulder_roll_joint": -0.12 * side_sign,
-            f"{prefix}shoulder_yaw_joint": 0.18 * side_sign,
-            f"{prefix}elbow_joint": 0.05,
-            "waist_yaw_joint": 0.35 * side_sign,
-        }
-        offsets = _interpolate_joint_keyframes(
-            progress,
-            ((0.0, fist), (0.30, windup), (0.58, strike), (0.78, strike), (1.0, fist)),
-        )
-        return {name: value if "hand_" in name else FIGHT_PUNCH_MOTION_SCALE * value for name, value in offsets.items()}
-
-    if attack_kind == "kick":
-        prefix = f"{side}_"
-        other_side = "right" if side == "left" else "left"
-        chamber = {
-            f"{prefix}hip_pitch_joint": -0.75,
-            f"{prefix}knee_joint": 1.15,
-            f"{prefix}ankle_pitch_joint": -0.45,
-            f"{other_side}_knee_joint": 0.18,
-            "waist_pitch_joint": 0.18,
-            "waist_roll_joint": -0.12 * side_sign,
-        }
-        strike = {
-            f"{prefix}hip_pitch_joint": -1.05,
-            f"{prefix}knee_joint": 0.05,
-            f"{prefix}ankle_pitch_joint": 0.15,
-            f"{other_side}_knee_joint": 0.22,
-            "waist_pitch_joint": 0.28,
-            "waist_roll_joint": -0.16 * side_sign,
-        }
-        return _interpolate_joint_keyframes(
-            progress,
-            ((0.0, {}), (0.38, chamber), (0.62, strike), (0.78, strike), (1.0, {})),
-        )
-
-    raise ValueError(f"Attack kind must be 'punch' or 'kick', got {attack_kind!r}.")
+    return scripted_attack_offsets(attack_kind, side, progress, FIGHT_FIST_CURL, FIGHT_PUNCH_MOTION_SCALE)
 
 
 def _make_scaled_contact_mesh_proxies(
@@ -273,62 +166,15 @@ def _make_scaled_contact_mesh_proxies(
     base_indices: np.ndarray,
 ) -> list[dict]:
     """Scale the configured OBJ mesh around each visual triangle mesh."""
-    base_bounds_min = base_vertices.min(axis=0)
-    base_bounds_max = base_vertices.max(axis=0)
-    base_center = 0.5 * (base_bounds_min + base_bounds_max)
-    base_size = base_bounds_max - base_bounds_min
-    if not np.all(np.isfinite(base_vertices)) or np.any(base_size <= 0.0):
-        mophi.fatal(f"Contact proxy mesh has invalid bounds: {CONTACT_PROXY_MESH_PATH}")
-    if len(base_indices) % 3 != 0 or np.any(base_indices < 0) or np.any(base_indices >= len(base_vertices)):
-        mophi.fatal(f"Contact proxy mesh has invalid triangle indices: {CONTACT_PROXY_MESH_PATH}")
-
-    proxies = []
-    for mesh_info in visual_meshes:
-        scaled_vertices = mesh_info["scaled_vertices"]
-        bounds_min = scaled_vertices.min(axis=0) - CONTACT_PROXY_PADDING
-        bounds_max = scaled_vertices.max(axis=0) + CONTACT_PROXY_PADDING
-        proxy_center = 0.5 * (bounds_min + bounds_max)
-        proxy_size = bounds_max - bounds_min
-        scaled_proxy_vertices = (base_vertices - base_center) * (proxy_size / base_size) + proxy_center
-        body_local_vertices = _transform_points(scaled_proxy_vertices, mesh_info["shape_transform"])
-        proxies.append(
-            {
-                "robot_instance": mesh_info["robot_instance"],
-                "body_index": mesh_info["body_index"],
-                "body_label": mesh_info["body_label"],
-                "shape_label": mesh_info["shape_label"],
-                "half_extents": 0.5 * (bounds_max - bounds_min),
-                "body_local_vertices": body_local_vertices,
-                "triangle_indices": base_indices,
-            }
-        )
-    return proxies
+    try:
+        return make_scaled_box_mesh_proxies(visual_meshes, base_vertices, base_indices, CONTACT_PROXY_PADDING)
+    except ValueError as exc:
+        mophi.fatal(f"{exc} Source: {CONTACT_PROXY_MESH_PATH}")
 
 
 def _make_deme_robot_mesh_specs(contact_mesh_proxies: list[dict]) -> list[NewtonDEMEMeshOwnerSpec]:
     """Group the fighting proxies into one DEME mesh-owner specification per body."""
-    proxies_by_body = {}
-    for proxy in contact_mesh_proxies:
-        key = (proxy["robot_instance"], proxy["body_index"])
-        proxies_by_body.setdefault(key, []).append(proxy)
-
-    specs = []
-    for (robot_instance, body_index), body_proxies in sorted(proxies_by_body.items()):
-        vertices, triangle_indices = combine_triangle_meshes(
-            [(proxy["body_local_vertices"], proxy["triangle_indices"]) for proxy in body_proxies]
-        )
-        specs.append(
-            NewtonDEMEMeshOwnerSpec(
-                name=f"robot_{robot_instance}_body_{body_index}",
-                newton_body_index=body_index,
-                family=DEME_ROBOT_FAMILIES[robot_instance],
-                mass=1.0,
-                principal_moi=(1.0, 1.0, 1.0),
-                vertices=vertices,
-                triangle_indices=triangle_indices,
-            )
-        )
-    return specs
+    return make_deme_mesh_owner_specs(contact_mesh_proxies, DEME_ROBOT_FAMILIES)
 
 
 def _create_deme_robot_contact_coupler(example) -> NewtonDEMEContactCoupler:
@@ -963,7 +809,7 @@ class HumanoidContactExample(newton_robot_policy.Example):
         self.viewer.log_contacts(self.contacts, self.state_0)
         if self.contact_proxy_local_starts is not None:
             wp.launch(
-                _transform_contact_proxy_lines,
+                transform_contact_proxy_lines,
                 dim=len(self.contact_proxy_local_starts),
                 inputs=[
                     self.state_0.body_q,

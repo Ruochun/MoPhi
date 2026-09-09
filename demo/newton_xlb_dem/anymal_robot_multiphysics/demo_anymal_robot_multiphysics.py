@@ -46,7 +46,6 @@ Or from the repository root after installing the mophi package:
     python -m demo.newton_xlb_dem.anymal_robot_multiphysics.demo_anymal_robot_multiphysics
 """
 
-import os
 import sys
 from importlib.util import find_spec
 from pathlib import Path
@@ -70,10 +69,6 @@ from mophi.couplers.newton_xlb import (
     NewtonXLBHalfwayBounceBackWrench,
     NewtonXLBWrenchExchange,
     XLBPhysicalScaling,
-    XLBStepperState,
-    prescribed_box_grid,
-    velocity_stencil_array,
-    velocity_stencil_to_warp,
 )
 from mophi.couplers.xlb_deme import XLBDEMEParticleExchange
 
@@ -103,16 +98,17 @@ mophi.check_newton_warp_mujoco_versions(
 )
 
 # ─── Import demo-specific utilities ──────────────────────────────────────────
-# newton_xlb_dem_utils.py lives in demo/newton_xlb_dem (parent directory of this script).
-# Prepend that parent directory so the module can be found whether the
-# demo is run directly (python demo/...) or via -m.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import newton_xlb_dem_utils as demo_utils  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import anymal_geometry as geometry_utils
+from anymal_deme_scene import build_anymal_deme_scene, prepare_anymal_deme_population  # noqa: E402
+from anymal_newton_scene import build_anymal_newton_scene  # noqa: E402
+from anymal_policy import compute_observation, evaluate_joint_targets  # noqa: E402
 
 # ─── Import XLB + DEME (required for this three-way demo) ──────────────────
 if find_spec("xlb") is None:
     mophi.fatal('XLB is required for this demo.\nInstall with:  pip install "xlb[cuda]"')
 import xlb
+from anymal_xlb_scene import build_anymal_xlb_scene  # noqa: E402
 from mophi.utils.package_provider import load_package_provider
 
 DEME = load_package_provider("deme")
@@ -127,6 +123,38 @@ print("=== MoPhi Newton (ANYmal C) + XLB + DEME three-way co-simulation demo ===
 # Mirrors newton/examples/robot/example_robot_anymal_c_walk.py.
 lab_to_mujoco = [0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11]
 mujoco_to_lab = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
+POLICY_ACTION_SCALE = 0.5
+
+# Newton robot construction choices retained visibly by this experiment.
+ANYMAL_BASE_HEIGHT = 0.62
+ANYMAL_BASE_YAW = float(np.pi * 0.5)
+ANYMAL_JOINT_ARMATURE = 0.06
+ANYMAL_JOINT_LIMIT_STIFFNESS = 1.0e3
+ANYMAL_JOINT_LIMIT_DAMPING = 1.0e1
+ANYMAL_SHAPE_STIFFNESS = 5.0e4
+ANYMAL_SHAPE_DAMPING = 5.0e2
+ANYMAL_SHAPE_FRICTION_STIFFNESS = 1.0e3
+ANYMAL_SHAPE_FRICTION = 0.75
+ANYMAL_TARGET_STIFFNESS = 150.0
+ANYMAL_TARGET_DAMPING = 5.0
+ANYMAL_SOLVER_ITERATIONS = 50
+ANYMAL_MAXIMUM_JOINTS = 50
+ANYMAL_MAXIMUM_CONTACTS = 100
+FOOT_SHANK_NAMES = ["LF_SHANK", "RF_SHANK", "LH_SHANK", "RH_SHANK"]
+INITIAL_JOINT_POSITIONS = {
+    "RH_HAA": 0.0,
+    "RH_HFE": -0.4,
+    "RH_KFE": 0.8,
+    "LH_HAA": 0.0,
+    "LH_HFE": -0.4,
+    "LH_KFE": 0.8,
+    "RF_HAA": 0.0,
+    "RF_HFE": 0.4,
+    "RF_KFE": -0.8,
+    "LF_HAA": 0.0,
+    "LF_HFE": 0.4,
+    "LF_KFE": -0.8,
+}
 
 # ─── Initialize Warp ───────────────────────────────────────────────────────
 wp.init()
@@ -146,86 +174,35 @@ policy_path = str(asset_path / "rl_policies" / "anymal_walking_policy_physx.pt")
 print(f"[Newton] Assets ready: {asset_path}\n")
 
 print("[Newton] Building ANYmal C model ...")
-builder = newton.ModelBuilder()
-newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
-
-# Joint and shape defaults matching Newton's anymal example.
-builder.default_joint_cfg = newton.ModelBuilder.JointDofConfig(
-    armature=0.06,
-    limit_ke=1.0e3,
-    limit_kd=1.0e1,
-)
-builder.default_shape_cfg.ke = 5.0e4
-builder.default_shape_cfg.kd = 5.0e2
-builder.default_shape_cfg.kf = 1.0e3
-builder.default_shape_cfg.mu = 0.75
-
-builder.add_urdf(
+_newton_scene = build_anymal_newton_scene(
     urdf_path,
-    xform=wp.transform(
-        wp.vec3(0.0, 0.0, 0.62),
-        wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), wp.pi * 0.5),
-    ),
-    floating=True,
-    enable_self_collisions=False,
-    collapse_fixed_joints=True,
-    ignore_inertial_definitions=False,
+    geometry_utils,
+    INITIAL_JOINT_POSITIONS,
+    FOOT_SHANK_NAMES,
+    ANYMAL_BASE_HEIGHT,
+    ANYMAL_BASE_YAW,
+    ANYMAL_JOINT_ARMATURE,
+    ANYMAL_JOINT_LIMIT_STIFFNESS,
+    ANYMAL_JOINT_LIMIT_DAMPING,
+    ANYMAL_SHAPE_STIFFNESS,
+    ANYMAL_SHAPE_DAMPING,
+    ANYMAL_SHAPE_FRICTION_STIFFNESS,
+    ANYMAL_SHAPE_FRICTION,
+    ANYMAL_TARGET_STIFFNESS,
+    ANYMAL_TARGET_DAMPING,
+    ANYMAL_SOLVER_ITERATIONS,
+    ANYMAL_MAXIMUM_JOINTS,
+    ANYMAL_MAXIMUM_CONTACTS,
 )
-
-# Enlarge foot collision spheres for walking stability on the ground plane and
-# record each sphere's body index and local offset for foot-tip contact proxies.
-# Also build the body-name→index mapping (needed for foot_tip_descriptors below).
-# Side-effect: builder.shape_scale is modified in-place (sphere radii doubled).
-builder_foot_spheres, builder_body_name_to_idx = demo_utils.scan_and_enlarge_foot_spheres(builder)
-
-# Collect the robot's visual body-part descriptors (URDF <visual> mesh shapes).
-# These provide the actual per-link triangle-mesh geometry for future use as a
-# higher-fidelity XLB wall boundary beyond the current AABB box representation.
-body_part_visual_descriptors = demo_utils.collect_visual_body_part_descriptors(builder)
-
-# Flat ground plane only — no procedural terrain.
-builder.add_ground_plane()
-
-# Set initial joint positions to a stable standing pose (from the ANYmal C example).
-initial_q = {
-    "RH_HAA": 0.0,
-    "RH_HFE": -0.4,
-    "RH_KFE": 0.8,
-    "LH_HAA": 0.0,
-    "LH_HFE": -0.4,
-    "LH_KFE": 0.8,
-    "RF_HAA": 0.0,
-    "RF_HFE": 0.4,
-    "RF_KFE": -0.8,
-    "LF_HAA": 0.0,
-    "LF_HFE": 0.4,
-    "LF_KFE": -0.8,
-}
-# builder.joint_q indices: first 6 are the free-joint (position + quaternion),
-# then each revolute joint's DOF follows in declaration order.
-# Build a name→index mapping once to avoid repeated linear scans.
-joint_name_to_idx = {lbl.split("/")[-1]: i for i, lbl in enumerate(builder.joint_label)}
-for name, value in initial_q.items():
-    idx = joint_name_to_idx.get(name)
-    if idx is None:
-        raise ValueError(f"Joint '{name}' not found in builder.joint_label")
-    builder.joint_q[idx + 6] = value
-
-# Position and velocity control gains.
-for i in range(len(builder.joint_target_ke)):
-    builder.joint_target_ke[i] = 150
-    builder.joint_target_kd[i] = 5
-
-newton_model = builder.finalize()
-newton_solver = newton.solvers.SolverMuJoCo(
-    newton_model,
-    use_mujoco_contacts=False,
-    solver="newton",
-    ls_parallel=False,
-    ls_iterations=50,
-    njmax=50,
-    nconmax=100,
-)
+builder = _newton_scene.builder
+newton_model = _newton_scene.model
+newton_solver = _newton_scene.solver
+builder_foot_spheres = _newton_scene.foot_spheres
+builder_body_name_to_idx = _newton_scene.body_name_to_index
+body_part_visual_descriptors = _newton_scene.visual_descriptors
+foot_tip_descriptors = _newton_scene.foot_descriptors
+foot_tip_sphere_radii = _newton_scene.foot_radii
+foot_tip_body_indices = _newton_scene.foot_body_indices
 
 print(f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, " f"{newton_model.joint_count} joints.\n")
 
@@ -233,16 +210,10 @@ print(f"[Newton] ANYmal C model built: {newton_model.body_count} bodies, " f"{ne
 # ANYmal C has a GeoType.SPHERE collision shape at the distal end of each SHANK
 # link.  These spheres are the ground-contact proxies and will serve as coupling
 # surfaces for DEM particles and XLB fluid boundaries in future co-sim work.
-# See demo_utils.build_foot_tip_descriptors for the full descriptor schema.
-FOOT_SHANK_NAMES = ["LF_SHANK", "RF_SHANK", "LH_SHANK", "RH_SHANK"]
-foot_tip_descriptors, foot_tip_sphere_radii = demo_utils.build_foot_tip_descriptors(
-    builder_body_name_to_idx, builder_foot_spheres, FOOT_SHANK_NAMES
-)
-foot_tip_body_indices = [int(d["body_idx"]) for d in foot_tip_descriptors]
-
+# See anymal_geometry.build_foot_tip_descriptors for the descriptor schema.
 # Visual meshes are nice, but for the production code we don't print them
-# demo_utils.print_foot_tip_descriptors(foot_tip_descriptors)
-# demo_utils.print_visual_body_part_descriptors(body_part_visual_descriptors)
+# geometry_utils.print_foot_tip_descriptors(foot_tip_descriptors)
+# geometry_utils.print_visual_body_part_descriptors(body_part_visual_descriptors)
 
 # ─── Visualization backend selection ─────────────────────────────────────────
 # Set USE_OMNIVERSE_VISUALIZATION = True to write each frame to a USD scene file
@@ -346,8 +317,6 @@ _XLB_NONPHYSICAL_MAX_FORCE = (
 xlb_simulation = None  # passed to coupler.initialize() as a reference handle
 _xlb_stepper = None
 _xlb_runtime = None
-_xlb_macro = None
-_xlb_rho_field = _xlb_u_field = None
 _xlb_u_np = None  # velocity in (NX, NY, NZ, 3) layout; updated each vis interval
 
 # ─── XLB robot-obstacle: constants, helpers, and per-frame state ──────────────
@@ -380,99 +349,49 @@ _xlb_vel_c_wp = None  # D3Q19 velocity stencil as a device-resident Warp array (
 
 
 print("[XLB] Setting up real LBM simulation ...")
-from xlb.compute_backend import ComputeBackend as _XLBComputeBackend
-from xlb.precision_policy import PrecisionPolicy as _XLBPrecisionPolicy, Precision as _XLBPrecision
-from xlb.grid import grid_factory as _xlb_grid_factory
-from xlb.operator.boundary_condition import (
-    ZouHeBC as _ZouHeBC,
-    HalfwayBounceBackBC as _HalfwayBounceBackBC,
-    ExtrapolationOutflowBC as _ExtrapolationOutflowBC,
-)
-from xlb.operator.stepper import IncompressibleNavierStokesStepper as _NSEStepper
-from xlb.operator.macroscopic import Macroscopic as _XLBMacroscopic
-
 # Guard against XLB-internal runtime/setup failures with a clear fatal message.
 # This demo requires XLB; setup errors must terminate rather than silently degrade.
 try:
-    _xlb_backend = _XLBComputeBackend.WARP
-    _xlb_precision = _XLBPrecisionPolicy.FP32FP32
-    _xlb_vel_set = xlb.velocity_set.D3Q19(precision_policy=_xlb_precision, compute_backend=_xlb_backend)
-    xlb.init(_xlb_vel_set, _xlb_backend, _xlb_precision)
-
-    _xlb_grid = _xlb_grid_factory((_XLB_NX, _XLB_NY, _XLB_NZ), compute_backend=_xlb_backend)
-
-    # Build non-overlapping boundary index sets.
-    _box = _xlb_grid.bounding_box_indices()
-    _box_no_e = _xlb_grid.bounding_box_indices(remove_edges=True)
-
-    _xlb_inlet_idx = _box_no_e["back"]  # y_max face  –  incoming flow (-y direction)
-    _xlb_outlet_idx = _box_no_e["front"]  # y_min face  –  outflow
-    _xlb_wall_idx = [
-        _box["bottom"][i] + _box["top"][i] + _box["left"][i] + _box["right"][i] for i in range(_xlb_vel_set.d)
-    ]
-    _xlb_wall_idx = np.unique(np.array(_xlb_wall_idx), axis=-1).tolist()
-
-    # ZouHeBC velocity BC: prescribed_value must have exactly one non-zero element
-    # (the normal component) to define the intended inflow direction.
-    _xlb_inlet_bc = _ZouHeBC(
-        bc_type="velocity",
-        prescribed_value=np.array([0.0, _XLB_INLET_SPEED, 0.0]),
-        indices=_xlb_inlet_idx,
-    )
-    _xlb_wall_bc = _HalfwayBounceBackBC(indices=_xlb_wall_idx)
-    _xlb_outlet_bc = _ExtrapolationOutflowBC(indices=_xlb_outlet_idx)
-
-    # Build the robot obstacle BC at a representative initial base-body position.
-    # The BC is added to the stepper once and never removed; bc_mask and
-    # missing_mask are updated in-place by NewtonBodyBoxBoundary each frame.
-    _robot_init_gc_min, _robot_init_gc_max = prescribed_box_grid(
+    _xlb_scene = build_anymal_xlb_scene(
+        (_XLB_NX, _XLB_NY, _XLB_NZ),
+        _XLB_INLET_SPEED,
+        _XLB_OMEGA,
         np.array([-_XLB_ROBOT_HALF_EXT_X, -_XLB_ROBOT_HALF_EXT_Y, 0.0]),
         np.array([_XLB_ROBOT_HALF_EXT_X, _XLB_ROBOT_HALF_EXT_Y, 0.62 + _XLB_ROBOT_ABOVE_BASE]),
         _XLB_DOMAIN_MIN,
         _XLB_DOMAIN_MAX,
-        (_XLB_NX, _XLB_NY, _XLB_NZ),
     )
-    if _robot_init_gc_min is None:
-        # Fallback: if the initial position is outside the domain, use a single interior cell
-        # so robot_bc gets an ID. NewtonBodyBoxBoundary will position it
-        # correctly on the very first simulation frame.
-        _robot_init_gc_min = np.array([_XLB_NX // 2, _XLB_NY // 2, _XLB_NZ // 2])
-        _robot_init_gc_max = _robot_init_gc_min.copy()
-    _rxi = np.arange(_robot_init_gc_min[0], _robot_init_gc_max[0] + 1)
-    _ryi = np.arange(_robot_init_gc_min[1], _robot_init_gc_max[1] + 1)
-    _rzi = np.arange(_robot_init_gc_min[2], _robot_init_gc_max[2] + 1)
-    _rgx, _rgy, _rgz = np.meshgrid(_rxi, _ryi, _rzi, indexing="ij")
-    _xlb_robot_bc = _HalfwayBounceBackBC(
-        indices=[_rgx.flatten().tolist(), _rgy.flatten().tolist(), _rgz.flatten().tolist()]
-    )
-
-    _xlb_stepper = _NSEStepper(
-        grid=_xlb_grid,
-        boundary_conditions=[_xlb_wall_bc, _xlb_inlet_bc, _xlb_outlet_bc, _xlb_robot_bc],
-        collision_type="BGK",
-    )
-    _xlb_runtime = XLBStepperState().initialize(_xlb_stepper, _XLB_OMEGA)
+    _xlb_backend = _xlb_scene.backend
+    _xlb_precision = _xlb_scene.precision
+    _xlb_vel_set = _xlb_scene.velocity_set
+    _xlb_grid = _xlb_scene.grid
+    _xlb_inlet_idx = _xlb_scene.inlet_indices
+    _xlb_outlet_idx = _xlb_scene.outlet_indices
+    _xlb_wall_idx = _xlb_scene.wall_indices
+    _robot_indices = _xlb_scene.robot_indices
+    _xlb_inlet_bc = _xlb_scene.inlet_boundary
+    _xlb_wall_bc = _xlb_scene.wall_boundary
+    _xlb_outlet_bc = _xlb_scene.outlet_boundary
+    _xlb_robot_bc = _xlb_scene.robot_boundary
+    _robot_init_gc_min = _xlb_scene.robot_grid_min
+    _robot_init_gc_max = _xlb_scene.robot_grid_max
+    _xlb_stepper = _xlb_scene.stepper
+    _xlb_runtime = _xlb_scene.runtime
     _xlb_bc_mask, _xlb_missing_mask = _xlb_runtime.bc_mask, _xlb_runtime.missing_mask
 
     # Store robot BC ID and D3Q19 velocity stencil for analytical mask updates.
     _xlb_robot_bc_id = _xlb_robot_bc.id
-    _xlb_vel_c_np = velocity_stencil_array(_xlb_vel_set)
-    _xlb_vel_c_wp = velocity_stencil_to_warp(_xlb_vel_set, _xlb_bc_mask.device)
-
-    _xlb_macro = _XLBMacroscopic(_xlb_vel_set, _xlb_precision, _xlb_backend)
-    _xlb_rho_field = _xlb_grid.create_field(cardinality=1, dtype=_XLBPrecision.FP32)
-    _xlb_u_field = _xlb_grid.create_field(cardinality=3, dtype=_XLBPrecision.FP32)
+    _xlb_vel_c_np = _xlb_scene.velocity_stencil_numpy
+    _xlb_vel_c_wp = _xlb_scene.velocity_stencil_warp
 
     # Warm-up: advance the LBM toward an initial near-steady state with the
     # robot obstacle already in place at its initial position.
     print(f"[XLB] Running {_XLB_WARMUP_STEPS} warm-up steps (ω = {_XLB_OMEGA:.4f}) ...")
-    for _ws in range(_XLB_WARMUP_STEPS):
-        _xlb_runtime.step()
+    _xlb_scene.warm_up(_XLB_WARMUP_STEPS)
 
     # Extract macro state; XLB stores fields as (Q/D, NX, NY, NZ) — transpose
     # to (NX, NY, NZ, 3) for the streamline helper.
-    _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_runtime.f0, _xlb_rho_field, _xlb_u_field)
-    _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
+    _xlb_u_np = _xlb_scene.sample_velocity_numpy()
 
     xlb_simulation = _xlb_runtime
     print(
@@ -521,18 +440,29 @@ if _vis_available:
 # ─── Build the DEME solver ────────────────────────────────────────────────
 # Representative radius types [m] for a simple polydisperse particle set.
 _DEM_RADIUS_TYPES = [0.030, 0.045, 0.060, 0.040]
+_DEM_SAMPLE_CENTER = [0.0, 2.75, 0.25]
+_DEM_SAMPLE_HALF_DIMENSIONS = [1.5, 1.75, 0.15]
+_DEM_RANDOM_SEED = 42
+_DEME_MATERIAL = {"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2}
+_DEME_GRAVITY = [0.0, 0.0, -9.81]
+_DEME_AVERAGE_CONTACT_LIMIT = 500
+_FIXED_FAM = 10
 
 # Use DEME's Poisson-disk sampler
 # The Poisson-disk sampler enforces a minimum centre-to-centre spacing based on
 # particle size so initial spheres do not overlap.
-_poisson_disk_sampler = DEME.PDSampler(2.0 * max(_DEM_RADIUS_TYPES))
-# Sample particles in an upstream box region so they advect toward the robot.
-_sampled_positions = _poisson_disk_sampler.SampleBox([0.0, 2.75, 0.25], [1.5, 1.75, 0.15])
+_deme_population = prepare_anymal_deme_population(
+    DEME,
+    _DEM_RADIUS_TYPES,
+    _DEM_SAMPLE_CENTER,
+    _DEM_SAMPLE_HALF_DIMENSIONS,
+    _DEM_RANDOM_SEED,
+)
+_sampled_positions = _deme_population.sampled_positions
 _NUM_DEM_SPHERES = len(_sampled_positions)
-_dem_sphere_positions_np = np.array(_sampled_positions, dtype=np.float32)
-_rng = np.random.default_rng(seed=42)
-_radius_indices = _rng.integers(0, len(_DEM_RADIUS_TYPES), size=_NUM_DEM_SPHERES)
-_dem_sphere_radii_np = np.array([_DEM_RADIUS_TYPES[i] for i in _radius_indices], dtype=np.float32)
+_dem_sphere_positions_np = _deme_population.positions_numpy
+_radius_indices = _deme_population.radius_indices
+_dem_sphere_radii_np = _deme_population.radii_numpy
 
 # Velocity in -y direction [m/s] — opposite to robot's forward (+y) direction,
 # so the spheres move towards the robot's face.
@@ -560,42 +490,26 @@ if _vis_available:
     )
     print(f"[Viewer] {_NUM_DEM_SPHERES} DEM sphere(s) registered for visualisation.\n")
 
-deme_solver = None
-shank_trackers = []
-particles_tracker = None
-_FIXED_FAM = 10
-
 print("[DEME] Creating deme.DEMSolver ...")
-deme_solver = DEME.DEMSolver()
-wall_mat = deme_solver.LoadMaterial({"E": 1e5, "nu": 0.3, "mu": 0.3, "CoR": 0.2})
-deme_solver.AddBCPlane([0, 0, 0], [0, 0, 1], wall_mat)
-deme_solver.SetGravitationalAcceleration([0, 0, -9.81])
-deme_solver.SetErrorOutAvgContacts(500)
-# Load the shank
-ad_hoc_pos = [0.0, 0.0, 0.0]
-for i in range(len(foot_tip_sphere_radii)):
-    template_shank = deme_solver.LoadSphereType(1.0, foot_tip_sphere_radii[i], wall_mat)
-    shank = deme_solver.AddClumps(template_shank, [ad_hoc_pos])
-    shank.SetFamily(_FIXED_FAM)
-    shank_trackers.append(deme_solver.Track(shank))
-# Fix shanks physics for DEME
-deme_solver.SetFamilyFixed(_FIXED_FAM)
-# Load particles
-particle_templates = []
-for i in range(len(_DEM_RADIUS_TYPES)):
-    particle_templates.append(deme_solver.LoadSphereType(1.0, _DEM_RADIUS_TYPES[i], wall_mat))
-used_types = []
-for i in range(_NUM_DEM_SPHERES):
-    used_types.append(particle_templates[_radius_indices[i]])
-particles = deme_solver.AddClumps(used_types, _dem_sphere_positions_np)
-# Init vel
-particles.SetVel(_DEM_SPHERE_INIT_VELOCITY_Y)
-particles_tracker = deme_solver.Track(particles)
-# pyDEME (older version) may have weird bin size adaptation mechanism, disable it
-deme_solver.DisableAdaptiveBinSize()
-# Init
-deme_solver.SetInitTimeStep(SIM_DT)
-deme_solver.Initialize()
+_deme_scene = build_anymal_deme_scene(
+    DEME,
+    foot_tip_sphere_radii,
+    _DEM_RADIUS_TYPES,
+    _deme_population,
+    _DEME_MATERIAL,
+    _DEME_GRAVITY,
+    _DEME_AVERAGE_CONTACT_LIMIT,
+    _FIXED_FAM,
+    _DEM_SPHERE_INIT_VELOCITY_Y,
+    SIM_DT,
+)
+deme_solver = _deme_scene.solver
+wall_mat = _deme_scene.material
+shank_trackers = _deme_scene.shank_trackers
+particle_templates = _deme_scene.particle_templates
+used_types = _deme_scene.used_particle_templates
+particles = _deme_scene.particles
+particles_tracker = _deme_scene.particles_tracker
 
 # ─── Initialize the coupler ───────────────────────────────────────────────
 coupler = mophi.NewtonXLBDEMCoupler()
@@ -767,7 +681,7 @@ for frame in range(NUM_FRAMES):
     # which triggered a synchronous GPU→CPU copy via Warp's __getitem__.
     joint_q_t = wp.to_torch(coupler.newton_state_0.joint_q)
     joint_qd_t = wp.to_torch(coupler.newton_state_0.joint_qd)
-    obs = demo_utils.compute_obs(
+    obs = compute_observation(
         act,
         joint_q_t,
         joint_qd_t,
@@ -776,14 +690,11 @@ for frame in range(NUM_FRAMES):
         gravity_vec,
         command,
     )
-    with torch.no_grad():
-        act = policy(obs)
-        rearranged_act = torch.gather(act, 1, mujoco_to_lab_indices.unsqueeze(0))
-        a = joint_pos_initial + 0.5 * rearranged_act
-        # Prepend 6 free-joint DOFs (3 linear + 3 angular velocity targets; not actuated).
-        a_with_zeros = torch.cat([free_joint_zeros, a.squeeze(0)])
-        a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
-        wp.copy(coupler.newton_control.joint_target_pos, a_wp)
+    act, target_with_zeros = evaluate_joint_targets(
+        policy, obs, joint_pos_initial, mujoco_to_lab_indices, free_joint_zeros, POLICY_ACTION_SCALE
+    )
+    target_wp = wp.from_torch(target_with_zeros, dtype=wp.float32, requires_grad=False)
+    wp.copy(coupler.newton_control.joint_target_pos, target_wp)
 
     _deme_contact_exchange.set_deme_owner_pose_from_newton(coupler.newton_state_0)
 
@@ -825,8 +736,7 @@ for frame in range(NUM_FRAMES):
 
     # Visualization sampling is deliberately separate from physical XLB cadence.
     if _vis_available and frame % _XLB_VIS_INTERVAL == 0:
-        _xlb_rho_field, _xlb_u_field = _xlb_macro(_xlb_runtime.f0, _xlb_rho_field, _xlb_u_field)
-        _xlb_u_np = _xlb_u_field.numpy().transpose(1, 2, 3, 0).astype(np.float32)
+        _xlb_u_np = _xlb_scene.sample_velocity_numpy()
         _xlb_streamline_pts, _xlb_streamline_spd, _xlb_streamline_dirs = mophi.xlb_build_streamlines(
             _xlb_u_np, _XLB_DOMAIN_MIN, _XLB_DOMAIN_MAX, _xlb_seed_pts
         )
@@ -897,7 +807,7 @@ _xlb_wrench_reducer.finalize()
 _xlb_wrench_exchange.finalize()
 if _xlb_stepper is not None:
     _newton_xlb_boundary.finalize()
-    _xlb_runtime.finalize()
+    _xlb_scene.finalize()
 coupler.finalize()
 print("[Coupler] NewtonXLBDEMCoupler finalized.\n")
 

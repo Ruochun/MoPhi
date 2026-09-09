@@ -124,19 +124,15 @@ add_custom_target(demo_flexible_hand_deme
 )
 
 # ── Installation ───────────────────────────────────────────────────────────────
-# newton_xlb_dem_utils.py is a pre-existing helper module imported by
-# demo_anymal_robot_multiphysics.py; it is included here so that the install tree is
-# self-contained.
-install(
-    FILES
-        newton_xlb_dem_utils.py
-    DESTINATION demo/newton_xlb_dem
-)
-
 install(
     FILES
         anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
         anymal_robot_multiphysics/demo_anymal_robot_newton_baseline.py
+        anymal_robot_multiphysics/anymal_deme_scene.py
+        anymal_robot_multiphysics/anymal_geometry.py
+        anymal_robot_multiphysics/anymal_newton_scene.py
+        anymal_robot_multiphysics/anymal_policy.py
+        anymal_robot_multiphysics/anymal_xlb_scene.py
     DESTINATION demo/newton_xlb_dem/anymal_robot_multiphysics
 )
 
@@ -149,9 +145,19 @@ install(
 
 install(
     FILES
+        "${CMAKE_SOURCE_DIR}/demo/shared_utils/__init__.py"
+        "${CMAKE_SOURCE_DIR}/demo/shared_utils/ur10_demo_utils.py"
+    DESTINATION demo/shared_utils
+)
+
+install(
+    FILES
         humanoid_complex_environment/demo_humanoid_complex_environment.py
         humanoid_complex_environment/demo_humanoid_robot_fighting.py
         humanoid_complex_environment/demo_humanoid_swimming.py
+        humanoid_complex_environment/humanoid_fight_control.py
+        humanoid_complex_environment/humanoid_proxy_geometry.py
+        humanoid_complex_environment/humanoid_visualization.py
         humanoid_complex_environment/README.md
     DESTINATION demo/newton_xlb_dem/humanoid_complex_environment
 )
@@ -167,6 +173,7 @@ install(
     FILES
         flexible_hand_manipulation/demo_flexible_hand_newton.py
         flexible_hand_manipulation/demo_flexible_hand_deme.py
+        flexible_hand_manipulation/flexible_hand_common.py
         flexible_hand_manipulation/README.md
     DESTINATION demo/newton_xlb_dem/flexible_hand_manipulation
 )

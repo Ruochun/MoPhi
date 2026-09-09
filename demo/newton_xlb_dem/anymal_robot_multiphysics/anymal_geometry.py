@@ -1,17 +1,7 @@
-"""demo/newton_xlb_dem/newton_xlb_dem_utils.py
-
-Demo-specific utility functions for the Newton + XLB + DEME three-way co-simulation demo.
-
-This module is intentionally scoped to the newton_xlb_dem demo and should NOT be used
-as reusable infrastructure for other robots or scenarios.  Reusable helpers that work
-across multiple demos belong in the mophi package (e.g. mophi.xlb_build_streamlines).
+"""ANYmal geometry and pose helpers shared by its demo variants.
 
 Contents
 --------
-Policy helpers
-  quat_rotate_inverse     -- TorchScript quaternion inverse rotation
-  compute_obs             -- ANYmal C 48-D walking-policy observation
-
 Robot geometry helpers (pre-finalize, from Newton ModelBuilder)
   scan_and_enlarge_foot_spheres       -- scan SPHERE shapes, double radii, record info
   build_foot_tip_descriptors          -- build per-foot contact-proxy descriptor list
@@ -25,66 +15,12 @@ Per-frame pose helper
 """
 
 import numpy as np
-import torch
 import warp as wp
 from newton import GeoType, ShapeFlags
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Policy helpers
+# Robot geometry helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-@torch.jit.script
-def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    """Rotate a vector by the inverse of a quaternion (last dimension is [x,y,z,w])."""
-    q_w = q[..., 3]
-    q_vec = q[..., :3]
-    a = v * (2.0 * q_w**2 - 1.0).unsqueeze(-1)
-    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-    if q_vec.dim() == 2:
-        c = q_vec * torch.bmm(q_vec.view(q.shape[0], 1, 3), v.view(q.shape[0], 3, 1)).squeeze(-1) * 2.0
-    else:
-        c = q_vec * torch.einsum("...i,...i->...", q_vec, v).unsqueeze(-1) * 2.0
-    return a - b + c
-
-
-def compute_obs(actions, joint_q_t, joint_qd_t, joint_pos_initial, indices, gravity_vec, command):
-    """Compute the 48-D observation vector required by the ANYmal C walking policy.
-
-    Mirrors newton/examples/robot/example_robot_anymal_c_walk.py::compute_obs().
-    The observation concatenates: base linear velocity (body frame), base angular
-    velocity (body frame), projected gravity, velocity command, joint position
-    error (lab order), joint velocity (lab order), previous actions.
-
-    Args:
-        actions:          1×12 float32 GPU tensor — previous policy actions.
-        joint_q_t:        1-D float32 GPU torch tensor — Newton state joint_q (zero-copy
-                          from wp.to_torch(coupler.newton_state_0.joint_q)).
-        joint_qd_t:       1-D float32 GPU torch tensor — Newton state joint_qd (zero-copy
-                          from wp.to_torch(coupler.newton_state_0.joint_qd)).
-        joint_pos_initial: 1×12 float32 GPU tensor — initial joint positions (clone of
-                           joint_q[7:] at t=0).
-        indices:          1-D int64 GPU tensor — lab-to-mujoco reordering indices.
-        gravity_vec:      1×3 float32 GPU tensor — [0, 0, -1].
-        command:          1×3 float32 GPU tensor — velocity command [vx, vy, yaw].
-
-    Returns:
-        obs: 1×48 float32 GPU tensor — policy observation vector.
-    """
-    root_quat_w = joint_q_t[3:7].to(dtype=torch.float32).unsqueeze(0)
-    root_lin_vel_w = joint_qd_t[:3].to(dtype=torch.float32).unsqueeze(0)
-    root_ang_vel_w = joint_qd_t[3:6].to(dtype=torch.float32).unsqueeze(0)
-    joint_pos_current = joint_q_t[7:].to(dtype=torch.float32).unsqueeze(0)
-    joint_vel_current = joint_qd_t[6:].to(dtype=torch.float32).unsqueeze(0)
-    vel_b = quat_rotate_inverse(root_quat_w, root_lin_vel_w)
-    a_vel_b = quat_rotate_inverse(root_quat_w, root_ang_vel_w)
-    grav = quat_rotate_inverse(root_quat_w, gravity_vec)
-    joint_pos_rel = joint_pos_current - joint_pos_initial
-    joint_vel_rel = joint_vel_current
-    rearranged_joint_pos_rel = torch.index_select(joint_pos_rel, 1, indices)
-    rearranged_joint_vel_rel = torch.index_select(joint_vel_rel, 1, indices)
-    obs = torch.cat([vel_b, a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
-    return obs
 
 
 # ─────────────────────────────────────────────────────────────────────────────

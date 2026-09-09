@@ -16,8 +16,16 @@ add_custom_target(demo_robotic_3d_printing
 )
 
 install(
-    FILES robotic_3d_printing/demo_robotic_3d_printing.py
+    FILES
+        robotic_3d_printing/demo_robotic_3d_printing.py
     DESTINATION demo/newton_dem/robotic_3d_printing
+)
+
+install(
+    FILES
+        "${CMAKE_SOURCE_DIR}/demo/shared_utils/__init__.py"
+        "${CMAKE_SOURCE_DIR}/demo/shared_utils/ur10_demo_utils.py"
+    DESTINATION demo/shared_utils
 )
 
 install(

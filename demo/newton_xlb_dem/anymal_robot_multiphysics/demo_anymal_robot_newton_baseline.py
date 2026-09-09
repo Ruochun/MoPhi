@@ -24,7 +24,6 @@ Or from the repository root after installing the mophi package:
     python -m demo.newton_xlb_dem.anymal_robot_multiphysics.demo_anymal_robot_newton_baseline
 """
 
-import os
 import sys
 from importlib.util import find_spec
 from pathlib import Path
@@ -60,11 +59,9 @@ mophi.check_newton_warp_mujoco_versions(
 )
 
 # ─── Import demo-specific utilities ──────────────────────────────────────
-# newton_xlb_dem_utils.py lives in demo/newton_xlb_dem (parent directory of this script).
-# Prepend that parent directory so the module can be found whether the demo is
-# run directly (python demo/...) or via -m.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import newton_xlb_dem_utils as demo_utils  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import anymal_geometry as geometry_utils
+from anymal_policy import compute_observation, evaluate_joint_targets
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Simulation configuration
@@ -82,6 +79,7 @@ NUM_FRAMES = 250  # ≈ 5 s at 50 Hz
 FORWARD_COMMAND = 1.0
 LATERAL_COMMAND = 0.0
 YAW_COMMAND = 0.0
+POLICY_ACTION_SCALE = 0.5
 
 # ── Newton contact boxes ──────────────────────────────────────────────────
 # Toggle dynamic obstacle cubes and their contacts with the robot.
@@ -178,10 +176,10 @@ builder.add_urdf(
 )
 
 # Enlarge foot collision spheres for stable walking on the flat ground plane.
-demo_utils.scan_and_enlarge_foot_spheres(builder)
+geometry_utils.scan_and_enlarge_foot_spheres(builder)
 
 # Collect visual mesh shapes for USD export before the builder is finalized.
-body_part_visual_descriptors = demo_utils.collect_visual_body_part_descriptors(builder)
+body_part_visual_descriptors = geometry_utils.collect_visual_body_part_descriptors(builder)
 
 # Flat ground plane only — matching the walking policy's nominal environment.
 builder.add_ground_plane()
@@ -335,7 +333,7 @@ for frame in range(NUM_FRAMES):
     joint_qd_t = wp.to_torch(newton_state_0.joint_qd)
     policy_joint_q_t = torch.cat([joint_q_t[:7], joint_q_t[7 : 7 + NUM_POLICY_JOINTS]])
     policy_joint_qd_t = torch.cat([joint_qd_t[:6], joint_qd_t[6 : 6 + NUM_POLICY_JOINTS]])
-    obs = demo_utils.compute_obs(
+    obs = compute_observation(
         act,
         policy_joint_q_t,
         policy_joint_qd_t,
@@ -344,13 +342,11 @@ for frame in range(NUM_FRAMES):
         gravity_vec,
         command,
     )
-    with torch.no_grad():
-        act = policy(obs)
-        rearranged_act = torch.gather(act, 1, mujoco_to_lab_indices.unsqueeze(0))
-        target_joint_q = joint_pos_initial + 0.5 * rearranged_act
-        target_with_zeros = torch.cat([free_joint_zeros, target_joint_q.squeeze(0)])
-        target_wp = wp.from_torch(target_with_zeros, dtype=wp.float32, requires_grad=False)
-        wp.copy(newton_control.joint_target_pos, target_wp)
+    act, target_with_zeros = evaluate_joint_targets(
+        policy, obs, joint_pos_initial, mujoco_to_lab_indices, free_joint_zeros, POLICY_ACTION_SCALE
+    )
+    target_wp = wp.from_torch(target_with_zeros, dtype=wp.float32, requires_grad=False)
+    wp.copy(newton_control.joint_target_pos, target_wp)
 
     for _ in range(SIM_SUBSTEPS):
         # Mirror the coupler's StepNewton() sequence: clear accumulated forces,

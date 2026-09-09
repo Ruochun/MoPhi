@@ -17,6 +17,7 @@ or:
 """
 
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -29,8 +30,10 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
 import mujoco
 import newton
 import warp as wp
-from newton import JointTargetMode
 from newton.selection import ArticulationView
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from shared_utils.ur10_demo_utils import build_ur10_submodel  # noqa: E402
 
 mophi.check_newton_warp_mujoco_versions(
     mophi.REQUIRED_NEWTON_VERSION,
@@ -66,6 +69,9 @@ MOVIE_FPS = RENDER_FPS
 
 # ── Geometry and control policy ─────────────────────────────────────────────
 PEDESTAL_HEIGHT = 1.2
+PEDESTAL_RADIUS = 0.08
+JOINT_TARGET_STIFFNESS = 500.0
+JOINT_TARGET_DAMPING = 50.0
 OBJ_CM_TO_M = 0.01
 # Keep these motion targets identical to the DEME-based comparison demo so the
 # robot policy is unchanged between representations.
@@ -171,27 +177,21 @@ asset_path = mophi.download_newton_asset("universal_robots_ur10", ["usd/ur10_ins
 asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
 print(f"[Newton] Assets ready: {asset_path}\n")
 
-ur10_sub = newton.ModelBuilder()
-newton.solvers.SolverMuJoCo.register_custom_attributes(ur10_sub)
-ur10_sub.add_usd(
-    asset_file,
-    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT)),
-    collapse_fixed_joints=False,
-    enable_self_collisions=False,
-    hide_collision_shapes=True,
-)
-ur10_sub.add_shape_cylinder(
-    -1,
-    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT / 2.0)),
-    half_height=PEDESTAL_HEIGHT / 2.0,
-    radius=0.08,
-)
+try:
+    ur10_sub, ee_link_body_idx = build_ur10_submodel(
+        asset_file,
+        PEDESTAL_HEIGHT,
+        PEDESTAL_RADIUS,
+        JOINT_TARGET_STIFFNESS,
+        JOINT_TARGET_DAMPING,
+    )
+except ValueError as exc:
+    mophi.fatal(str(exc))
 
 # Excavator plow mesh attached to ee_link in Newton.
 # This mesh is the excavator geometry used for rendering and for Newton contact
 # against the coarse cube terrain, so it acts as the primary Newton contact proxy.
 PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), float(np.pi))
-ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
 _plow_surface = mophi.load_obj(EXCAVATOR_OBJ_PATH, scale=OBJ_CM_TO_M)
 plow_mesh = newton.Mesh(
     _plow_surface.vertices,
@@ -206,11 +206,6 @@ ur10_sub.add_shape_mesh(
     xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), PLOW_LOCAL_ROT),
 )
 _set_shape_contact_stiffness(ur10_sub, len(ur10_sub.shape_type) - 1, _CONTACT_KE, _CONTACT_KD)
-
-for i in range(len(ur10_sub.joint_target_ke)):
-    ur10_sub.joint_target_ke[i] = 500
-    ur10_sub.joint_target_kd[i] = 50
-    ur10_sub.joint_target_mode[i] = int(JointTargetMode.POSITION)
 
 builder = newton.ModelBuilder()
 builder.replicate(ur10_sub, WORLD_COUNT, spacing=(2.0, 2.0, 0.0))

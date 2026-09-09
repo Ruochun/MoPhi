@@ -60,6 +60,7 @@ Or from the repository root after installing the mophi package:
 """
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -84,7 +85,9 @@ if not hasattr(mophi, "NewtonXLBDEMCoupler"):
 import newton
 import warp as wp
 import mujoco
-from newton import JointTargetMode
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from shared_utils.ur10_demo_utils import build_ur10_submodel  # noqa: E402
 from newton.selection import ArticulationView
 
 mophi.check_newton_warp_mujoco_versions(
@@ -118,6 +121,9 @@ NUM_FRAMES = 1 if PAUSE_AFTER_FIRST_FRAME else 250  # default run ≈ 5 s at 50 
 # ── Scene geometry ────────────────────────────────────────────────────────
 # Height of the cylindrical pedestal that mounts the arm above the ground.
 PEDESTAL_HEIGHT = 1.2  # [m]
+PEDESTAL_RADIUS = 0.08
+JOINT_TARGET_STIFFNESS = 500.0
+JOINT_TARGET_DAMPING = 50.0
 # The excavator OBJ is authored in centimetres; this factor converts to metres.
 OBJ_CM_TO_M = 0.01
 
@@ -279,23 +285,16 @@ print("[Newton] Building UR10 model ...")
 # Build a single-arm sub-builder, then replicate it WORLD_COUNT times.
 # This matches Newton's example pattern and lets ArticulationView find the
 # articulation by the "*ur10*" glob pattern.
-ur10_sub = newton.ModelBuilder()
-newton.solvers.SolverMuJoCo.register_custom_attributes(ur10_sub)
-
-ur10_sub.add_usd(
-    asset_file,
-    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT)),
-    collapse_fixed_joints=False,
-    enable_self_collisions=False,
-    hide_collision_shapes=True,
-)
-# Cylindrical pedestal attached to the world frame (fixed base).
-ur10_sub.add_shape_cylinder(
-    -1,
-    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT / 2.0)),
-    half_height=PEDESTAL_HEIGHT / 2.0,
-    radius=0.08,
-)
+try:
+    ur10_sub, ee_link_body_idx = build_ur10_submodel(
+        asset_file,
+        PEDESTAL_HEIGHT,
+        PEDESTAL_RADIUS,
+        JOINT_TARGET_STIFFNESS,
+        JOINT_TARGET_DAMPING,
+    )
+except ValueError as exc:
+    mophi.fatal(str(exc))
 
 # ─── Attach the excavator plow mesh to the UR10 end-effector ─────────────
 # The plow OBJ is authored in centimetres; OBJ_CM_TO_M converts it to metres.
@@ -304,7 +303,6 @@ ur10_sub.add_shape_cylinder(
 # Apply a 180° local rotation so the bowl opens downward for plowing.
 PLOW_LOCAL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), float(np.pi))
 
-ee_link_body_idx = ur10_sub.body_label.index("/ur10/ee_link")
 assert ur10_sub.body_label[ee_link_body_idx] == "/ur10/ee_link", f"Unexpected ee_link body index: {ee_link_body_idx}"
 
 print(f"[Plow] Loading excavator mesh from {EXCAVATOR_OBJ_PATH} ...")
@@ -327,11 +325,6 @@ print(
     f"[{_plow_surface.num_vertices} vertices, {_plow_surface.num_faces} triangles]\n"
 )
 
-# Position control with stiff gains matching Newton's UR10 example.
-for i in range(len(ur10_sub.joint_target_ke)):
-    ur10_sub.joint_target_ke[i] = 500
-    ur10_sub.joint_target_kd[i] = 50
-    ur10_sub.joint_target_mode[i] = int(JointTargetMode.POSITION)
 # Arm motion is therefore commanded through joint_target_pos values, not by
 # directly applying torques in this demo.
 

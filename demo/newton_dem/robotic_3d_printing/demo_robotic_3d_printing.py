@@ -6,6 +6,7 @@ from DEME CUDA storage into Newton's device-resident body-force array.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import imageio.v2 as imageio
@@ -15,7 +16,6 @@ import warp as wp
 import mophi
 import mujoco
 import newton
-from newton import JointTargetMode
 from newton.selection import ArticulationView
 from mophi.couplers.newton_deme import (
     NewtonDEMEContactAccelerationCoupler,
@@ -23,6 +23,9 @@ from mophi.couplers.newton_deme import (
     NewtonDEMEOwnerMap,
 )
 from mophi.utils import load_package_provider
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from shared_utils.ur10_demo_utils import build_ur10_submodel, smoothstep  # noqa: E402
 
 DEME = load_package_provider("deme")
 
@@ -118,14 +121,9 @@ NUM_FRAMES = int(round(PRINT_MOTION_SECONDS / FRAME_DT))
 WARMUP_STEPS = int(round(WARMUP_SECONDS / NEWTON_DT))
 
 
-def _smoothstep(value: float) -> float:
-    value = float(np.clip(value, 0.0, 1.0))
-    return value * value * (3.0 - 2.0 * value)
-
-
 def _motion_target(sim_time: float) -> np.ndarray:
     """Interpolate once from the starting posture to the lateral endpoint."""
-    phase = _smoothstep(sim_time / PRINT_MOTION_SECONDS)
+    phase = smoothstep(sim_time / PRINT_MOTION_SECONDS)
     return (1.0 - phase) * PRINT_START_Q + phase * PRINT_END_Q
 
 
@@ -170,24 +168,18 @@ print("[Newton] Downloading the Universal Robots UR10 asset ...")
 asset_path = mophi.download_newton_asset("universal_robots_ur10", ["usd/ur10_instanceable.usda"])
 asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
 
-robot_builder = newton.ModelBuilder()
-newton.solvers.SolverMuJoCo.register_custom_attributes(robot_builder)
-robot_builder.add_usd(
-    asset_file,
-    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT)),
-    collapse_fixed_joints=False,
-    enable_self_collisions=False,
-    hide_collision_shapes=True,
-)
-robot_builder.add_shape_cylinder(
-    -1,
-    xform=wp.transform(wp.vec3(0.0, 0.0, PEDESTAL_HEIGHT / 2.0)),
-    half_height=PEDESTAL_HEIGHT / 2.0,
-    radius=PEDESTAL_RADIUS,
-    label="robot_pedestal",
-)
+try:
+    robot_builder, ee_link_body_idx = build_ur10_submodel(
+        asset_file,
+        PEDESTAL_HEIGHT,
+        PEDESTAL_RADIUS,
+        JOINT_TARGET_STIFFNESS,
+        JOINT_TARGET_DAMPING,
+        PRINT_START_Q,
+    )
+except ValueError as exc:
+    mophi.fatal(str(exc))
 
-ee_link_body_idx = robot_builder.body_label.index("/ur10/ee_link")
 if not FUNNEL_OBJ_PATH.is_file():
     mophi.fatal(f"Required print-head mesh is missing: {FUNNEL_OBJ_PATH}")
 
@@ -213,14 +205,6 @@ robot_builder.add_shape_mesh(
     cfg=head_cfg,
     label="funnel_print_head",
 )
-
-for joint_index in range(len(robot_builder.joint_target_ke)):
-    robot_builder.joint_target_ke[joint_index] = JOINT_TARGET_STIFFNESS
-    robot_builder.joint_target_kd[joint_index] = JOINT_TARGET_DAMPING
-    robot_builder.joint_target_mode[joint_index] = int(JointTargetMode.POSITION)
-if len(robot_builder.joint_q) < len(PRINT_START_Q):
-    mophi.fatal(f"UR10 exposes only {len(robot_builder.joint_q)} joint coordinates; expected {len(PRINT_START_Q)}.")
-robot_builder.joint_q[: len(PRINT_START_Q)] = PRINT_START_Q.tolist()
 
 builder = newton.ModelBuilder()
 builder.replicate(robot_builder, WORLD_COUNT, spacing=(2.0, 2.0, 0.0))

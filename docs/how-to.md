@@ -308,6 +308,25 @@ PYTHONPATH=python python3 demo/newton_xlb_dem/flexible_hand_manipulation/demo_fl
 PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
 ```
 
+### Serial demo regression runner
+
+For a convenient end-to-end check, the repository includes a runner for the
+actively developed demos listed above. It uses the current Python interpreter,
+adds the source-tree `python/` directory to `PYTHONPATH`, and waits for each
+demo to finish before starting the next. Install and build the prerequisites
+from this section first; interactive viewers must be closed for the runner to
+advance.
+
+```bash
+python3 scripts/run_important_demos.py
+```
+
+The FERIS/Newton demo is excluded by default while that module remains less
+developed. Add it explicitly with `--include-feris`. By default the runner
+stops at the first failure; use `--keep-going` to exercise the remaining demos
+and receive a combined failure summary. Use `--list` to inspect the selected
+commands without running them.
+
 The ANYmal three-way demo is the first demo migrated to MoPhi's centralized
 GPU exchange modules. During its simulation loop, Newton foot-proxy poses flow
 to DEME through device setters; DEME contact accelerations, mass, and inertia
