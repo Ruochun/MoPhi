@@ -2,8 +2,9 @@
 
 This document describes and justifies the solver-independent G-code parser in
 `python/mophi/utils/gcode.py`. It also explains how demos and tests should use
-the parser. The robotic 3D-printing demo does not yet drive its robot from
-G-code; that integration is a subsequent milestone.
+the parser. `demo_dfc_3d_printing.py` demonstrates the solver-independent
+program driving a Newton-managed ABB printing device through inverse
+kinematics.
 
 ## Design
 
@@ -96,6 +97,18 @@ Useful `GCodeMove` fields and properties include:
 | `duration` | Nominal `length / feed_rate` duration in seconds |
 | `source_line` | Original G-code line number |
 
+Evaluate either a single move by normalized fraction or the full program by
+nominal elapsed time:
+
+```python
+midpoint = program.moves[0].position_at(0.5)
+tool_position = program.position_at(2.0)
+```
+
+Both methods clamp values outside their valid interval. Linear moves are
+interpolated linearly; circular and helical moves follow their configured arc
+plane and center offsets.
+
 ## Running the tests
 
 The tests are in `tests/test_gcode.py`. They cover linear/modal motion, unit
@@ -128,7 +141,7 @@ If MoPhi is installed as a wheel in the active environment, omit
 
 ## Current scope
 
-The parser does not yet sample moves at arbitrary times, transform a path into
-the build-plate frame, solve robot inverse kinematics, or emit DEME particles.
-Those operations belong to trajectory and co-simulation layers built on top of
-the parsed program rather than in the parser itself.
+The parser evaluates moves at arbitrary times but does not transform a path
+into a build-plate frame, solve robot inverse kinematics, or emit DEME
+particles. Those operations belong to trajectory and co-simulation layers
+built on top of the parsed program rather than in the parser itself.

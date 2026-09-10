@@ -65,6 +65,33 @@ class GCodeMove:
         planar_length = abs(sweep) * radius
         return math.hypot(planar_length, self.end[remaining_axis] - self.start[remaining_axis])
 
+    def position_at(self, fraction: float) -> tuple[float, float, float]:
+        """Evaluate the tool-center position at a clamped fraction of this move."""
+        fraction = min(max(float(fraction), 0.0), 1.0)
+        if self.arc_center_offset is None:
+            return tuple(start + fraction * (end - start) for start, end in zip(self.start, self.end))
+
+        plane_axes = {"XY": (0, 1, 2), "XZ": (0, 2, 1), "YZ": (1, 2, 0)}
+        if self.arc_plane not in plane_axes:
+            raise ValueError(f"line {self.source_line}: arc has no supported working plane")
+        axis_a, axis_b, remaining_axis = plane_axes[self.arc_plane]
+        center_a = self.start[axis_a] + self.arc_center_offset[axis_a]
+        center_b = self.start[axis_b] + self.arc_center_offset[axis_b]
+        start_angle = math.atan2(self.start[axis_b] - center_b, self.start[axis_a] - center_a)
+        end_angle = math.atan2(self.end[axis_b] - center_b, self.end[axis_a] - center_a)
+        sweep = end_angle - start_angle
+        if self.clockwise and sweep >= 0.0:
+            sweep -= 2.0 * math.pi
+        elif not self.clockwise and sweep <= 0.0:
+            sweep += 2.0 * math.pi
+        angle = start_angle + fraction * sweep
+        radius = math.hypot(self.start[axis_a] - center_a, self.start[axis_b] - center_b)
+        result = list(self.start)
+        result[axis_a] = center_a + radius * math.cos(angle)
+        result[axis_b] = center_b + radius * math.sin(angle)
+        result[remaining_axis] += fraction * (self.end[remaining_axis] - self.start[remaining_axis])
+        return tuple(result)
+
     @property
     def duration(self) -> float:
         """Nominal move duration in seconds."""
@@ -82,6 +109,20 @@ class GCodeProgram:
     @property
     def duration(self) -> float:
         return sum(move.duration for move in self.moves)
+
+    def position_at(self, elapsed_time: float) -> tuple[float, float, float]:
+        """Evaluate the clamped tool-center position at a nominal program time."""
+        if not self.moves:
+            raise ValueError("cannot evaluate an empty G-code program")
+        elapsed_time = max(float(elapsed_time), 0.0)
+        for move in self.moves:
+            move_duration = move.duration
+            if move_duration == 0.0:
+                continue
+            if elapsed_time <= move_duration:
+                return move.position_at(elapsed_time / move_duration)
+            elapsed_time -= move_duration
+        return self.moves[-1].end
 
 
 def parse_gcode(source: str | Path | Iterable[str], *, rapid_feed_rate: float = 1.0) -> GCodeProgram:

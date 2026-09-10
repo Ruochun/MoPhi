@@ -382,6 +382,31 @@ copy rendered frames to the host, but it is outside the physics exchange path.
 
 ### Robotic 3D printing: Newton/DEME co-simulation
 
+`demo_dfc_3d_printing.py` is the G-code-driven motion foundation for the future
+DFC printing co-simulation. It parses
+`robotic_3d_printing/data/dfc_single_bead.gcode`, evaluates the Cartesian path
+at the rendering cadence, and uses Newton's inverse-kinematics solver to keep
+the ABB IRB6700 auger outlet on that path while preserving its initial
+orientation. The Newton articulation is reconstructed from the pinned Chrono
+reference demo's JSON metadata and OBJ meshes in
+`robotic_3d_printing/data/chrono_irb6700_printer/`. The cyan guide line shows
+the requested toolpath. This stage does
+not create DEME particles or enable the DFC material model yet.
+
+Run the motion stage after building the Newton-enabled Python bindings:
+
+```bash
+PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_dfc_3d_printing.py
+
+# Equivalent convenience target:
+cmake --build build-py311 --target demo_dfc_3d_printing
+```
+
+Edit `GCODE_PATH`, `GCODE_TIME_SCALE`, and `GCODE_TO_WORLD_SCALE` in the
+configuration block to select and place another toolpath. See
+[`gcode.md`](gcode.md) for the supported command subset and parser API. Output
+is written beneath `output/demo_dfc_3d_printing/`.
+
 `demo_robotic_3d_printing.py` is a Newton + DEME additive-manufacturing demo
 whose sphere population currently exercises DEME's custom
 `ForceModelWithCohesion.cu` kernel with `DEME_COHESION = 0.0`. This isolates

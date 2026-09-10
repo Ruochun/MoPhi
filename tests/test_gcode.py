@@ -36,6 +36,14 @@ class GCodeParserTest(unittest.TestCase):
         self.assertEqual(program.moves[-1].end, (0.005, 0.0, 0.0))
         self.assertAlmostEqual(program.moves[-1].extrusion_delta, 0.001)
 
+    def test_program_position_evaluates_linear_and_arc_moves(self):
+        program = parse_gcode("G21\nG1 X10 F600\nG3 X0 Y10 I-10 J0\n")
+        self.assertEqual(program.position_at(0.5), (0.005, 0.0, 0.0))
+        arc_midpoint = program.position_at(1.0 + math.pi / 4.0)
+        self.assertAlmostEqual(arc_midpoint[0], 0.01 / math.sqrt(2.0))
+        self.assertAlmostEqual(arc_midpoint[1], 0.01 / math.sqrt(2.0))
+        self.assertEqual(program.position_at(100.0), program.moves[-1].end)
+
 
 if __name__ == "__main__":
     unittest.main()
