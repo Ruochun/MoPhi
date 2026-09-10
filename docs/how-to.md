@@ -390,7 +390,11 @@ the ABB IRB6700 auger outlet on that path while preserving its initial
 orientation. The Newton articulation is reconstructed from the pinned Chrono
 reference demo's JSON metadata and OBJ meshes in
 `robotic_3d_printing/data/chrono_irb6700_printer/`. The cyan guide line shows
-the requested toolpath. This stage does
+the requested toolpath. A magenta wireframe overlays the exact outer-auger
+triangle mesh registered for future particle contact; startup validation
+rejects non-finite vertices, degenerate triangles, invalid indices, and meshes
+that are not closed two-manifolds after coincident CAD vertices are welded.
+This stage does
 not create DEME particles or enable the DFC material model yet.
 
 Run the motion stage after building the Newton-enabled Python bindings:
@@ -405,7 +409,11 @@ cmake --build build-py311 --target demo_dfc_3d_printing
 Edit `GCODE_PATH`, `GCODE_TIME_SCALE`, and `GCODE_TO_WORLD_SCALE` in the
 configuration block to select and place another toolpath. See
 [`gcode.md`](gcode.md) for the supported command subset and parser API. Output
-is written beneath `output/demo_dfc_3d_printing/`.
+is written beneath `output/demo_dfc_3d_printing/`. With
+`SAVE_FINAL_VTK_FRAME = True`, the demo also writes
+`dfc_3d_printing_final_frame.vtk`, containing the final world-space printer CAD
+meshes and build plate for direct inspection in ParaView. See
+[`vtk-output.md`](vtk-output.md) for the snapshot format and cell labels.
 
 `demo_robotic_3d_printing.py` is a Newton + DEME additive-manufacturing demo
 whose sphere population currently exercises DEME's custom

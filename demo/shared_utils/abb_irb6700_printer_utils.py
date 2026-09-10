@@ -52,6 +52,17 @@ _BODY_COLORS = (
 
 
 @dataclass(frozen=True)
+class ABBPrinterMesh:
+    """One printer triangle mesh expressed in its Newton body's local frame."""
+
+    label: str
+    body_index: int
+    vertices_local: np.ndarray
+    triangles: np.ndarray
+    is_nozzle_contact_mesh: bool
+
+
+@dataclass(frozen=True)
 class ABBPrinterModel:
     """Newton indices and TCP transform needed by the printing demo."""
 
@@ -62,6 +73,12 @@ class ABBPrinterModel:
     nozzle_rotation_local: tuple[float, float, float, float]
     nozzle_position_world: tuple[float, float, float]
     nozzle_rotation_world: tuple[float, float, float, float]
+    nozzle_contact_line_starts_local: np.ndarray
+    nozzle_contact_line_ends_local: np.ndarray
+    nozzle_contact_vertex_count: int
+    nozzle_contact_triangle_count: int
+    nozzle_contact_edge_count: int
+    meshes: tuple[ABBPrinterMesh, ...]
 
 
 def _quat_multiply(lhs, rhs):
@@ -123,6 +140,67 @@ def _to_newton_world(transform):
     return _transform_multiply(chrono_to_newton, transform)
 
 
+def _validated_contact_wireframe(surface, shape_transform):
+    """Validate a triangle contact surface and return its unique body-local edges."""
+    vertices = np.asarray(surface.vertices, dtype=np.float64)
+    indices = np.asarray(surface.indices, dtype=np.int64)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or not np.isfinite(vertices).all():
+        raise ValueError("The nozzle contact mesh must contain finite three-dimensional vertices.")
+    if indices.ndim != 1 or indices.size == 0 or indices.size % 3 != 0:
+        raise ValueError("The nozzle contact mesh must contain a non-empty triangle index list.")
+    if indices.min() < 0 or indices.max() >= len(vertices):
+        raise ValueError("The nozzle contact mesh contains an out-of-range vertex index.")
+
+    triangles = indices.reshape((-1, 3))
+    edge_01 = vertices[triangles[:, 1]] - vertices[triangles[:, 0]]
+    edge_02 = vertices[triangles[:, 2]] - vertices[triangles[:, 0]]
+    doubled_areas = np.linalg.norm(
+        np.cross(edge_01, edge_02),
+        axis=1,
+    )
+    if np.any(doubled_areas <= 1.0e-12):
+        raise ValueError("The nozzle contact mesh contains degenerate triangles.")
+
+    # The CAD OBJ repeats vertices along visual seams. Weld coincident positions
+    # for the topology audit and wireframe so every physical edge is drawn once.
+    _, welded_indices = np.unique(np.round(vertices, decimals=8), axis=0, return_inverse=True)
+    welded_triangles = welded_indices[triangles]
+    edges = np.sort(
+        np.concatenate(
+            (
+                welded_triangles[:, (0, 1)],
+                welded_triangles[:, (1, 2)],
+                welded_triangles[:, (2, 0)],
+            )
+        ),
+        axis=1,
+    )
+    unique_edges, edge_incidence = np.unique(edges, axis=0, return_counts=True)
+    if np.any(edge_incidence != 2):
+        boundary_count = int(np.count_nonzero(edge_incidence == 1))
+        nonmanifold_count = int(np.count_nonzero(edge_incidence > 2))
+        raise ValueError(
+            "The nozzle contact mesh is not a closed two-manifold after welding coincident vertices: "
+            f"{boundary_count} boundary edge(s), {nonmanifold_count} non-manifold edge(s)."
+        )
+
+    representative_indices = np.full(welded_indices.max() + 1, -1, dtype=np.int64)
+    representative_indices[welded_indices[::-1]] = np.arange(len(vertices) - 1, -1, -1)
+    edge_vertex_indices = representative_indices[unique_edges]
+    shape_position, shape_rotation = shape_transform
+    body_local_vertices = np.asarray(
+        [shape_position + _quat_rotate(shape_rotation, vertex) for vertex in vertices],
+        dtype=np.float32,
+    )
+    return (
+        body_local_vertices[edge_vertex_indices[:, 0]],
+        body_local_vertices[edge_vertex_indices[:, 1]],
+        len(vertices),
+        len(triangles),
+        len(unique_edges),
+    )
+
+
 def build_abb_irb6700_printer(
     asset_directory: Path,
     joint_stiffness: float,
@@ -154,6 +232,8 @@ def build_abb_irb6700_printer(
     newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
     body_indices = {}
     body_world_transforms = {}
+    nozzle_contact_wireframe = None
+    printer_meshes = []
 
     for body_name, body_label, color in zip(_BODY_NAMES, _BODY_LABELS, _BODY_COLORS, strict=True):
         body = bodies_by_name[body_name]
@@ -185,6 +265,22 @@ def build_abb_irb6700_printer(
         )
         shape_transform = _json_transform(body["ref_to_com"])
         collision_enabled = body_name == "Auger_002_RB_out-1"
+        shape_position, shape_rotation = shape_transform
+        vertices_local = np.asarray(
+            [shape_position + _quat_rotate(shape_rotation, vertex) for vertex in surface.vertices],
+            dtype=np.float64,
+        )
+        printer_meshes.append(
+            ABBPrinterMesh(
+                label=body_label,
+                body_index=body_index,
+                vertices_local=vertices_local,
+                triangles=np.asarray(surface.indices, dtype=np.int64).reshape((-1, 3)),
+                is_nozzle_contact_mesh=collision_enabled,
+            )
+        )
+        if collision_enabled:
+            nozzle_contact_wireframe = _validated_contact_wireframe(surface, shape_transform)
         shape_cfg = newton.ModelBuilder.ShapeConfig(
             has_shape_collision=collision_enabled,
             has_particle_collision=collision_enabled,
@@ -274,6 +370,9 @@ def build_abb_irb6700_printer(
 
     nozzle_world = markers["Link10"]
     nozzle_local = _transform_multiply(_transform_inverse(body_world_transforms[outer_name]), nozzle_world)
+    if nozzle_contact_wireframe is None:
+        raise ValueError("The ABB printer assembly did not provide an outer-auger contact mesh.")
+    line_starts, line_ends, vertex_count, triangle_count, edge_count = nozzle_contact_wireframe
     return ABBPrinterModel(
         builder=builder,
         body_indices=body_indices,
@@ -282,4 +381,10 @@ def build_abb_irb6700_printer(
         nozzle_rotation_local=tuple(nozzle_local[1]),
         nozzle_position_world=tuple(nozzle_world[0]),
         nozzle_rotation_world=tuple(nozzle_world[1]),
+        nozzle_contact_line_starts_local=line_starts,
+        nozzle_contact_line_ends_local=line_ends,
+        nozzle_contact_vertex_count=vertex_count,
+        nozzle_contact_triangle_count=triangle_count,
+        nozzle_contact_edge_count=edge_count,
+        meshes=tuple(printer_meshes),
     )

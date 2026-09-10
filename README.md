@@ -44,6 +44,9 @@ and `cibuildwheel` matrix builds, including ABI troubleshooting and verification
 For the solver-independent G-code parser used by printing workflows, see
 [docs/gcode.md](docs/gcode.md).
 
+For exporting triangle-mesh snapshots to VTK/ParaView, see
+[docs/vtk-output.md](docs/vtk-output.md).
+
 Newton-backed demos use validated, self-repairing asset downloads described in
 [docs/newton-assets.md](docs/newton-assets.md).
 

@@ -18,7 +18,7 @@ import warp as wp
 import mophi
 import newton
 import newton.ik as ik
-from mophi.utils import parse_gcode
+from mophi.utils import parse_gcode, write_vtk_polydata
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from shared_utils.abb_irb6700_printer_utils import build_abb_irb6700_printer  # noqa: E402
@@ -49,16 +49,21 @@ BUILD_PLATE_HALF_EXTENTS = (0.70, 0.70, 0.04)
 
 USE_OMNIVERSE_VISUALIZATION = False
 SAVE_MOVIE = True
+SAVE_FINAL_VTK_FRAME = True
 CAMERA_POSITION = (4.7, -4.0, 2.7)
 REFERENCE_AXIS_ORIGIN = (1.35, -1.25, 0.02)
 REFERENCE_SCALE_BAR_CENTER = (2.45, -1.55, 0.05)
 PATH_VISUAL_SAMPLES = 80
 PATH_VISUAL_COLOR = (0.15, 0.80, 0.95)
 PATH_VISUAL_WIDTH = 0.006
+SHOW_NOZZLE_CONTACT_WIREFRAME = True
+NOZZLE_CONTACT_WIREFRAME_COLOR = (0.95, 0.20, 0.85)
+NOZZLE_CONTACT_WIREFRAME_WIDTH = 0.0015
 OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output" / Path(__file__).stem
 MOVIE_OUTPUT_PATH = OUTPUT_DIRECTORY / "dfc_3d_printing_gcode.mp4"
 USD_OUTPUT_PATH = OUTPUT_DIRECTORY / "dfc_3d_printing_gcode.usdc"
 METADATA_OUTPUT_PATH = OUTPUT_DIRECTORY / "run_metadata.json"
+VTK_OUTPUT_PATH = OUTPUT_DIRECTORY / "dfc_3d_printing_final_frame.vtk"
 MOVIE_FPS = RENDER_FPS
 
 # ── Derived constants ────────────────────────────────────────────────────────
@@ -93,6 +98,86 @@ def _gcode_offset(program, program_time: float) -> np.ndarray:
     path_origin = np.asarray(program.moves[0].start, dtype=np.float32)
     path_position = np.asarray(program.position_at(program_time), dtype=np.float32)
     return (path_position - path_origin) * np.asarray(GCODE_TO_WORLD_SCALE, dtype=np.float32)
+
+
+def _write_printer_vtk_frame(path: Path, body_transforms: np.ndarray) -> None:
+    """Export the current world-space printer and build plate for ParaView."""
+    world_vertices = []
+    triangles = []
+    part_ids = []
+    contact_mesh_flags = []
+    point_offset = 0
+    for part_id, mesh in enumerate(printer.meshes):
+        body_transform = body_transforms[mesh.body_index]
+        body_position = body_transform[:3]
+        body_rotation = body_transform[3:7]
+        transformed = np.asarray(
+            [body_position + _quat_rotate_xyzw(body_rotation, vertex) for vertex in mesh.vertices_local],
+            dtype=np.float64,
+        )
+        world_vertices.append(transformed)
+        triangles.append(mesh.triangles + point_offset)
+        part_ids.extend([part_id] * len(mesh.triangles))
+        contact_mesh_flags.extend([int(mesh.is_nozzle_contact_mesh)] * len(mesh.triangles))
+        point_offset += len(transformed)
+
+    plate_center = np.asarray(BUILD_PLATE_CENTER, dtype=np.float64)
+    hx, hy, hz = BUILD_PLATE_HALF_EXTENTS
+    plate_vertices = plate_center + np.asarray(
+        [
+            (-hx, -hy, -hz),
+            (hx, -hy, -hz),
+            (hx, hy, -hz),
+            (-hx, hy, -hz),
+            (-hx, -hy, hz),
+            (hx, -hy, hz),
+            (hx, hy, hz),
+            (-hx, hy, hz),
+        ]
+    )
+    plate_triangles = np.asarray(
+        [
+            (0, 2, 1),
+            (0, 3, 2),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (1, 2, 6),
+            (1, 6, 5),
+            (2, 3, 7),
+            (2, 7, 6),
+            (3, 0, 4),
+            (3, 4, 7),
+        ],
+        dtype=np.int64,
+    )
+    world_vertices.append(plate_vertices)
+    triangles.append(plate_triangles + point_offset)
+    part_ids.extend([len(printer.meshes)] * len(plate_triangles))
+    contact_mesh_flags.extend([0] * len(plate_triangles))
+    write_vtk_polydata(
+        path,
+        np.concatenate(world_vertices),
+        np.concatenate(triangles),
+        cell_scalars={"scene_part_id": part_ids, "is_nozzle_contact_mesh": contact_mesh_flags},
+        title="MoPhi ABB IRB6700 printer frame",
+    )
+
+
+@wp.kernel
+def _transform_nozzle_contact_lines(
+    body_q: wp.array(dtype=wp.transform),
+    body_index: int,
+    local_starts: wp.array(dtype=wp.vec3),
+    local_ends: wp.array(dtype=wp.vec3),
+    world_starts: wp.array(dtype=wp.vec3),
+    world_ends: wp.array(dtype=wp.vec3),
+):
+    line_index = wp.tid()
+    body_transform = body_q[body_index]
+    world_starts[line_index] = wp.transform_point(body_transform, local_starts[line_index])
+    world_ends[line_index] = wp.transform_point(body_transform, local_ends[line_index])
 
 
 if not np.isclose(SIM_SUBSTEPS * NEWTON_DT, FRAME_DT, rtol=0.0, atol=1.0e-12):
@@ -139,6 +224,12 @@ builder = printer.builder
 nozzle_body_idx = printer.nozzle_body_index
 nozzle_position_local = np.asarray(printer.nozzle_position_local, dtype=np.float32)
 nozzle_rotation_local = np.asarray(printer.nozzle_rotation_local, dtype=np.float32)
+print(
+    "[Newton] Nozzle contact mesh: "
+    f"{printer.nozzle_contact_vertex_count} vertices, "
+    f"{printer.nozzle_contact_triangle_count} triangles, "
+    f"{printer.nozzle_contact_edge_count} manifold edges."
+)
 
 builder.add_ground_plane()
 plate_cfg = newton.ModelBuilder.ShapeConfig(has_particle_collision=True)
@@ -214,6 +305,17 @@ path_starts = wp.array(path_points[:-1], dtype=wp.vec3, device=device)
 path_ends = wp.array(path_points[1:], dtype=wp.vec3, device=device)
 path_colors = wp.full(len(path_points) - 1, PATH_VISUAL_COLOR, dtype=wp.vec3, device=device)
 
+nozzle_contact_local_starts = wp.array(printer.nozzle_contact_line_starts_local, dtype=wp.vec3, device=device)
+nozzle_contact_local_ends = wp.array(printer.nozzle_contact_line_ends_local, dtype=wp.vec3, device=device)
+nozzle_contact_world_starts = wp.empty_like(nozzle_contact_local_starts)
+nozzle_contact_world_ends = wp.empty_like(nozzle_contact_local_ends)
+nozzle_contact_colors = wp.full(
+    len(printer.nozzle_contact_line_starts_local),
+    NOZZLE_CONTACT_WIREFRAME_COLOR,
+    dtype=wp.vec3,
+    device=device,
+)
+
 movie_writer = None
 if SAVE_MOVIE and not USE_OMNIVERSE_VISUALIZATION:
     movie_writer = imageio.get_writer(MOVIE_OUTPUT_PATH, fps=MOVIE_FPS)
@@ -243,6 +345,26 @@ def _render(frame_time: float) -> None:
         path_colors,
         width=PATH_VISUAL_WIDTH,
     )
+    if SHOW_NOZZLE_CONTACT_WIREFRAME:
+        wp.launch(
+            _transform_nozzle_contact_lines,
+            dim=len(nozzle_contact_local_starts),
+            inputs=[
+                state_0.body_q,
+                nozzle_body_idx,
+                nozzle_contact_local_starts,
+                nozzle_contact_local_ends,
+            ],
+            outputs=[nozzle_contact_world_starts, nozzle_contact_world_ends],
+            device=device,
+        )
+        vis.log_lines(
+            "nozzle_contact_mesh_wireframe",
+            nozzle_contact_world_starts,
+            nozzle_contact_world_ends,
+            nozzle_contact_colors,
+            width=NOZZLE_CONTACT_WIREFRAME_WIDTH,
+        )
     vis.end_frame()
     if movie_writer is not None:
         movie_writer.append_data(vis.get_frame().numpy())
@@ -286,6 +408,8 @@ final_nozzle_position = final_nozzle_body_transform[:3] + _quat_rotate_xyzw(
 )
 requested_final_nozzle_position = initial_nozzle_position + _gcode_offset(program, program.duration)
 final_nozzle_error = float(np.linalg.norm(final_nozzle_position - requested_final_nozzle_position))
+if SAVE_FINAL_VTK_FRAME:
+    _write_printer_vtk_frame(VTK_OUTPUT_PATH, state_0.body_q.numpy())
 
 METADATA_OUTPUT_PATH.write_text(
     json.dumps(
@@ -306,6 +430,18 @@ METADATA_OUTPUT_PATH.write_text(
             "requested_final_nozzle_position": requested_final_nozzle_position.tolist(),
             "actual_final_nozzle_position": final_nozzle_position.tolist(),
             "final_nozzle_position_error": final_nozzle_error,
+            "nozzle_contact_mesh_visible": SHOW_NOZZLE_CONTACT_WIREFRAME,
+            "nozzle_contact_mesh_vertices": printer.nozzle_contact_vertex_count,
+            "nozzle_contact_mesh_triangles": printer.nozzle_contact_triangle_count,
+            "nozzle_contact_mesh_edges": printer.nozzle_contact_edge_count,
+            "nozzle_contact_mesh_closed_two_manifold": True,
+            "vtk_frame_saved": SAVE_FINAL_VTK_FRAME,
+            "vtk_frame_path": str(VTK_OUTPUT_PATH) if SAVE_FINAL_VTK_FRAME else None,
+            "vtk_scene_part_ids": {
+                **{str(index): mesh.label for index, mesh in enumerate(printer.meshes)},
+                str(len(printer.meshes)): "build_plate",
+            },
+            "vtk_printer_parts": {index: mesh.label for index, mesh in enumerate(printer.meshes)},
             "deme_enabled": False,
             "dfc_enabled": False,
         },

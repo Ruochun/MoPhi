@@ -45,6 +45,9 @@ modules are ABI-specific.
 The G-code utility has its design, supported command subset, usage examples,
 and test instructions documented in [`gcode.md`](gcode.md).
 
+The dependency-free triangle snapshot writer for ParaView is documented in
+[`vtk-output.md`](vtk-output.md).
+
 The GPU-native Newton–DEME contact exchange is documented in
 [`newton-deme-coupling.md`](newton-deme-coupling.md).
 The additional pairwise device-transfer helpers are documented in
