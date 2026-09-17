@@ -50,6 +50,9 @@ _BODY_COLORS = (
     (0.48, 0.50, 0.52),
 )
 
+_NOZZLE_CONTACT_BODY_NAME = "Auger_002_RB_out-1"
+_NOZZLE_CONTACT_MESH_FILENAME = "body_10_1_inner.obj"
+
 
 @dataclass(frozen=True)
 class ABBPrinterMesh:
@@ -73,6 +76,11 @@ class ABBPrinterModel:
     nozzle_rotation_local: tuple[float, float, float, float]
     nozzle_position_world: tuple[float, float, float]
     nozzle_rotation_world: tuple[float, float, float, float]
+    nozzle_body_position_world: tuple[float, float, float]
+    nozzle_body_rotation_world: tuple[float, float, float, float]
+    nozzle_contact_mesh_path: Path
+    nozzle_contact_position_local: tuple[float, float, float]
+    nozzle_contact_rotation_local: tuple[float, float, float, float]
     nozzle_contact_line_starts_local: np.ndarray
     nozzle_contact_line_ends_local: np.ndarray
     nozzle_contact_vertex_count: int
@@ -140,7 +148,7 @@ def _to_newton_world(transform):
     return _transform_multiply(chrono_to_newton, transform)
 
 
-def _validated_contact_wireframe(surface, shape_transform):
+def _validated_contact_wireframe(surface, shape_transform, *, allow_boundary_edges=False):
     """Validate a triangle contact surface and return its unique body-local edges."""
     vertices = np.asarray(surface.vertices, dtype=np.float64)
     indices = np.asarray(surface.indices, dtype=np.int64)
@@ -176,11 +184,11 @@ def _validated_contact_wireframe(surface, shape_transform):
         axis=1,
     )
     unique_edges, edge_incidence = np.unique(edges, axis=0, return_counts=True)
-    if np.any(edge_incidence != 2):
-        boundary_count = int(np.count_nonzero(edge_incidence == 1))
-        nonmanifold_count = int(np.count_nonzero(edge_incidence > 2))
+    boundary_count = int(np.count_nonzero(edge_incidence == 1))
+    nonmanifold_count = int(np.count_nonzero(edge_incidence > 2))
+    if nonmanifold_count or (boundary_count and not allow_boundary_edges):
         raise ValueError(
-            "The nozzle contact mesh is not a closed two-manifold after welding coincident vertices: "
+            "The nozzle contact mesh has invalid topology after welding coincident vertices: "
             f"{boundary_count} boundary edge(s), {nonmanifold_count} non-manifold edge(s)."
         )
 
@@ -233,6 +241,8 @@ def build_abb_irb6700_printer(
     body_indices = {}
     body_world_transforms = {}
     nozzle_contact_wireframe = None
+    nozzle_contact_mesh_path = None
+    nozzle_contact_shape_transform = None
     printer_meshes = []
 
     for body_name, body_label, color in zip(_BODY_NAMES, _BODY_LABELS, _BODY_COLORS, strict=True):
@@ -264,7 +274,6 @@ def build_abb_irb6700_printer(
             color=color,
         )
         shape_transform = _json_transform(body["ref_to_com"])
-        collision_enabled = body_name == "Auger_002_RB_out-1"
         shape_position, shape_rotation = shape_transform
         vertices_local = np.asarray(
             [shape_position + _quat_rotate(shape_rotation, vertex) for vertex in surface.vertices],
@@ -276,14 +285,12 @@ def build_abb_irb6700_printer(
                 body_index=body_index,
                 vertices_local=vertices_local,
                 triangles=np.asarray(surface.indices, dtype=np.int64).reshape((-1, 3)),
-                is_nozzle_contact_mesh=collision_enabled,
+                is_nozzle_contact_mesh=False,
             )
         )
-        if collision_enabled:
-            nozzle_contact_wireframe = _validated_contact_wireframe(surface, shape_transform)
         shape_cfg = newton.ModelBuilder.ShapeConfig(
-            has_shape_collision=collision_enabled,
-            has_particle_collision=collision_enabled,
+            has_shape_collision=False,
+            has_particle_collision=False,
         )
         builder.add_shape_mesh(
             body_index,
@@ -292,6 +299,50 @@ def build_abb_irb6700_printer(
             cfg=shape_cfg,
             label=f"{body_label}_mesh",
         )
+
+        if body_name == _NOZZLE_CONTACT_BODY_NAME:
+            # Keep the complete CAD housing as the visible shape, but use only
+            # its exposed cavity wall for contact. The open surface prevents a
+            # cohesive particle from being captured by the thin wall's exterior.
+            nozzle_contact_mesh_path = asset_directory / _NOZZLE_CONTACT_MESH_FILENAME
+            if not nozzle_contact_mesh_path.is_file():
+                raise FileNotFoundError(f"ABB printer nozzle contact mesh is missing: {nozzle_contact_mesh_path}")
+            contact_surface = mophi.load_obj(str(nozzle_contact_mesh_path))
+            contact_mesh = newton.Mesh(
+                contact_surface.vertices,
+                contact_surface.indices,
+                compute_inertia=False,
+                is_solid=False,
+                color=color,
+            )
+            contact_vertices_local = np.asarray(
+                [shape_position + _quat_rotate(shape_rotation, vertex) for vertex in contact_surface.vertices],
+                dtype=np.float64,
+            )
+            printer_meshes.append(
+                ABBPrinterMesh(
+                    label=f"{body_label}_contact_proxy",
+                    body_index=body_index,
+                    vertices_local=contact_vertices_local,
+                    triangles=np.asarray(contact_surface.indices, dtype=np.int64).reshape((-1, 3)),
+                    is_nozzle_contact_mesh=True,
+                )
+            )
+            nozzle_contact_wireframe = _validated_contact_wireframe(
+                contact_surface, shape_transform, allow_boundary_edges=True
+            )
+            nozzle_contact_shape_transform = shape_transform
+            builder.add_shape_mesh(
+                body_index,
+                xform=_wp_transform(shape_transform),
+                mesh=contact_mesh,
+                cfg=newton.ModelBuilder.ShapeConfig(
+                    has_shape_collision=True,
+                    has_particle_collision=True,
+                    is_visible=False,
+                ),
+                label=f"{body_label}_contact_proxy",
+            )
 
     base_index = body_indices[_BODY_NAMES[0]]
     joint_indices = []
@@ -370,7 +421,7 @@ def build_abb_irb6700_printer(
 
     nozzle_world = markers["Link10"]
     nozzle_local = _transform_multiply(_transform_inverse(body_world_transforms[outer_name]), nozzle_world)
-    if nozzle_contact_wireframe is None:
+    if nozzle_contact_wireframe is None or nozzle_contact_mesh_path is None or nozzle_contact_shape_transform is None:
         raise ValueError("The ABB printer assembly did not provide an outer-auger contact mesh.")
     line_starts, line_ends, vertex_count, triangle_count, edge_count = nozzle_contact_wireframe
     return ABBPrinterModel(
@@ -381,6 +432,11 @@ def build_abb_irb6700_printer(
         nozzle_rotation_local=tuple(nozzle_local[1]),
         nozzle_position_world=tuple(nozzle_world[0]),
         nozzle_rotation_world=tuple(nozzle_world[1]),
+        nozzle_body_position_world=tuple(body_world_transforms[outer_name][0]),
+        nozzle_body_rotation_world=tuple(body_world_transforms[outer_name][1]),
+        nozzle_contact_mesh_path=nozzle_contact_mesh_path,
+        nozzle_contact_position_local=tuple(nozzle_contact_shape_transform[0]),
+        nozzle_contact_rotation_local=tuple(nozzle_contact_shape_transform[1]),
         nozzle_contact_line_starts_local=line_starts,
         nozzle_contact_line_ends_local=line_ends,
         nozzle_contact_vertex_count=vertex_count,

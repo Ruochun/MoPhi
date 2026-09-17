@@ -48,6 +48,9 @@ and test instructions documented in [`gcode.md`](gcode.md).
 The dependency-free triangle snapshot writer for ParaView is documented in
 [`vtk-output.md`](vtk-output.md).
 
+The solver-independent sampler for grid points bracketed by open triangle
+surfaces is documented in [`mesh-sampling.md`](mesh-sampling.md).
+
 The GPU-native Newton–DEME contact exchange is documented in
 [`newton-deme-coupling.md`](newton-deme-coupling.md).
 The additional pairwise device-transfer helpers are documented in

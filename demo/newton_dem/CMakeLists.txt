@@ -1,8 +1,8 @@
 # ───────────────────────────────────────────────────────────────────────────
 # Newton + DEME demos
 #
-# The robotic 3D-printing demo couples a Newton machine to DEME particles and
-# leaves the final DFC constitutive model as a later material upgrade.
+# The robotic 3D-printing demos exercise both the cohesion approximation and
+# the DFC material-preparation path used before printing.
 # ────────────────────────────────────────────────────────────────────────────
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -19,7 +19,7 @@ add_custom_target(demo_dfc_3d_printing
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/robotic_3d_printing/demo_dfc_3d_printing.py"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Running G-code-driven Newton DFC printing motion stage"
+    COMMENT "Running confined DFC particle-settling stage"
     VERBATIM
 )
 
@@ -31,7 +31,10 @@ install(
 )
 
 install(
-    FILES robotic_3d_printing/data/dfc_single_bead.gcode
+    FILES
+        robotic_3d_printing/data/dfc_single_bead.gcode
+        robotic_3d_printing/data/DFCModel.cu
+        robotic_3d_printing/data/DFCModel.SOURCE.md
     DESTINATION demo/newton_dem/robotic_3d_printing/data
 )
 

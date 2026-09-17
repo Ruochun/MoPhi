@@ -9,7 +9,8 @@ from .package_provider import get_package_provider, load_package_provider
 from .gcode import GCodeMove, GCodeProgram, parse_gcode
 from .vis_utils import log_orientation_and_scale_reference
 from .newton_assets import download_newton_asset
-from .vtk import write_vtk_polydata
+from .mesh_sampling import sample_grid_between_mesh_surfaces
+from .vtk import triangulate_spheres, write_vtk_file_series, write_vtk_polydata
 
 __all__ = [
     "check_newton_warp_mujoco_versions",
@@ -22,5 +23,8 @@ __all__ = [
     "load_package_provider",
     "log_orientation_and_scale_reference",
     "parse_gcode",
+    "sample_grid_between_mesh_surfaces",
+    "triangulate_spheres",
     "write_vtk_polydata",
+    "write_vtk_file_series",
 ]

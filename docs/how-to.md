@@ -382,20 +382,66 @@ copy rendered frames to the host, but it is outside the physics exchange path.
 
 ### Robotic 3D printing: Newton/DEME co-simulation
 
-`demo_dfc_3d_printing.py` is the G-code-driven motion foundation for the future
-DFC printing co-simulation. It parses
+`demo_dfc_3d_printing.py` currently prepares and discharges material for the future
+DFC printing co-simulation. DEME loads the demo-local `data/DFCModel.cu` fresh-
+concrete contact law and uses MoPhi's open-mesh cross-section sampler to place
+spheres directly inside the upper auger chamber. Its material calibration and
+particle construction follow the Chrono CPU `Demo_DFC_MiniSlump`: aggregate
+diameters follow a deterministic 2--4 mm grading, each collision radius includes
+the 2.5 mm mortar layer, and particle mass uses the MiniSlump density convention.
+A temporary analytical +X side plane keeps the particles near the auger wall,
+while a -Z-facing top plane closes the chamber above them. The auger mesh
+supports the material from below. DEME settles the particles until their total
+kinetic energy remains below the configured threshold, then disables both
+temporary planes and begins discharge in the same solver. The DFC coordinates
+use the reference model's millimetre-tonne-second convention and are converted
+to metres only for visualization.
+DEME also owns a permanent upward-facing analytical plane at the top surface of
+Newton's visible build plate. This infinite DEME plane remains active through
+both phases and catches discharged material at the matching world-space height;
+the finite green box remains the Newton representation. Set
+`ENABLE_DEME_BUILD_PLATE = False` to omit this DEME contact boundary. With
+`SHOW_DEME_BUILD_PLATE = True`, an orange outline and center cross over the
+finite plate footprint identify the infinite analytical plane in live and movie
+rendering; the marker is hidden whenever physical plate contact is disabled.
+The complete CAD housing remains the visual mesh, while Newton and DEME share
+the reduced contact proxy so cohesive particles cannot contact the thin wall's
+exterior. Each phase starts from a conservative DEME timestep and grows to its
+configured phase-specific cap.
+
+The broad DEME domain is only a collision-search extent and creates no physical
+world-box boundary.
+
+The demo retains the G-code-driven motion foundation for the later printing
+phase. It parses
 `robotic_3d_printing/data/dfc_single_bead.gcode`, evaluates the Cartesian path
 at the rendering cadence, and uses Newton's inverse-kinematics solver to keep
 the ABB IRB6700 auger outlet on that path while preserving its initial
 orientation. The Newton articulation is reconstructed from the pinned Chrono
 reference demo's JSON metadata and OBJ meshes in
 `robotic_3d_printing/data/chrono_irb6700_printer/`. The cyan guide line shows
-the requested toolpath. A magenta wireframe overlays the exact outer-auger
-triangle mesh registered for future particle contact; startup validation
-rejects non-finite vertices, degenerate triangles, invalid indices, and meshes
-that are not closed two-manifolds after coincident CAD vertices are welded.
-This stage does
-not create DEME particles or enable the DFC material model yet.
+the requested toolpath. A magenta wireframe overlays the exact inner-surface
+triangle mesh registered for particle contact; startup validation rejects
+non-finite vertices, degenerate triangles, invalid indices, and non-manifold
+edges while deliberately permitting the proxy's open boundary edges.
+Before DEME initialization, the demo calls `SplitIntoConvexPatches` on this
+proxy with the configured 20-degree local face-normal threshold. The returned
+patch count is printed and recorded in `run_metadata.json`.
+With `SAVE_AUGER_CONTACT_PROXY_VTK = True`, the same proxy is also written by
+itself in its initial world pose to
+`output/demo_dfc_3d_printing/auger_contact_proxy.vtk` for direct ParaView
+inspection.
+Set `RUN_PARTICLE_DISCHARGE_AFTER_SETTLING = False` to stop after settling. Set
+`RUN_GCODE_MOTION_AFTER_SETTLING = True` only to exercise the existing Newton
+motion after discharge; dynamic Newton-to-DEME proxy pose updates are still a
+later step.
+
+With `SAVE_MOVIE = True`, the MP4 contains the settling and subsequent
+gravity-fed discharge frames. The default four-second discharge contributes
+200 frames at 50 FPS, in addition to the variable-length settling phase. A run
+performed with movie recording disabled does not replace an older MP4 already
+present in the output directory, so use the final console summary and
+`run_metadata.json` to confirm the frame counts for the current run.
 
 Run the motion stage after building the Newton-enabled Python bindings:
 
@@ -410,10 +456,14 @@ Edit `GCODE_PATH`, `GCODE_TIME_SCALE`, and `GCODE_TO_WORLD_SCALE` in the
 configuration block to select and place another toolpath. See
 [`gcode.md`](gcode.md) for the supported command subset and parser API. Output
 is written beneath `output/demo_dfc_3d_printing/`. With
-`SAVE_FINAL_VTK_FRAME = True`, the demo also writes
-`dfc_3d_printing_final_frame.vtk`, containing the final world-space printer CAD
-meshes and build plate for direct inspection in ParaView. See
+`SAVE_VTK_TIME_SERIES = True`, the demo writes one numbered VTK snapshot per
+rendered frame and a `dfc_3d_printing.vtk.series` manifest containing the complete
+ParaView time series. Each frame contains world-space printer CAD meshes, the
+build plate, and DEME particle sphere surfaces with radius metadata. See
 [`vtk-output.md`](vtk-output.md) for the snapshot format and cell labels.
+The initial stock region is controlled by `DEME_AUGER_SAMPLE_BOUNDS_MIN` and
+`DEME_AUGER_SAMPLE_BOUNDS_MAX` in contact-mesh-local metres. See
+[`mesh-sampling.md`](mesh-sampling.md) for the open-mesh sampling method.
 
 `demo_robotic_3d_printing.py` is a Newton + DEME additive-manufacturing demo
 whose sphere population currently exercises DEME's custom

@@ -8,7 +8,9 @@ MoPhi is aimed at users who want to build cross-solver workflows without
 rewriting the participating solvers into one monolithic codebase. Its
 coupler-first design extracts tested, reusable on-device data exchange from
 scenario-specific demos, making multi-physics experiments and extensible
-simulation pipelines easier to assemble as the project grows.
+simulation pipelines easier to assemble as the project grows. Reusable Python
+utilities also cover solver-independent preparation tasks such as toolpath
+parsing, mesh-region sampling, and scientific output.
 
 ---
 
