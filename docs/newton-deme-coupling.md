@@ -119,7 +119,7 @@ The GPU-only claim applies to recurring state and wrench exchange.
 
 ## Supported behavior
 
-- CUDA-only physics-state and wrench transfer through DEME 3.0.9 device APIs.
+- CUDA-only physics-state and wrench transfer through DEME device APIs.
 - CUDA-only pose transfer for one-way kinematic DEME owners.
 - Arbitrary Newton body order, including multiple owners per Newton body,
   mapped to one consecutive DEME owner range.

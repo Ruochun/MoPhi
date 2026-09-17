@@ -39,6 +39,9 @@ Notes:
 
 ## Quick start
 
+The examples use Python 3.12. Activate a Python 3.12 environment before
+running commands that use `python`, `python3`, or `pip`.
+
 ```bash
 # 1. Clone MoPhi (--recurse-submodules is required for MoPhiEssentials)
 git clone --recurse-submodules https://github.com/Ruochun/MoPhi.git
@@ -48,12 +51,12 @@ cd MoPhi
 #   git submodule update --init
 
 # 2. Configure with the desired co-simulation coupler and active Python
-cmake -B build-py311 \
+cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python3 -c 'import sys; print(sys.executable)')" \
       -DMOPHI_FETCH_FERIS=ON \
       -DMOPHI_FETCH_NEWTON=ON \
       -DMOPHI_BUILD_FERIS_NEWTON=ON
-cmake --build build-py311
+cmake --build build-py312
 
 # 3. Run a demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
@@ -149,7 +152,7 @@ supported distributed install experience:
 - `newton==1.0.0`
 - `warp-lang==1.12.1`
 - `mujoco==3.6.0`
-- `deme3>=3.0.11,<4`
+- `deme[cuda12]>=3.0.14,<4`
 - `xlb[cuda]`
 - `torch`
 - `GitPython`
@@ -162,14 +165,14 @@ supported distributed install experience:
 
 #### Build one wheel for the active interpreter
 
-Build from a checkout with submodules initialized. Replace `python3.11` with
+Build from a checkout with submodules initialized. Replace `python3.12` with
 the desired interpreter:
 
 ```bash
 git clone --recurse-submodules https://github.com/Ruochun/MoPhi.git
 cd MoPhi
-python3.11 -m pip install --upgrade build
-python3.11 -m build --wheel
+python3.12 -m pip install --upgrade build
+python3.12 -m build --wheel
 ```
 
 `python -m build` invokes scikit-build-core, which configures CMake internally
@@ -180,7 +183,7 @@ For Linux distribution, repair this single wheel so bundled native libraries
 satisfy manylinux policy:
 
 ```bash
-python3.11 -m pip install --upgrade auditwheel
+python3.12 -m pip install --upgrade auditwheel
 auditwheel repair dist/mophi-*.whl -w wheelhouse/
 ```
 
@@ -188,7 +191,7 @@ Test the repaired artifact in a clean environment without `PYTHONPATH=python`,
 which would otherwise override the installed wheel with the source checkout:
 
 ```bash
-python3.11 -m venv /tmp/mophi-wheel-test
+python3.12 -m venv /tmp/mophi-wheel-test
 /tmp/mophi-wheel-test/bin/python -m pip install wheelhouse/mophi-*.whl
 cd /tmp
 /tmp/mophi-wheel-test/bin/python -c \
@@ -225,7 +228,7 @@ package, not a wheel installed in the active environment.
 Installing from the wheel does **not** build MoPhi from source locally, but the
 wheel is **not** a fully self-contained offline installer. `pip` still needs to
 resolve the wheel's declared runtime dependencies (`newton`, `warp-lang`,
-`mujoco`, `deme3`, `xlb[cuda]`, `torch`, `GitPython`, `PyYAML`, `pycollada`,
+`mujoco`, `deme[cuda12]`, `xlb[cuda]`, `torch`, `GitPython`, `PyYAML`, `pycollada`,
 `mujoco_warp`, `pyglet`, `imageio`, and `imageio-ffmpeg`) from either the
 internet or a local wheelhouse.
 
@@ -242,12 +245,12 @@ python -m pip install --no-index --find-links /path/to/wheelhouse mophi
 
 ```bash
 # Configure: fetch FERIS, install Newton via pip, and build the coupler
-cmake -B build-py311 \
+cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_FETCH_FERIS=ON \
       -DMOPHI_FETCH_NEWTON=ON \
       -DMOPHI_BUILD_FERIS_NEWTON=ON
-cmake --build build-py311
+cmake --build build-py312
 
 # Run the FERIS + Newton demo
 PYTHONPATH=python python3 demo/feris_newton/demo_feris_newton.py
@@ -277,14 +280,14 @@ pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0
 
 ```bash
 # Install the required Python packages first
-pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" "deme3>=3.0.11" \
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" "deme[cuda12]>=3.0.14,<4" \
     torch GitPython PyYAML pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
 
 # Configure and build the coupler
-cmake -B build-py311 \
+cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
-cmake --build build-py311
+cmake --build build-py312
 
 # Run the Python demo (walking robot + XLB + DEME)
 PYTHONPATH=python python3 demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py
@@ -510,18 +513,18 @@ same physics warm-up but omits its frames from the output.
 Build and run it directly or through its CMake target:
 
 ```bash
-cmake -B build-py311 \
+cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON \
       -DMOPHI_BUILD_DEMOS=ON
-cmake --build build-py311
+cmake --build build-py312
 PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
 
 # Equivalent convenience target (opens the interactive viewer):
-cmake --build build-py311 --target demo_robotic_3d_printing
+cmake --build build-py312 --target demo_robotic_3d_printing
 ```
 
-Prerequisites are the Newton, Warp, MuJoCo, `deme3`, imageio, and
+Prerequisites are the Newton, Warp, MuJoCo, `deme[cuda12]`, imageio, and
 imageio-ffmpeg packages listed above. Newton and both DEME workers must use the
 same logical CUDA device for the direct pointer exchange.
 
@@ -639,7 +642,7 @@ Keep `NEWTON_CACHE_PATH` set for subsequent runs that should reuse this cache.
 - **XLB** — a JAX-based LBM fluid solver that advances each frame. The robot is
   represented as a prescribed moving obstacle whose boundary-condition masks are
   updated directly on the GPU.
-- **DEME** — a Python discrete-element solver (provided by `pip install deme3`) that advances a
+- **DEME** — a Python discrete-element solver (provided by `pip install "deme[cuda12]>=3.0.14,<4"`) that advances a
   live particle simulation alongside the robot.
 
 ```python
@@ -681,22 +684,22 @@ use the developer-convenience CMake fetch option:
 pip install "xlb[cuda]"
 ```
 
-Likewise, the packaged wheel declares `deme3` as a runtime dependency. For
+Likewise, the packaged wheel declares `deme[cuda12]` as a runtime dependency. For
 source-tree developer builds, you can install it manually:
 
 ```bash
-pip install deme3
+pip install "deme[cuda12]>=3.0.14,<4"
 ```
 
 The DEME distribution and import module are intentionally configurable. The
-default `deme3` distribution exposes the `deme` module. To test another
-API-compatible distribution during CMake configuration, set both names as
-needed:
+default `deme` distribution is installed with the `cuda12` extra and exposes
+the `deme` module. To select a distribution
+requirement during CMake configuration, set both names as needed:
 
 ```bash
-cmake -B build-py311 \
+cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
-      -DMOPHI_PACKAGE_DEME_DISTRIBUTION=deme \
+      -DMOPHI_PACKAGE_DEME_DISTRIBUTION="deme[cuda12]>=3.0.14,<4" \
       -DMOPHI_PACKAGE_DEME_IMPORT_MODULE=deme \
       -DMOPHI_FETCH_DEME=ON
 ```
@@ -705,7 +708,7 @@ At runtime, Python dependencies are described by the general provider registry
 in `mophi.utils.package_provider`. It covers every runtime dependency declared
 in `pyproject.toml` and keeps each pip distribution name separate from its
 Python import module. The default mappings include `warp-lang` to `warp`,
-`PyYAML` to `yaml`, `GitPython` to `git`, and `deme3` to `deme`.
+`PyYAML` to `yaml`, `GitPython` to `git`, and `deme` to `deme`.
 
 Every provider accepts the same environment overrides:
 
