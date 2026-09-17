@@ -13,7 +13,7 @@ This demo exercises mophi.NewtonXLBDEMCoupler, which manages all three solvers:
                lattice-to-SI mapping. The fluid takes several smaller physical
                steps inside every Newton step. The robot is represented by a
                prescribed axis-aligned box whose device masks follow its base.
-  • DEME     — a real discrete-element solver (pip install deme3).  A
+  • DEME     — a real discrete-element solver (pip install "deme[cuda12]>=3.0.14,<4").  A
                deme.DEMSolver is created in Python, populated with particles and
                contact proxies, stepped every substep, and its live particle
                positions are visualized each frame.
@@ -33,7 +33,7 @@ Prerequisites
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
   • pip install --upgrade newton warp-lang mujoco==3.6.0 torch
   • pip install "xlb[cuda]"                (XLB LBM solver)
-  • pip install deme3                       (DEME discrete-element solver)
+  • pip install "deme[cuda12]>=3.0.14,<4"                       (DEME discrete-element solver)
 
 Running
 -------

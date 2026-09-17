@@ -184,7 +184,7 @@ if(MOPHI_FETCH_DEME AND NOT MOPHI_PYTHON_PACKAGING_BUILD)
             "MoPhi: pip install ${MOPHI_PACKAGE_DEME_DISTRIBUTION} failed (exit code ${_deme_install_result}):\n"
             "${_deme_install_error}\n"
             "DEME will not be available for the coupler.  "
-            "Install it manually with:  pip install ${MOPHI_PACKAGE_DEME_DISTRIBUTION}")
+            "Install it manually with:  pip install \"${MOPHI_PACKAGE_DEME_DISTRIBUTION}\"")
     endif()
 else()
     if(MOPHI_FETCH_DEME AND MOPHI_PYTHON_PACKAGING_BUILD)

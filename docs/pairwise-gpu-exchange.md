@@ -97,7 +97,7 @@ produce the force/acceleration arrays consumed by this transport layer. Global
 torques must likewise be converted by the coupling model to DEME's local-frame
 angular accelerations before submission.
 
-DEME 3.0.11 device getters and next-step acceleration setters are synchronous.
+DEME device getters and next-step acceleration setters are synchronous.
 Both solvers must use the
 same CUDA device. Cross-stream event handoff can replace this synchronization
 boundary when DEME exposes stream/event-aware calls.

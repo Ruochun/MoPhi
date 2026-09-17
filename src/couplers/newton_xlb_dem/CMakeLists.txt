@@ -16,7 +16,7 @@
 # specific package constraints:
 #   pip install --upgrade newton warp-lang mujoco==3.6.0
 # plus XLB/DEME as needed:
-#   pip install "xlb[cuda]" deme3
+#   pip install "xlb[cuda]" "deme[cuda12]>=3.0.14,<4"
 # or enable -DMOPHI_FETCH_NEWTON=ON / -DMOPHI_FETCH_XLB=ON /
 # -DMOPHI_FETCH_DEME=ON at CMake configure time to have MoPhi install them
 # automatically.

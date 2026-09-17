@@ -77,7 +77,7 @@ and DEME returns one contact force and torque resultant per proxied body before
 each Newton step. No dynamic boxes, warehouse shelves, or other decorative
 scene objects are added.
 
-With deme3 3.0.9 or newer, the per-step Newton–DEME physics exchange stays in
+With deme 3.0.14 or newer, the per-step Newton–DEME physics exchange stays in
 CUDA memory. Warp gathers Newton body poses and velocities into contiguous
 device arrays, DEME consumes them through bulk owner setters, and DEME writes
 reduced global-frame contact wrenches directly into Warp arrays for Newton.

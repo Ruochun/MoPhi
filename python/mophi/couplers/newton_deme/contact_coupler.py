@@ -253,7 +253,7 @@ class NewtonDEMEContactCoupler:
         missing_methods = [name for name in self._REQUIRED_DEME_DEVICE_METHODS if not hasattr(deme_solver, name)]
         if missing_methods:
             raise RuntimeError(
-                "GPU-native Newton--DEME contact exchange requires deme3>=3.0.9; "
+                "GPU-native Newton--DEME contact exchange requires deme[cuda12]>=3.0.14; "
                 f"the DEMSolver is missing {missing_methods}."
             )
         deme_device_ids = tuple(int(device_id) for device_id in deme_solver.GetGPUDeviceIDs())
@@ -389,7 +389,7 @@ class NewtonDEMEContactCoupler:
 
     def _synchronize_deme_to_newton(self) -> None:
         """Complete DEME writes before Warp consumes their destination buffers."""
-        # DEME 3.0.9 device getters are synchronous, so returning from the call
+        # DEME device getters are synchronous, so returning from the call
         # is the required handoff today. Keep this seam for future event/stream
         # synchronization without changing the public exchange API.
         pass

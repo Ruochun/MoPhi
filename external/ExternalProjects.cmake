@@ -83,6 +83,6 @@ mophi_register_external(
 # external/CMakeLists.txt.
 mophi_register_external(
     NAME DEME
-    URL  "https://pypi.org/project/deme3/"
+    URL  "https://pypi.org/project/deme/"
     TAG  "latest"
 )

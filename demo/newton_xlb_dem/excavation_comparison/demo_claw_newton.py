@@ -46,7 +46,7 @@ Prerequisites
   • Build MoPhi with -DMOPHI_BUILD_NEWTON_XLB_DEM=ON (compiles
     NewtonXLBDEMCoupler and builds the mophi_core Python extension module).
   • pip install --upgrade newton warp-lang mujoco==3.6.0
-  • pip install deme3              (DEME discrete-element solver — required)
+  • pip install "deme[cuda12]>=3.0.14,<4"              (DEME discrete-element solver — required)
 
 Running
 -------

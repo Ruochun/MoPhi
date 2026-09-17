@@ -12,8 +12,8 @@ set(MOPHI_REQUIRED_MUJOCO_VERSION "3.6.0" CACHE INTERNAL "Required MuJoCo Python
 
 # Keep the installable distribution name separate from the Python import name.
 # Compatible DEME providers can therefore be selected without changing coupler
-# or demo code (for example: -DMOPHI_PACKAGE_DEME_DISTRIBUTION=deme).
-set(MOPHI_PACKAGE_DEME_DISTRIBUTION "deme3" CACHE STRING "Python distribution providing the DEME API")
+# or demo code (override MOPHI_PACKAGE_DEME_DISTRIBUTION with a pip requirement).
+set(MOPHI_PACKAGE_DEME_DISTRIBUTION "deme[cuda12]>=3.0.14,<4" CACHE STRING "Python distribution providing the DEME API")
 set(MOPHI_PACKAGE_DEME_IMPORT_MODULE "deme" CACHE STRING "Python module exposing the DEME API")
 
 # ─────────────────────────────────────────────────────────────────────────────

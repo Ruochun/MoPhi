@@ -97,7 +97,7 @@ verification, and ABI troubleshooting.
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
 | `-DMOPHI_FETCH_NEWTON=ON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
 | `-DMOPHI_FETCH_XLB=ON` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
-| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install the configured DEME provider (`deme3` by default) during CMake configure |
+| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install the configured DEME provider (`deme[cuda12]>=3.0.14,<4` by default) during CMake configure |
 
 ### Adding a new external solver
 
@@ -193,7 +193,7 @@ backends.
 | `MOPHI_FETCH_NEWTON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
 | `MOPHI_FETCH_XLB` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
 | `MOPHI_FETCH_DEME` | OFF | Developer convenience: install the configured DEME provider during CMake configure |
-| `MOPHI_PACKAGE_DEME_DISTRIBUTION` | `deme3` | Pip distribution supplying the DEME-compatible API |
+| `MOPHI_PACKAGE_DEME_DISTRIBUTION` | `deme[cuda12]>=3.0.14,<4` | Pip distribution supplying the DEME-compatible API |
 | `MOPHI_PACKAGE_DEME_IMPORT_MODULE` | `deme` | Python module exporting that API |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
@@ -210,4 +210,4 @@ backends.
 | DEM-Engine | https://github.com/projectchrono/DEM-Engine | GPU-based DEM | C++ / CUDA (CMake) |
 | Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
 | XLB | https://github.com/Autodesk/XLB | GPU lattice-Boltzmann fluid | Pure Python / JAX (pip) |
-| DEME | https://pypi.org/project/deme3/ | Python discrete-element solver provider | Python extension (pip) |
+| DEME | https://pypi.org/project/deme/ | Python discrete-element solver provider | Python extension (pip) |

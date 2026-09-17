@@ -27,7 +27,7 @@ force and angular acceleration is torque even when the configured body mass
 and MOI are not unity.
 
 Run from the repository root with a MoPhi build that enables
-`MOPHI_BUILD_NEWTON_XLB_DEM` and with deme3 3.0.9 or newer:
+`MOPHI_BUILD_NEWTON_XLB_DEM` and with deme 3.0.14 or newer:
 
 ```bash
 PYTHONPATH=python python demo/newton_xlb_dem/deme_getter_comparison/demo_deme_contact_getter_comparison.py
