@@ -10,7 +10,8 @@ coupler-first design extracts tested, reusable on-device data exchange from
 scenario-specific demos, making multi-physics experiments and extensible
 simulation pipelines easier to assemble as the project grows. Reusable Python
 utilities also cover solver-independent preparation tasks such as toolpath
-parsing, mesh-region sampling, and scientific output.
+parsing, mesh-region sampling, scientific output, and local conversion of
+licensed recorded hand motion into simulation-ready geometry.
 
 ---
 
@@ -45,6 +46,9 @@ and `cibuildwheel` matrix builds, including ABI troubleshooting and verification
 
 For the solver-independent G-code parser used by printing workflows, see
 [docs/gcode.md](docs/gcode.md).
+
+For local GRAB hand-motion conversion, see
+[docs/grab-motion.md](docs/grab-motion.md).
 
 For exporting triangle-mesh snapshots to VTK/ParaView, see
 [docs/vtk-output.md](docs/vtk-output.md).

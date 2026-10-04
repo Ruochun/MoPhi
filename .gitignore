@@ -74,4 +74,6 @@ __pycache__/
 
 # Demo outputs
 /output/
+# Locally converted licensed GRAB motion data
+/data/grab/
 imgui.ini

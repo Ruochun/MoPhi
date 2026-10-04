@@ -2,6 +2,36 @@
 
 This guide collects the user-facing build and run workflows for MoPhi.
 
+For a local GRAB hand-motion conversion command and its prerequisites, see
+[GRAB hand motion](grab-motion.md).
+
+To inspect converted GRAB hand data without running a physics solver, install
+`numpy`, `matplotlib`, `scipy`, and `trimesh`, then run:
+
+```bash
+python3 scripts/inspect_grab_hand_motion.py \
+    data/grab/s2/mug_drink_2_left.npz \
+    data/grab/s2/mug_drink_2_right.npz \
+    --object --frames 400 602 800
+```
+
+This validates the arrays and writes a hand-and-object contact sheet under
+`output/inspect_grab_hand_motion/`. The optional `--object` overlay reads the
+original GRAB sequence from `~/GRAB/extracted`; see
+[GRAB hand motion](grab-motion.md) for the source-data prerequisites.
+
+To inspect a time series as an MP4, install `imageio` and `imageio-ffmpeg` and
+run the same script with `--movie`:
+
+```bash
+python3 scripts/inspect_grab_hand_motion.py \
+    data/grab/s2/mug_drink_2_right.npz \
+    --object --movie --movie-start 400 --movie-stop 640 --movie-stride 4
+```
+
+This writes an MP4 under `output/inspect_grab_hand_motion/`. The default
+playback rate preserves the source timing after frame skipping.
+
 All demos write generated files by default under
 `<repository-root>/output/<demo-name>/`. The repository-level `output/`
 directory is git-ignored so movies, USD scenes, state snapshots, and other
