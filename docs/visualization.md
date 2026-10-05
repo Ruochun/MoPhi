@@ -89,12 +89,14 @@ Every visualizer backend must implement the following methods:
 | Method | Signature | Notes |
 |--------|-----------|-------|
 | `is_running` | `() → bool` | `False` when the user closes the window (OpenGL) or `close()` is called (USD) |
+| `is_paused` | `() → bool` | Interactive pause state; always false for offline USD export |
 | `set_camera` | `(pos, pitch, yaw)` | No-op is acceptable if the backend has no interactive camera |
 | `set_world_offsets` | `(spacing)` | Set additional viewer-only spacing between replicated worlds; no-op is acceptable if unsupported |
 | `update_shape_colors` | `(shape_colors)` | Override selected Newton shape colors; no-op is acceptable if unsupported |
 | `begin_frame` | `(sim_time: float)` | Called once per simulation step before any `log_*` calls |
 | `log_state` | `(state)` | Render/record the rigid-body state from a physics solver |
 | `log_points` | `(name, positions, *, radii, colors)` | Render/record a named point cloud (spheres) |
+| `log_mesh` | `(name, points, indices, *, color, hidden, backface_culling)` | Fixed-topology triangle surface; world-space Warp vec3 points and flattened int32 indices. Update points each frame; use a new name for new topology. Constant RGB color; defaults to double-sided rendering. |
 | `log_clumps` | `(name, centers, orientations, sphere_radii, sphere_offsets, *, colors)` | Render/record DEME clumps as overlapping-sphere assemblies; expands template to world-space spheres and delegates to `log_points` |
 | `log_arrows` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named arrows (coordinate axes, vector fields); USD records sampled colored segments |
 | `log_lines` | `(name, starts, ends, colors, *, width, hidden)` | Render/record named line segments (scale bars, grids); USD records sampled colored segments |
@@ -123,9 +125,15 @@ so that the rest of MoPhi works without it).
 If you are running under WSL and the OpenGL window does not appear, confirm that
 WSLg GUI support is installed and working before debugging the MoPhi viewer path.
 
-**Constructor**: `OpenGLVisualizer(model)` — the Newton model is required at
+**Constructor**: `OpenGLVisualizer(model, *, width=1920, height=1080, headless=False)` — the Newton model is required at
 construction time because `ViewerGL.set_model()` must be called before the
 first frame is rendered.
+
+`headless=True` uses Newton's offscreen OpenGL context and still requires working
+graphics drivers. `log_mesh` uses Newton's mesh/instance APIs and recomputes
+normals after deformation. The USD implementation records sampled mesh points
+under `/World/Surfaces/`. See [GRAB playback](how-to/grab-playback.md) for a
+complete deforming-mesh example, prerequisites, and validation commands.
 
 **`log_state`**: Forwards the Newton state object directly to
 `ViewerGL.log_state()`.

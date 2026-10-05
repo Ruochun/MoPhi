@@ -39,12 +39,15 @@ class OpenGLVisualizer:
         visualizer.close()
     """
 
-    def __init__(self, model) -> None:
+    def __init__(self, model, *, width: int = 1920, height: int = 1080, headless: bool = False) -> None:
         """Open a real-time OpenGL window and register the Newton model.
 
         Args:
             model: A ``newton.Model`` (or compatible object) that describes the
                    articulated body geometry to be rendered.
+            width: Window or offscreen framebuffer width in pixels.
+            height: Window or offscreen framebuffer height in pixels.
+            headless: Use an offscreen OpenGL context without a visible window.
 
         Raises:
             ImportError: if the ``newton`` package is not installed.
@@ -53,8 +56,9 @@ class OpenGLVisualizer:
         """
         import newton  # imported here so that the rest of MoPhi works without newton
 
-        self._viewer = newton.viewer.ViewerGL()
+        self._viewer = newton.viewer.ViewerGL(width=width, height=height, headless=headless)
         self._viewer.set_model(model)
+        self._mesh_instances = {}
 
     # ── Window state ───────────────────────────────────────────────────────────
 
@@ -65,6 +69,10 @@ class OpenGLVisualizer:
         simulation loop to terminate gracefully.
         """
         return self._viewer.is_running()
+
+    def is_paused(self) -> bool:
+        """Return the Newton viewer's playback pause state."""
+        return self._viewer.is_paused()
 
     # ── Camera ─────────────────────────────────────────────────────────────────
 
@@ -128,6 +136,34 @@ class OpenGLVisualizer:
                        When ``None`` the viewer uses a default colour.
         """
         self._viewer.log_points(name, positions, radii=radii, colors=colors)
+
+    def log_mesh(self, name, points, indices, *, color=(0.7, 0.7, 0.7), hidden=False, backface_culling=False):
+        """Render a fixed-topology surface with updated world-space vertices.
+
+        Points are Warp vec3 arrays; indices are flattened Warp int32 arrays.
+        Newton recomputes vertex normals on each update. Use a new name if
+        topology changes. Color is a constant RGB tuple in [0, 1].
+        """
+        import warp as wp
+
+        # Newton applies per-mesh colors through its public instancing API.
+        # Keep one identity instance and its buffers for each deforming mesh.
+        if name not in self._mesh_instances:
+            self._mesh_instances[name] = (
+                wp.array([wp.transform_identity()], dtype=wp.transform, device=points.device),
+                wp.array([(1.0, 1.0, 1.0)], dtype=wp.vec3, device=points.device),
+                wp.array([color], dtype=wp.vec3, device=points.device),
+            )
+        xforms, scales, colors = self._mesh_instances[name]
+        colors.assign(np.asarray([color], dtype=np.float32))
+        self._viewer.log_mesh(
+            name,
+            points,
+            indices,
+            hidden=True,
+            backface_culling=backface_culling,
+        )
+        self._viewer.log_instances(f"{name}_instance", name, xforms, scales, colors, None, hidden=hidden)
 
     def log_arrows(self, name: str, starts, ends, colors, *, width: float = 0.01, hidden: bool = False) -> None:
         """Log a named batch of arrows for rendering.

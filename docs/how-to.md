@@ -32,6 +32,9 @@ own prerequisites, commands, behavior notes, and limitations.
   hand workloads.
 - [GRAB hand motion](how-to/grab-motion.md) — convert licensed GRAB sequences, inspect
   extracted hand meshes, and render PNG or MP4 previews.
+- [GRAB playback in Newton](how-to/grab-playback.md) — prerequisites and preparation
+  for `python demo/newton_dem/grab/demo_grab_playback.py`; requires MoPhi,
+  Newton/Warp, imageio, SciPy, and prepared GRAB NPZ files.
 
 ## Supporting references
 

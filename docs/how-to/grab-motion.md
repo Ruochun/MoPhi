@@ -12,10 +12,10 @@ place sequence files beneath `~/GRAB/extracted/grab/` and subject templates and
 hand correspondence arrays beneath `~/GRAB/extracted/tools/`. Extract the
 gendered `SMPLX_MALE.npz` and `SMPLX_FEMALE.npz` files from the authorized
 SMPL-X archive into `~/GRAB/models/smplx/`. Install `numpy`, `torch`, `smplx`,
-and `trimesh` in the Python environment used for conversion.
+`trimesh`, and `scipy` in the Python environment used for conversion.
 
 ```bash
-python3 -m pip install numpy torch smplx trimesh
+python3 -m pip install numpy torch smplx trimesh scipy
 ```
 
 From the repository root, convert one sequence:
@@ -33,7 +33,11 @@ Partial frame ranges add `_frames_<start>_<stop>` to the output filename so
 they do not overwrite a full sequence.
 
 The default outputs are `data/grab/s2/mug_drink_2_left.npz` and
-`data/grab/s2/mug_drink_2_right.npz`. The whole `data/grab/` tree is ignored
+`data/grab/s2/mug_drink_2_right.npz`, plus `mug_drink_2_object.npz` with the
+original object mesh and recorded rigid poses. Use `--object-only` to add the
+object archive when hands are already extracted. See
+[Newton playback](grab-playback.md) for complete prerequisites and playback.
+The whole `data/grab/` tree is ignored
 by Git because its contents derive from licensed GRAB data. Do not commit or
 redistribute the converted sequences.
 
@@ -70,11 +74,14 @@ explicit interpolation policy.
 
 [`scripts/inspect_grab_hand_motion.py`](../../scripts/inspect_grab_hand_motion.py)
 validates the NPZ schema, time axis, topology, and local-origin convention,
-then renders selected frames in metric world coordinates. It does not need
-SMPL-X, PyTorch, or MANO. Install its extra plotting requirements:
+then renders selected frames in metric world coordinates. It uses MoPhi's
+shared hand loader; ensure MoPhi is built for the active interpreter (see
+[playback prerequisites](grab-playback.md#prerequisites)). It does not need
+SMPL-X, PyTorch, or MANO. From the repository root:
 
 ```bash
 python3 -m pip install matplotlib scipy
+export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
 python3 scripts/inspect_grab_hand_motion.py \
     data/grab/s2/mug_drink_2_left.npz \
     data/grab/s2/mug_drink_2_right.npz \

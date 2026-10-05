@@ -116,6 +116,7 @@ class OmniverseVisualizer:
 
         # box shape descriptors waiting to be baked into the stage
         self._pending_cube_shapes: list = []
+        self._dynamic_meshes = {}
 
         try:
             from pxr import Gf, Usd, UsdGeom, Vt  # noqa: F401
@@ -146,6 +147,10 @@ class OmniverseVisualizer:
         regardless of backend.
         """
         return not self._closed
+
+    def is_paused(self) -> bool:
+        """Offline export has no interactive pause state."""
+        return False
 
     # ── Camera ─────────────────────────────────────────────────────────────────
 
@@ -289,6 +294,25 @@ class OmniverseVisualizer:
         # Otherwise they will be applied inside _ensure_robot_xforms().
         if self._robot_translate_ops:
             self._apply_cube_shapes()
+
+    def log_mesh(self, name, points, indices, *, color=(0.7, 0.7, 0.7), hidden=False, backface_culling=False):
+        """Record world-space points on a named mesh with fixed triangle topology."""
+        if not self._pxr_available or self._stage is None:
+            return
+        points_np = points.numpy() if hasattr(points, "numpy") else np.asarray(points)
+        if name not in self._dynamic_meshes:
+            indices_np = indices.numpy() if hasattr(indices, "numpy") else np.asarray(indices)
+            mesh = self._UsdGeom.Mesh.Define(self._stage, f"/World/Surfaces/{name}")
+            mesh.CreateFaceVertexCountsAttr([3] * (indices_np.size // 3))
+            mesh.CreateFaceVertexIndicesAttr(indices_np.reshape(-1).tolist())
+            mesh.CreateSubdivisionSchemeAttr("none")
+            self._dynamic_meshes[name] = mesh
+        mesh = self._dynamic_meshes[name]
+        time = self._current_time * self._fps
+        mesh.GetPointsAttr().Set(self._Vt.Vec3fArray.FromNumpy(points_np.astype(np.float32)), time)
+        mesh.CreateDisplayColorAttr().Set([self._Gf.Vec3f(*color)], time)
+        mesh.CreateDoubleSidedAttr().Set(not backface_culling, time)
+        mesh.CreateVisibilityAttr().Set("invisible" if hidden else "inherited", time)
 
     def log_points(self, name: str, positions, *, radii=None, colors=None) -> None:
         """Record a named point cloud as a USD ``UsdGeom.PointInstancer``.

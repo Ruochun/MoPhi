@@ -13,82 +13,12 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import trimesh
 
+from mophi.utils.grab_motion import load_motion
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GRAB_ROOT = Path.home() / "GRAB" / "extracted"
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "output" / "inspect_grab_hand_motion"
 HAND_COLORS = {"left": "#3288bd", "right": "#e88b31"}
-
-
-def load_motion(path: Path) -> dict:
-    """Load and validate one converter output before any plotting."""
-    required = {
-        "format_version",
-        "source_sequence",
-        "hand_side",
-        "origin_kind",
-        "source_frame_indices",
-        "source_fps",
-        "timestamps_s",
-        "hand_origin_world",
-        "hand_vertices_local",
-        "hand_faces",
-    }
-    with np.load(path, allow_pickle=False) as archive:
-        missing = required.difference(archive.files)
-        if missing:
-            raise ValueError(f"{path}: missing fields: {', '.join(sorted(missing))}")
-        data = {key: archive[key] for key in required}
-    if int(data["format_version"]) != 1:
-        raise ValueError(f"{path}: unsupported format_version")
-    side = str(data["hand_side"])
-    if side not in HAND_COLORS:
-        raise ValueError(f"{path}: unknown hand_side {side!r}")
-    if str(data["origin_kind"]) != "mean_hand_vertex_position":
-        raise ValueError(f"{path}: unknown origin_kind")
-    frames = data["source_frame_indices"]
-    times = data["timestamps_s"]
-    origins = data["hand_origin_world"]
-    vertices = data["hand_vertices_local"]
-    faces = data["hand_faces"]
-    count = len(times)
-    expected_dtypes = {
-        "source_frame_indices": np.int32,
-        "timestamps_s": np.float64,
-        "hand_origin_world": np.float32,
-        "hand_vertices_local": np.float32,
-        "hand_faces": np.int32,
-    }
-    for name, dtype in expected_dtypes.items():
-        if data[name].dtype != dtype:
-            raise ValueError(f"{path}: {name} must have dtype {np.dtype(dtype)}")
-    if (
-        frames.shape != (count,)
-        or origins.shape != (count, 3)
-        or vertices.ndim != 3
-        or vertices.shape[0] != count
-        or vertices.shape[2] != 3
-        or faces.ndim != 2
-        or faces.shape[1] != 3
-        or count == 0
-        or vertices.shape[1] == 0
-        or len(faces) == 0
-    ):
-        raise ValueError(f"{path}: inconsistent frame or mesh shapes")
-    fps = float(data["source_fps"])
-    if not np.isfinite(fps) or fps <= 0 or not np.all(np.diff(frames) > 0):
-        raise ValueError(f"{path}: invalid frame indices or source_fps")
-    if np.any(frames < 0):
-        raise ValueError(f"{path}: source frame indices must be nonnegative")
-    if not np.allclose(times, frames / fps, rtol=0, atol=1e-8):
-        raise ValueError(f"{path}: timestamps do not match source frames and fps")
-    if not (np.isfinite(origins).all() and np.isfinite(vertices).all()):
-        raise ValueError(f"{path}: nonfinite geometry")
-    if np.any(faces < 0) or np.any(faces >= vertices.shape[1]):
-        raise ValueError(f"{path}: invalid hand face indices")
-    if np.max(np.abs(vertices.mean(axis=1, dtype=np.float64))) > 1e-5:
-        raise ValueError(f"{path}: local vertices are not centered on the stored origin")
-    data["path"] = path
-    return data
 
 
 def select_frames(motions: list[dict], requested: list[int] | None) -> list[int]:

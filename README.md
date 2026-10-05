@@ -11,7 +11,9 @@ scenario-specific demos, making multi-physics experiments and extensible
 simulation pipelines easier to assemble as the project grows. Reusable Python
 utilities also cover solver-independent preparation tasks such as toolpath
 parsing, mesh-region sampling, scientific output, and local conversion of
-licensed recorded hand motion into simulation-ready geometry.
+licensed recorded hand motion into simulation-ready geometry. Recorded hand and
+object trajectories can be inspected together using Newton's mesh renderer
+before adding contact physics.
 
 ---
 

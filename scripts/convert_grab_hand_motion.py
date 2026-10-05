@@ -1,4 +1,4 @@
-"""Convert GRAB body poses into per-frame DEME-ready hand triangle surfaces."""
+"""Prepare GRAB hand surfaces and recorded rigid-object geometry for playback."""
 
 import argparse
 from pathlib import Path
@@ -7,12 +7,48 @@ import numpy as np
 import smplx
 import torch
 import trimesh
+from scipy.spatial.transform import Rotation
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GRAB_ROOT = Path.home() / "GRAB" / "extracted"
 DEFAULT_MODEL_ROOT = Path.home() / "GRAB" / "models"
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "data" / "grab"
 HAND_NAMES = {"left": "lhand", "right": "rhand"}
+
+
+def convert_object(grab_root: Path, sequence: Path, output_root: Path, start=0, stop=None) -> Path:
+    """Export the original object mesh and rigid poses into a pickle-free NPZ."""
+    relative_sequence = sequence.resolve().relative_to((grab_root / "grab").resolve())
+    with np.load(sequence, allow_pickle=True) as data:
+        frame_count = int(data["n_frames"])
+        fps = float(data["framerate"])
+        obj = data["object"].item()
+    end = frame_count if stop is None else stop
+    if not 0 <= start < end <= frame_count or not np.isfinite(fps) or fps <= 0:
+        raise ValueError("Invalid object frame range or recording rate")
+    mesh_path = grab_root / str(obj["object_mesh"])
+    mesh = trimesh.load(mesh_path, process=False)
+    params = obj["params"]
+    if params["transl"].shape != (frame_count, 3) or params["global_orient"].shape != (frame_count, 3):
+        raise ValueError("Object parameter shapes disagree with n_frames")
+    frames = np.arange(start, end, dtype=np.int32)
+    suffix = "" if start == 0 and end == frame_count else f"_frames_{start:06d}_{end:06d}"
+    path = output_root / relative_sequence.parent / f"{relative_sequence.stem}{suffix}_object.npz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        format_version=np.int32(1),
+        source_sequence=str(relative_sequence),
+        source_frame_indices=frames,
+        source_fps=np.float64(fps),
+        timestamps_s=frames.astype(np.float64) / fps,
+        object_name=mesh_path.stem,
+        object_vertices_local=np.asarray(mesh.vertices, dtype=np.float32),
+        object_faces=np.asarray(mesh.faces, dtype=np.int32),
+        object_translation_world=np.asarray(params["transl"][frames], dtype=np.float32),
+        object_quaternion_xyzw=Rotation.from_rotvec(params["global_orient"][frames]).as_quat().astype(np.float32),
+    )
+    return path
 
 
 def convert_sequence(
@@ -128,21 +164,29 @@ def main() -> None:
     parser.add_argument("--model-root", type=Path, default=DEFAULT_MODEL_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--hand", choices=("left", "right", "both"), default="both")
+    parser.add_argument(
+        "--object-only", action="store_true", help="Prepare only the object; reuse existing hand exports"
+    )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--start", type=int, default=0, help="First source frame, inclusive")
     parser.add_argument("--stop", type=int, help="Last source frame, exclusive")
     args = parser.parse_args()
     hands = ("left", "right") if args.hand == "both" else (args.hand,)
-    paths = convert_sequence(
-        args.grab_root,
-        args.model_root,
-        args.sequence,
-        args.output_root,
-        hands,
-        args.batch_size,
-        args.start,
-        args.stop,
+    paths = (
+        []
+        if args.object_only
+        else convert_sequence(
+            args.grab_root,
+            args.model_root,
+            args.sequence,
+            args.output_root,
+            hands,
+            args.batch_size,
+            args.start,
+            args.stop,
+        )
     )
+    paths.append(convert_object(args.grab_root, args.sequence, args.output_root, args.start, args.stop))
     for path in paths:
         print(path)
 

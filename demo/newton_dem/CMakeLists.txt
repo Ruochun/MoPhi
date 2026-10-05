@@ -7,6 +7,16 @@
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+add_custom_target(demo_grab_playback
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/demo_grab_playback.py"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Playing prepared GRAB hand and object motion in Newton"
+    VERBATIM
+)
+
+install(FILES grab/demo_grab_playback.py DESTINATION demo/newton_dem/grab)
+
 add_custom_target(demo_robotic_3d_printing
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/robotic_3d_printing/demo_robotic_3d_printing.py"
