@@ -118,7 +118,7 @@ and `G92` resets.
 Because importing `mophi.utils` first imports the `mophi` package, the active
 interpreter must have a compatible `mophi_core` extension. For a source-tree
 developer build, configure and build MoPhi with that same interpreter as
-described in [how-to.md](how-to.md#source-tree-developer-builds):
+described in [python-builds.md](how-to/python-builds.md#source-tree-developer-builds):
 
 ```bash
 cmake -B build-py312 \

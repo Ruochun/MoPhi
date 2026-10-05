@@ -28,6 +28,17 @@ Requirements must be relative paths contained by the downloaded asset folder.
 Absolute paths and parent traversal are rejected. `NEWTON_CACHE_PATH` continues
 to control the cache root because Newton itself performs both download calls.
 
+## Cache location
+
+Newton normally stores assets in the platform user cache, such as
+`~/.cache/newton/` on Linux. Set `NEWTON_CACHE_PATH` to use another persistent
+location:
+
+```bash
+NEWTON_CACHE_PATH=/path/to/newton-cache \
+PYTHONPATH=python python3 demo/newton_xlb_dem/humanoid_complex_environment/demo_humanoid_robot_fighting.py
+```
+
 ## Supported behavior and limitations
 
 - Complete caches are reused without a refresh.

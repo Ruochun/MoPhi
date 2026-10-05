@@ -25,4 +25,6 @@ PYTHONPATH=python python tests/test_pairwise_gpu_exchange.py
 ```
 
 The ANYmal and humanoid-swimming demos exercise the complete CUDA stepping
-path. Their run commands and prerequisites are listed in `docs/how-to.md`.
+path. Their run commands and prerequisites are listed in
+[`anymal-demos.md`](how-to/anymal-demos.md) and
+[`humanoid-demos.md`](how-to/humanoid-demos.md).

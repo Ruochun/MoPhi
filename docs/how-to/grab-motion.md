@@ -1,6 +1,6 @@
 # GRAB hand motion conversion
 
-[`scripts/convert_grab_hand_motion.py`](../scripts/convert_grab_hand_motion.py)
+[`scripts/convert_grab_hand_motion.py`](../../scripts/convert_grab_hand_motion.py)
 reconstructs the hands embedded in a GRAB SMPL-X body sequence and saves their
 fixed-topology surface motion for later DEME contact experiments. It does not
 run DEME or reproduce GRAB's separate MANO hand reconstructions.
@@ -68,7 +68,7 @@ explicit interpolation policy.
 
 ## Check an output
 
-[`scripts/inspect_grab_hand_motion.py`](../scripts/inspect_grab_hand_motion.py)
+[`scripts/inspect_grab_hand_motion.py`](../../scripts/inspect_grab_hand_motion.py)
 validates the NPZ schema, time axis, topology, and local-origin convention,
 then renders selected frames in metric world coordinates. It does not need
 SMPL-X, PyTorch, or MANO. Install its extra plotting requirements:

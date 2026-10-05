@@ -88,7 +88,7 @@ extension into `python/mophi/` for `PYTHONPATH=python` usage; use a separate
 build sets `MOPHI_PYTHON_PACKAGING_BUILD=ON`, keeps its extension in the build
 tree, and packages it into an ABI-specific wheel. The configured
 `cibuildwheel` matrix repeats that packaging build for CPython 3.11–3.14.
-See [the Python build workflows](how-to.md#python-build-workflows) for commands,
+See [the Python build workflows](how-to/python-builds.md) for commands,
 verification, and ABI troubleshooting.
 
 | Option | Default | Effect |

@@ -36,11 +36,11 @@ for the repository map and code-organization notes.
 ## Quick start
 
 Start with the quick-start workflow in
-[docs/how-to.md#quick-start](docs/how-to.md#quick-start), which covers cloning,
+[docs/how-to/getting-started.md](docs/how-to/getting-started.md), which covers cloning,
 configuring, building, and running a first demo.
 
 For Python development and distribution, see
-[docs/how-to.md#python-build-workflows](docs/how-to.md#python-build-workflows).
+[docs/how-to/python-builds.md](docs/how-to/python-builds.md).
 It distinguishes per-interpreter source-tree CMake builds from single-wheel
 and `cibuildwheel` matrix builds, including ABI troubleshooting and verification.
 
@@ -48,7 +48,7 @@ For the solver-independent G-code parser used by printing workflows, see
 [docs/gcode.md](docs/gcode.md).
 
 For local GRAB hand-motion conversion, see
-[docs/grab-motion.md](docs/grab-motion.md).
+[docs/how-to/grab-motion.md](docs/how-to/grab-motion.md).
 
 For exporting triangle-mesh snapshots to VTK/ParaView, see
 [docs/vtk-output.md](docs/vtk-output.md).
@@ -66,19 +66,19 @@ boundaries are described in
 ### Linux Python 3.11–3.14 wheels (Newton + XLB + DEME, no FERIS)
 
 For the packaged distribution path, see
-[docs/how-to.md#linux-python-311314-wheels](docs/how-to.md#linux-python-311314-wheels).
+[docs/how-to/python-builds.md#linux-python-311314-wheels](docs/how-to/python-builds.md#linux-python-311314-wheels).
 That guide covers wheel building, `auditwheel` repair, and the default runtime
 dependency set for Newton + XLB + DEME without FERIS.
 
 ### FERIS + Newton (Python-based GPU physics)
 
 The FERIS + Newton workflow, including build and demo commands, lives in
-[docs/how-to.md#feris--newton-python-based-gpu-physics](docs/how-to.md#feris--newton-python-based-gpu-physics).
+[docs/how-to/feris-newton.md](docs/how-to/feris-newton.md).
 
 ### Newton + XLB + DEME (three-way coupling)
 
 The Newton + XLB + DEME build, demo, and dependency guidance lives in
-[docs/how-to.md#newton--xlb--deme-three-way-coupling](docs/how-to.md#newton--xlb--deme-three-way-coupling).
+[docs/how-to/newton-xlb-deme.md](docs/how-to/newton-xlb-deme.md).
 
 ---
 
