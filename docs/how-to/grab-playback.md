@@ -4,8 +4,14 @@
 animates prepared GRAB hand surfaces and the recorded object using Newton's
 OpenGL renderer. Both hand deformation and object motion are prescribed.
 This milestone computes no contact forces or dynamics; DEME is not required.
+Continue with [cup contact checks](grab-contact.md) to let DEME advance the cup.
 
 ## Prerequisites
+
+Commands below use the source-tree development workflow: run from the repository
+root with `PYTHONPATH=python`. With an installed MoPhi wheel, omit that prefix
+and remove any source-checkout path previously exported in `PYTHONPATH` so Python
+uses the installed package. See [Python build workflows](python-builds.md).
 
 - Use conda environment `ML`. Tested: Python 3.11, Newton 1.0.0, Warp 1.12.1.
   DEME 3.0.14 is installed in this environment but unused by playback.
@@ -24,8 +30,7 @@ Run commands from the repository root:
 conda activate ML
 python -m pip install 'newton==1.0.0' 'warp-lang==1.12.1' \
     numpy scipy 'pyglet>=2.1.6,<3' 'imgui-bundle>=1.92.0' imageio imageio-ffmpeg
-export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
-python -c 'import mophi; print(mophi.mophi_core.__file__)'
+PYTHONPATH=python python -c 'import mophi; print(mophi.mophi_core.__file__)'
 ```
 
 If MoPhi's extension is missing or incompatible, build it with CMake and a
@@ -48,7 +53,7 @@ models. Standalone MANO models are unnecessary for these hand surfaces.
 
 ```bash
 python -m pip install numpy scipy trimesh torch smplx
-python scripts/convert_grab_hand_motion.py \
+PYTHONPATH=python python scripts/convert_grab_hand_motion.py \
     ~/GRAB/extracted/grab/s2/mug_drink_2.npz
 ```
 
@@ -56,7 +61,7 @@ This writes `mug_drink_2_left.npz`, `mug_drink_2_right.npz`, and
 `mug_drink_2_object.npz` under `data/grab/s2/`. To reuse existing hand exports:
 
 ```bash
-python scripts/convert_grab_hand_motion.py \
+PYTHONPATH=python python scripts/convert_grab_hand_motion.py \
     ~/GRAB/extracted/grab/s2/mug_drink_2.npz --object-only
 ```
 
@@ -70,7 +75,7 @@ and retains the source data's license restrictions.
 ## Run and inspect
 
 ```bash
-python demo/newton_dem/grab/demo_grab_playback.py
+PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py
 ```
 
 By default, both hands and the mug play through the complete shared recording
@@ -84,7 +89,7 @@ configuration block.
 Record the complete movie without opening a visible window:
 
 ```bash
-python demo/newton_dem/grab/demo_grab_playback.py --headless --save-movie
+PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py --headless --save-movie
 ```
 
 Outputs: `output/demo_grab_playback/grab_playback.mp4` and `last_frame.png`.
@@ -94,11 +99,11 @@ CUDA/OpenGL interoperability falls back to copies, affecting performance.
 
 ```bash
 # Export frame 600, at source time 5 seconds.
-python demo/newton_dem/grab/demo_grab_playback.py --headless \
+PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py --headless \
     --start-time 5 --end-time 5 --output-dir output/demo_grab_playback/frame_600
 
 # Inspect the right hand and object at half speed.
-python demo/newton_dem/grab/demo_grab_playback.py \
+PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py \
     --hands data/grab/s2/mug_drink_2_right.npz --speed 0.5
 ```
 
@@ -111,7 +116,7 @@ Optional USD export uses the same mesh logging interface:
 
 ```bash
 python -m pip install usd-core
-python demo/newton_dem/grab/demo_grab_playback.py --usd
+PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py --usd
 ```
 
 This writes `output/demo_grab_playback/grab_playback.usdc`, without a baked

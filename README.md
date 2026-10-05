@@ -12,8 +12,8 @@ simulation pipelines easier to assemble as the project grows. Reusable Python
 utilities also cover solver-independent preparation tasks such as toolpath
 parsing, mesh-region sampling, scientific output, and local conversion of
 licensed recorded hand motion into simulation-ready geometry. Recorded hand and
-object trajectories can be inspected together using Newton's mesh renderer
-before adding contact physics.
+object trajectories can be inspected together using Newton's mesh renderer,
+then used in controlled DEME cup-contact and moving-surface checks.
 
 ---
 

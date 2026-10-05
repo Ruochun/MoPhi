@@ -117,6 +117,35 @@ owner_map = owner_map_from_mesh_bindings(bindings)
 OBJ generation is an initialization-time operation and may use host memory.
 The GPU-only claim applies to recurring state and wrench exchange.
 
+For a dynamic closed mesh whose mass properties are not already known,
+`prepare_mesh_principal_frame(vertices, triangle_indices, mass)` in
+`python/mophi/couplers/newton_deme/mesh_owners.py` computes a homogeneous-volume
+CoM and principal inertia using trimesh. Mass is supplied explicitly in kg and
+vertices are in metres. It rejects open, inconsistently wound, or nonpositive
+volumes rather than silently repairing them. It does not infer heterogeneous
+material distributions or simplify collision geometry.
+
+```python
+from mophi.couplers.newton_deme import prepare_mesh_principal_frame
+
+mesh = prepare_mesh_principal_frame(vertices, faces, mass=0.25)
+# Export mesh.vertices and mesh.triangle_indices to DEME.
+# Supply mesh.mass and mesh.principal_moi to the dynamic owner.
+input_vertices = mesh.vertices @ mesh.principal_to_input.T + mesh.center_of_mass
+```
+
+To preserve a preexisting mesh pose `(R, p)`, initialize the owner at
+`p + R @ mesh.center_of_mass` with orientation `R @ mesh.principal_to_input`.
+This is necessary because DEME integrates about the owner CoM in its principal
+inertia frame. It is independent of the arbitrary reference origin allowed for
+a prescribed, non-dynamic surface. The
+[GRAB cup-contact demo](how-to/grab-contact.md) exercises this path without a
+Newton dynamics solver. Test its frame and inertia invariants with:
+
+```bash
+PYTHONPATH=python python -m unittest discover -s tests -p test_grab_contact_mass.py -v
+```
+
 ## Supported behavior
 
 - CUDA-only physics-state and wrench transfer through DEME device APIs.

@@ -17,6 +17,16 @@ add_custom_target(demo_grab_playback
 
 install(FILES grab/demo_grab_playback.py DESTINATION demo/newton_dem/grab)
 
+add_custom_target(demo_grab_contact
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/demo_grab_contact.py"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Running DEME cup contact calibration with Newton rendering"
+    VERBATIM
+)
+
+install(FILES grab/demo_grab_contact.py DESTINATION demo/newton_dem/grab)
+
 add_custom_target(demo_robotic_3d_printing
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/robotic_3d_printing/demo_robotic_3d_printing.py"

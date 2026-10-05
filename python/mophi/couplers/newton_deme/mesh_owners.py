@@ -10,6 +10,70 @@ from .contact_coupler import NewtonDEMEOwnerMap
 
 
 @dataclass(frozen=True)
+class PrincipalFrameMesh:
+    """A homogeneous closed mesh expressed about its CoM and principal axes.
+
+    ``principal_to_input`` maps principal-frame vectors into the input mesh
+    frame. Recover input vertices with ``vertices @ principal_to_input.T +
+    center_of_mass``. Moments are physical kg m^2 for the supplied mass in kg.
+    """
+
+    vertices: np.ndarray
+    triangle_indices: np.ndarray
+    center_of_mass: np.ndarray
+    principal_to_input: np.ndarray
+    principal_moi: np.ndarray
+    mass: float
+    volume: float
+
+
+def prepare_mesh_principal_frame(vertices, triangle_indices, mass: float) -> PrincipalFrameMesh:
+    """Prepare DEME's CoM/principal frame from a closed, consistently wound mesh.
+
+    Assumes uniform density in the volume enclosed by the surface. Does not
+    repair, simplify, fill holes, or infer the physical material distribution.
+    Requires trimesh at initialization only; coordinates are metres.
+    """
+    import trimesh
+
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(triangle_indices)
+    if not np.isfinite(mass) or mass <= 0:
+        raise ValueError("Mesh mass must be finite and positive")
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or not np.isfinite(vertices).all():
+        raise ValueError("Mesh vertices must be finite (N, 3) coordinates")
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or faces.dtype.kind not in "iu"
+        or len(faces) == 0
+        or np.any(faces < 0)
+        or np.any(faces >= len(vertices))
+    ):
+        raise ValueError("Mesh faces must contain valid integer triangle indices")
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    if not mesh.is_volume:
+        raise ValueError("Mass properties require a watertight, consistently outward-wound positive-volume mesh")
+    properties = mesh.mass_properties
+    inertia = np.asarray(properties.inertia) * (mass / properties.mass)
+    moments, axes = np.linalg.eigh(inertia)
+    if not np.isfinite(moments).all() or np.any(moments <= 0):
+        raise ValueError("Mesh must have positive finite principal moments of inertia")
+    if np.linalg.det(axes) < 0:
+        axes[:, -1] *= -1
+    center = np.asarray(properties.center_mass)
+    return PrincipalFrameMesh(
+        ((vertices - center) @ axes).astype(np.float32),
+        faces.astype(np.int32),
+        center,
+        axes,
+        moments,
+        float(mass),
+        float(properties.volume),
+    )
+
+
+@dataclass(frozen=True)
 class NewtonDEMEMeshOwnerSpec:
     """Describe one body-local triangle mesh that DEME owns as a contact proxy."""
 

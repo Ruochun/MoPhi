@@ -20,6 +20,14 @@ own prerequisites, commands, behavior notes, and limitations.
 
 ## Demo workflows
 
+The demo commands use the **source-tree development** workflow: run from the
+repository root with `PYTHONPATH=python` and MoPhi built for the active Python
+interpreter. If you installed a MoPhi wheel, **omit `PYTHONPATH=python`** so Python
+uses the installed package. Also remove any source-checkout path previously
+exported in `PYTHONPATH`. Demo scripts, assets, and demo-specific dependencies
+are still required. See [Python build workflows](how-to/python-builds.md) for
+both setup options.
+
 - [ANYmal demos](how-to/anymal-demos.md) — Newton baseline and Newton/XLB/DEME
   multiphysics behavior, including the XLB wrench diagnostic.
 - [Excavation comparison demos](how-to/excavation-demos.md) — DEME terrain feedback
@@ -33,8 +41,12 @@ own prerequisites, commands, behavior notes, and limitations.
 - [GRAB hand motion](how-to/grab-motion.md) — convert licensed GRAB sequences, inspect
   extracted hand meshes, and render PNG or MP4 previews.
 - [GRAB playback in Newton](how-to/grab-playback.md) — prerequisites and preparation
-  for `python demo/newton_dem/grab/demo_grab_playback.py`; requires MoPhi,
+  for `PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py`; requires MoPhi,
   Newton/Warp, imageio, SciPy, and prepared GRAB NPZ files.
+- [GRAB cup contact checks](how-to/grab-contact.md) — run
+  `PYTHONPATH=python python demo/newton_dem/grab/demo_grab_contact.py --case drop`; requires the
+  playback dependencies/assets plus DEME 3.0.14, trimesh, and a CUDA GPU. Includes
+  a frozen-hand push and moving-surface friction diagnostics.
 
 ## Supporting references
 

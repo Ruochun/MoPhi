@@ -7,6 +7,11 @@ run DEME or reproduce GRAB's separate MANO hand reconstructions.
 
 ## Prerequisites and use
 
+Commands below use the source-tree development workflow: run from the repository
+root with `PYTHONPATH=python`. With an installed MoPhi wheel, omit that prefix
+and remove any source-checkout path previously exported in `PYTHONPATH` so Python
+uses the installed package. See [Python build workflows](python-builds.md).
+
 Download GRAB under its own license. Use the GRAB authors' `unzip_grab.py` to
 place sequence files beneath `~/GRAB/extracted/grab/` and subject templates and
 hand correspondence arrays beneath `~/GRAB/extracted/tools/`. Extract the
@@ -21,7 +26,7 @@ python3 -m pip install numpy torch smplx trimesh scipy
 From the repository root, convert one sequence:
 
 ```bash
-python3 scripts/convert_grab_hand_motion.py \
+PYTHONPATH=python python3 scripts/convert_grab_hand_motion.py \
     ~/GRAB/extracted/grab/s2/mug_drink_2.npz
 ```
 
@@ -59,8 +64,9 @@ World positions reconstruct as
 `hand_vertices_local[t] + hand_origin_world[t, None, :]`. There is no stored
 owner rotation: use identity orientation and update local triangle positions
 as the hand moves. The origin is a geometric reference, **not** a physical
-center of mass. In DEME, indexed vertices must be expanded into its flattened
-triangle-node order before using its triangle-node update API.
+center of mass. DEME 3.0.14's public `Tracker.UpdateMesh` accepts the indexed
+vertex array in the loaded mesh's vertex order; DEME expands it internally into
+triangle storage. Do not pass an expanded triangle soup to that public method.
 
 The source topology is the 778-vertex, 1,538-triangle SMPL-X hand subset.
 This converter stores both hands' full time series; it does not simplify the
@@ -81,8 +87,7 @@ SMPL-X, PyTorch, or MANO. From the repository root:
 
 ```bash
 python3 -m pip install matplotlib scipy
-export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
-python3 scripts/inspect_grab_hand_motion.py \
+PYTHONPATH=python python3 scripts/inspect_grab_hand_motion.py \
     data/grab/s2/mug_drink_2_left.npz \
     data/grab/s2/mug_drink_2_right.npz \
     --object --frames 400 602 800
@@ -103,7 +108,7 @@ For an MP4 of consecutive source frames, also install `imageio` and
 
 ```bash
 python3 -m pip install imageio imageio-ffmpeg
-python3 scripts/inspect_grab_hand_motion.py \
+PYTHONPATH=python python3 scripts/inspect_grab_hand_motion.py \
     data/grab/s2/mug_drink_2_right.npz \
     --object --movie --movie-start 400 --movie-stop 640 --movie-stride 4
 ```
@@ -137,5 +142,5 @@ PY
 Run the inspection utility's fixture checks with:
 
 ```bash
-python3 -m unittest discover -s tests -p test_grab_motion_inspection.py
+PYTHONPATH=python python3 -m unittest discover -s tests -p test_grab_motion_inspection.py
 ```
