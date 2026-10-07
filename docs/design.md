@@ -97,7 +97,7 @@ verification, and ABI troubleshooting.
 | `-DMOPHI_FETCH_DEMENGINE=ON` | OFF | Download DEM-Engine DEM solver |
 | `-DMOPHI_FETCH_NEWTON=ON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
 | `-DMOPHI_FETCH_XLB=ON` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
-| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install the configured DEME provider (`deme[cuda12]>=3.0.14,<4` by default) during CMake configure |
+| `-DMOPHI_FETCH_DEME=ON` | OFF | Developer convenience: install the configured DEME provider during CMake configure |
 
 ### Adding a new external solver
 
@@ -193,7 +193,7 @@ backends.
 | `MOPHI_FETCH_NEWTON` | OFF | Developer convenience: install required Newton + Warp + MuJoCo (`pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0`) during CMake configure |
 | `MOPHI_FETCH_XLB` | OFF | Developer convenience: install XLB Python package (`pip install "xlb[cuda]"`) during CMake configure |
 | `MOPHI_FETCH_DEME` | OFF | Developer convenience: install the configured DEME provider during CMake configure |
-| `MOPHI_PACKAGE_DEME_DISTRIBUTION` | `deme[cuda12]>=3.0.14,<4` | Pip distribution supplying the DEME-compatible API |
+| `MOPHI_PACKAGE_DEME_DISTRIBUTION` | Configured in `CMakeLists.txt` | Pip distribution supplying the DEME-compatible API |
 | `MOPHI_PACKAGE_DEME_IMPORT_MODULE` | `deme` | Python module exporting that API |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
@@ -211,3 +211,26 @@ backends.
 | Newton | https://github.com/newton-physics/newton | GPU physics (Warp) | Pure Python (pip) |
 | XLB | https://github.com/Autodesk/XLB | GPU lattice-Boltzmann fluid | Pure Python / JAX (pip) |
 | DEME | https://pypi.org/project/deme/ | Python discrete-element solver provider | Python extension (pip) |
+
+## Topic folders for utilities and scripts
+
+Topic-specific code lives in a subpackage or script directory. Shared math,
+visualization helpers, and runtime package/version handling remain directly in
+`python/mophi/utils/`. Imports from `mophi` and the documented convenience
+exports from `mophi.utils` remain available.
+
+| Topic | Canonical source | Usage reference |
+|---|---|---|
+| GRAB data | `python/mophi/utils/grab/motion.py`, `scripts/grab/` | [Complete GRAB workflow](how-to/grab.md) |
+| Mesh geometry | `python/mophi/utils/geometry/` | [Sampling](mesh-sampling.md), [contact patches](mesh-contact-patches.md) |
+| Newton assets | `python/mophi/utils/newton/assets.py` | [Asset handling](newton-assets.md) |
+| XLB post-processing | `python/mophi/utils/xlb/helpers.py` | NumPy velocity-array seed/streamline operations, exposed through `mophi.xlb_*`; no solver stepping |
+| G-code | `python/mophi/utils/gcode/parser.py` | [G-code](gcode.md); `mophi.utils.gcode` retains its exports |
+| VTK output | `python/mophi/utils/vtk/writer.py` | [VTK](vtk-output.md); `mophi.utils.vtk` retains its exports |
+| Demo execution | `scripts/demos/run_important_demos.py` | [Serial runner](how-to/newton-xlb-deme.md) |
+
+Direct module imports follow these paths, e.g.
+`from mophi.utils.grab.motion import GrabPlayback`. GRAB preparation now runs as
+`python scripts/grab/convert_grab_hand_motion.py ...`; list the important demos
+with `python scripts/demos/run_important_demos.py --list`.
+Python package installation recursively includes these topic packages.

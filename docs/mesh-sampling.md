@@ -1,6 +1,6 @@
 # Open-mesh volume sampling
 
-This document describes `python/mophi/utils/mesh_sampling.py`, specifically
+This document describes `python/mophi/utils/geometry/mesh_sampling.py`, specifically
 the public `sample_grid_between_mesh_surfaces` utility.
 
 ## Purpose and design boundary

@@ -75,7 +75,7 @@ except ImportError:
 # xlb_make_streamline_warp_arrays additionally requires warp (Newton dependency)
 # and performs a lazy import internally, so it is safe to re-export here.
 try:
-    from .utils.xlb_helpers import (  # noqa: F401
+    from .utils.xlb.helpers import (  # noqa: F401
         xlb_build_streamlines,
         xlb_make_streamline_warp_arrays,
         xlb_make_y_plane_seeds,
@@ -129,7 +129,7 @@ except ImportError:
 
 # Validated Newton asset downloads with automatic incomplete-cache repair.
 try:
-    from .utils.newton_assets import download_newton_asset  # noqa: F401
+    from .utils.newton.assets import download_newton_asset  # noqa: F401
 
     __all__.append("download_newton_asset")
 except ImportError:

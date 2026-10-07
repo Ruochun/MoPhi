@@ -38,15 +38,11 @@ both setup options.
   fighting, and the Newton/XLB swimming concept.
 - [Flexible-hand demos](how-to/flexible-hand-demos.md) — Newton and DEME articulated
   hand workloads.
-- [GRAB hand motion](how-to/grab-motion.md) — convert licensed GRAB sequences, inspect
-  extracted hand meshes, and render PNG or MP4 previews.
-- [GRAB playback in Newton](how-to/grab-playback.md) — prerequisites and preparation
-  for `PYTHONPATH=python python demo/newton_dem/grab/demo_grab_playback.py`; requires MoPhi,
-  Newton/Warp, imageio, SciPy, and prepared GRAB NPZ files.
-- [GRAB cup contact checks](how-to/grab-contact.md) — run
-  `PYTHONPATH=python python demo/newton_dem/grab/demo_grab_contact.py --case drop`; requires the
-  playback dependencies/assets plus DEME 3.0.14, trimesh, and a CUDA GPU. Includes
-  a frozen-hand push and moving-surface friction diagnostics.
+- [GRAB recorded-versus-physics cup grasp](how-to/grab.md) — the complete workflow:
+  prepare NPZ files with `scripts/grab/convert_grab_hand_motion.py`, simulate with
+  `demo/newton_dem/grab/demo_grab_contact.py`, and produce the comparison with
+  `demo/newton_dem/grab/render_grab_comparison.py`. Covers licensed assets,
+  MoPhi/DEME/Newton prerequisites, recorded-only viewing, cameras, and diagnostics.
 
 ## Supporting references
 
@@ -55,5 +51,6 @@ both setup options.
 - [Pairwise GPU exchange](pairwise-gpu-exchange.md)
 - [XLB runtime and lattice mapping](xlb-runtime.md)
 - [G-code](gcode.md)
+- [Mesh contact patches](mesh-contact-patches.md)
 - [Mesh sampling](mesh-sampling.md)
 - [VTK output](vtk-output.md)

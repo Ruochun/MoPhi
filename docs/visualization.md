@@ -131,9 +131,9 @@ first frame is rendered.
 
 `headless=True` uses Newton's offscreen OpenGL context and still requires working
 graphics drivers. `log_mesh` uses Newton's mesh/instance APIs and recomputes
-normals after deformation. The USD implementation records sampled mesh points
-under `/World/Surfaces/`. See [GRAB playback](how-to/grab-playback.md) for a
-complete deforming-mesh example, prerequisites, and validation commands.
+normals after deformation. See the [GRAB workflow](how-to/grab.md) for a
+complete OpenGL deforming-mesh example, prerequisites, and validation commands.
+The GRAB viewer uses OpenGL; it does not offer a USD export mode.
 
 **`log_state`**: Forwards the Newton state object directly to
 `ViewerGL.log_state()`.

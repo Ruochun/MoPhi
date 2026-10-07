@@ -86,7 +86,7 @@ supported distributed install experience:
 - `newton==1.0.0`
 - `warp-lang==1.12.1`
 - `mujoco==3.6.0`
-- `deme[cuda12]>=3.0.14,<4`
+- `deme`
 - `xlb[cuda]`
 - `torch`
 - `GitPython`

@@ -16,6 +16,7 @@ from .mesh_owners import (
     extract_newton_shape_triangle_meshes,
     owner_map_from_mesh_bindings,
     prepare_mesh_principal_frame,
+    partition_mesh_contact_patches,
     write_wavefront_mesh,
 )
 from .particles import NewtonDEMEParticleExchange
@@ -35,5 +36,6 @@ __all__ = [
     "NewtonDEMEParticleExchange",
     "owner_map_from_mesh_bindings",
     "prepare_mesh_principal_frame",
+    "partition_mesh_contact_patches",
     "write_wavefront_mesh",
 ]

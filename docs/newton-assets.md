@@ -1,6 +1,6 @@
 # Newton asset cache handling
 
-This document describes `python/mophi/utils/newton_assets.py`, the shared
+This document describes `python/mophi/utils/newton/assets.py`, the shared
 Newton example-asset download helper used by MoPhi demos.
 
 ## Purpose and boundary

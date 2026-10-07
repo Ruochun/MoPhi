@@ -1,7 +1,7 @@
 # G-code support
 
 This document describes and justifies the solver-independent G-code parser in
-`python/mophi/utils/gcode.py`. It also explains how demos and tests should use
+`python/mophi/utils/gcode/parser.py`. It also explains how demos and tests should use
 the parser. `demo_dfc_3d_printing.py` demonstrates the solver-independent
 program driving a Newton-managed ABB printing device through inverse
 kinematics.

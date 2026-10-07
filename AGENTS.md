@@ -55,7 +55,12 @@ MoPhi/
 │       └── utils/               # Shared helper modules (solver-agnostic utilities)
 │           ├── __init__.py
 │           ├── vis_utils.py     # Internal math helpers for visualizer backends
-│           ├── xlb_helpers.py   # XLB (Lattice-Boltzmann) post-processing utilities
+│           ├── grab/            # GRAB motion loading and playback
+│           ├── geometry/        # Mesh sampling and contact patches
+│           ├── newton/          # Newton asset preparation
+│           ├── xlb/             # XLB post-processing utilities
+│           ├── gcode/           # G-code parsing
+│           ├── vtk/             # VTK output
 │           └── math_utils.py    # General-purpose math helpers (quaternion ops, etc.)
 └── demo/
     ├── CMakeLists.txt           # Guards each sub-demo with if(MOPHI_BUILD_<SOLVER>)
@@ -223,6 +228,11 @@ Key rules for agents:
 ---
 
 ## Python file naming conventions
+
+- Group topic-specific utilities and runnable scripts into topic subfolders,
+  such as `python/mophi/utils/grab/`, `scripts/grab/`, and `scripts/demos/`.
+  Keep cross-topic helpers at the utility root. Update imports, path resolution,
+  documentation, packaging references, and tests when moving files.
 
 - **Never use a leading underscore for file or module names** (e.g. `vis_utils.py`,
   not `_vis_utils.py`).  Leading-underscore names imply implementation-private

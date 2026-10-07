@@ -1,6 +1,6 @@
 # VTK snapshot output
 
-This document describes `python/mophi/utils/vtk.py`, the solver-independent
+This document describes `python/mophi/utils/vtk/writer.py`, the solver-independent
 legacy VTK PolyData writer used by MoPhi demos.
 
 ## Purpose and design boundary

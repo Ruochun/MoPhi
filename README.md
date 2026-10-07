@@ -13,7 +13,9 @@ utilities also cover solver-independent preparation tasks such as toolpath
 parsing, mesh-region sampling, scientific output, and local conversion of
 licensed recorded hand motion into simulation-ready geometry. Recorded hand and
 object trajectories can be inspected together using Newton's mesh renderer,
-then used in controlled DEME cup-contact and moving-surface checks.
+then used in controlled DEME cup-contact checks and experimental recorded-hand
+grasps of a freely moving object, with inspectable contact patches and
+force/rotation diagnostics.
 
 ---
 
@@ -49,8 +51,9 @@ and `cibuildwheel` matrix builds, including ABI troubleshooting and verification
 For the solver-independent G-code parser used by printing workflows, see
 [docs/gcode.md](docs/gcode.md).
 
-For local GRAB hand-motion conversion, see
-[docs/how-to/grab-motion.md](docs/how-to/grab-motion.md).
+For the complete GRAB workflow—asset preparation, cup-contact simulation, and
+recorded-versus-simulated comparison movies—see
+[docs/how-to/grab.md](docs/how-to/grab.md).
 
 For exporting triangle-mesh snapshots to VTK/ParaView, see
 [docs/vtk-output.md](docs/vtk-output.md).

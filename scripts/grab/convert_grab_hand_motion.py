@@ -9,9 +9,8 @@ import torch
 import trimesh
 from scipy.spatial.transform import Rotation
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRAB_ROOT = Path.home() / "GRAB" / "extracted"
-DEFAULT_MODEL_ROOT = Path.home() / "GRAB" / "models"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_RAW_DATA_DIR = Path.home() / "GRAB"
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "data" / "grab"
 HAND_NAMES = {"left": "lhand", "right": "rhand"}
 
@@ -159,11 +158,25 @@ def convert_sequence(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("sequence", type=Path, help="Sequence .npz under <grab-root>/grab/<subject>/")
-    parser.add_argument("--grab-root", type=Path, default=DEFAULT_GRAB_ROOT)
-    parser.add_argument("--model-root", type=Path, default=DEFAULT_MODEL_ROOT)
+    parser.add_argument(
+        "sequence",
+        nargs="?",
+        default=Path("s2/mug_drink_2.npz"),
+        type=Path,
+        help="Sequence .npz path, or <subject>/<sequence>.npz relative to <grab-root>/grab/",
+    )
+    parser.add_argument(
+        "--raw-data-dir",
+        type=Path,
+        default=DEFAULT_RAW_DATA_DIR,
+        help="GRAB data directory (default: ~/GRAB); contains extracted/ and models/",
+    )
+    parser.add_argument(
+        "--grab-root", type=Path, help="Override extracted-data directory (default: <raw-data-dir>/extracted)"
+    )
+    parser.add_argument("--model-root", type=Path, help="Override model directory (default: <raw-data-dir>/models)")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--hand", choices=("left", "right", "both"), default="both")
+    parser.add_argument("--hand", choices=("left", "right", "both"), default="right")
     parser.add_argument(
         "--object-only", action="store_true", help="Prepare only the object; reuse existing hand exports"
     )
@@ -171,6 +184,13 @@ def main() -> None:
     parser.add_argument("--start", type=int, default=0, help="First source frame, inclusive")
     parser.add_argument("--stop", type=int, help="Last source frame, exclusive")
     args = parser.parse_args()
+    args.raw_data_dir = args.raw_data_dir.expanduser()
+    args.grab_root = (args.grab_root or args.raw_data_dir / "extracted").expanduser()
+    args.model_root = (args.model_root or args.raw_data_dir / "models").expanduser()
+    args.output_root = args.output_root.expanduser()
+    args.sequence = args.sequence.expanduser()
+    if not args.sequence.is_absolute() and not args.sequence.is_file():
+        args.sequence = args.grab_root / "grab" / args.sequence
     hands = ("left", "right") if args.hand == "both" else (args.hand,)
     paths = (
         []

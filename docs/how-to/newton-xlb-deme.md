@@ -2,7 +2,7 @@
 
 ```bash
 # Install the required Python packages first
-pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" "deme[cuda12]>=3.0.14,<4" \
+pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" "deme" \
     torch GitPython PyYAML pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
 
 # Configure and build the coupler
@@ -22,7 +22,7 @@ from this guide first; interactive viewers must be closed for the runner to
 advance.
 
 ```bash
-python3 scripts/run_important_demos.py
+python3 scripts/demos/run_important_demos.py
 ```
 
 The FERIS/Newton demo is excluded by default while that module remains less
@@ -42,7 +42,7 @@ commands without running them.
 - **XLB** — a JAX-based LBM fluid solver that advances each frame. The robot is
   represented as a prescribed moving obstacle whose boundary-condition masks are
   updated directly on the GPU.
-- **DEME** — a Python discrete-element solver (provided by `pip install "deme[cuda12]>=3.0.14,<4"`) that advances a
+- **DEME** — a Python discrete-element solver (provided by `pip install "deme"`) that advances a
   live particle simulation alongside the robot.
 
 ```python
@@ -88,7 +88,7 @@ Likewise, the packaged wheel declares `deme[cuda12]` as a runtime dependency. Fo
 source-tree developer builds, you can install it manually:
 
 ```bash
-pip install "deme[cuda12]>=3.0.14,<4"
+pip install "deme"
 ```
 
 The DEME distribution and import module are intentionally configurable. The
@@ -99,7 +99,7 @@ requirement during CMake configuration, set both names as needed:
 ```bash
 cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
-      -DMOPHI_PACKAGE_DEME_DISTRIBUTION="deme[cuda12]>=3.0.14,<4" \
+      -DMOPHI_PACKAGE_DEME_DISTRIBUTION="deme" \
       -DMOPHI_PACKAGE_DEME_IMPORT_MODULE=deme \
       -DMOPHI_FETCH_DEME=ON
 ```

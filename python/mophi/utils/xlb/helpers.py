@@ -1,4 +1,4 @@
-"""mophi.xlb_helpers — Utility functions for XLB (Lattice-Boltzmann) post-processing.
+"""mophi.utils.xlb.helpers — Utility functions for XLB (Lattice-Boltzmann) post-processing.
 
 These helpers are solver-agnostic: they operate on raw NumPy velocity arrays and
 can be called from within any MoPhi coupler or directly from user scripts and demos.

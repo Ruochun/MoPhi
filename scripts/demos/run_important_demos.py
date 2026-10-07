@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 IMPORTANT_DEMOS = (
     "demo/newton_xlb_dem/anymal_robot_multiphysics/demo_anymal_robot_multiphysics.py",

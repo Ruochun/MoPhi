@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-from mophi.utils.newton_assets import download_newton_asset
+from mophi.utils.newton.assets import download_newton_asset
 
 
 def _install_fake_newton(monkeypatch, download_asset):

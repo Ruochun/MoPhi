@@ -139,7 +139,7 @@ To preserve a preexisting mesh pose `(R, p)`, initialize the owner at
 This is necessary because DEME integrates about the owner CoM in its principal
 inertia frame. It is independent of the arbitrary reference origin allowed for
 a prescribed, non-dynamic surface. The
-[GRAB cup-contact demo](how-to/grab-contact.md) exercises this path without a
+[GRAB cup-contact demo](how-to/grab.md) exercises this path without a
 Newton dynamics solver. Test its frame and inertia invariants with:
 
 ```bash
@@ -183,3 +183,41 @@ PYTHONPATH=python python -m unittest discover -s tests -p 'test_newton_deme_coup
 
 The end-to-end GPU path is exercised by the robot-fighting demo and by
 `demo/newton_xlb_dem/deme_getter_comparison/`.
+
+## Connected mesh contact patches
+
+`partition_mesh_contact_patches` in
+[`mesh_contact_patches.py`](../python/mophi/utils/geometry/mesh_contact_patches.py) is an
+initialization-time geometry operation. It assigns contiguous int32 patch IDs
+without changing vertices, faces, triangle ordering, or physical properties:
+
+```python
+from mophi.utils.geometry.mesh_contact_patches import partition_mesh_contact_patches
+ids = partition_mesh_contact_patches(vertices, faces, radius=0.012,
+                                     max_normal_angle_deg=45.0)
+deme_mesh.SetPatchIDs(ids.tolist())
+```
+
+Regions grow deterministically across shared manifold edges. Every added face
+fits within the seed-centroid radius and its normal lies within the specified
+angle of the seed normal. Oversized seed triangles remain singleton patches.
+Disconnected components, boundaries, and nonmanifold edges are not crossed;
+coincident vertices are not welded. Invalid indices and degenerate triangles
+are rejected. Radius has the same units as vertices; the normal angle must be
+in [0, 90) degrees. The greedy partition can produce small or singleton patches
+and is not a uniform remesher.
+
+For deforming meshes, compute once on the reference shape and retain IDs while
+updating vertices, preserving contact-history identity. Radius and normal bounds
+apply only to that reference shape. The demo owns the chosen radius, reference
+pose, material model, and convergence checks. This helper neither calibrates
+DEME's area-dependent contact law nor guarantees accurate grasp physics.
+The [GRAB workflow](how-to/grab.md) shows an application.
+
+```bash
+PYTHONPATH=python python -m unittest discover -s tests -p test_grab_contact_patches.py -v
+```
+
+The partitioner is solver-independent; see [mesh contact patches](mesh-contact-patches.md)
+for its public API and algorithm. The `mophi.couplers.newton_deme` import is
+retained for compatibility.

@@ -1,13 +1,15 @@
 """Coordinate, time, and rotation contracts for prepared GRAB playback."""
 
 from pathlib import Path
+import importlib.util
+import sys
 import tempfile
 import unittest
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from mophi.utils.grab_motion import GrabPlayback, load_object_motion, playback_times
+from mophi.utils.grab.motion import GrabPlayback, load_object_motion, playback_times
 
 
 class GrabPlaybackTests(unittest.TestCase):
@@ -49,6 +51,21 @@ class GrabPlaybackTests(unittest.TestCase):
     def write(self):
         np.savez(self.hand_path, **self.hand)
         np.savez(self.object_path, **self.obj)
+
+    def test_unified_viewer_recording_needs_no_simulation(self):
+        directory = Path(__file__).resolve().parents[1] / "demo/newton_dem/grab"
+        sys.path.insert(0, str(directory))
+        spec = importlib.util.spec_from_file_location("grab_viewer", directory / "render_grab_comparison.py")
+        viewer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(viewer)
+        playback = GrabPlayback([self.hand_path], self.object_path)
+        poses = viewer.recorded_poses(playback, 12, 24, 0.5)
+        self.assertEqual(poses["source_time_s"][0], 0.1)
+        self.assertEqual(poses["source_time_s"][-1], 0.2)
+        np.testing.assert_array_equal(poses["source_time_s"][poses["time_s"] < viewer.config.SETTLE_TIME], 0.1)
+        self.assertEqual(viewer.DEFAULT_MODE, "compare")
+        self.assertEqual(viewer.DEFAULT_RUN, viewer.config.OUTPUT_DIRECTORY / "grab")
+        self.assertEqual(viewer.config.CASE, "grab")
 
     def test_midpoint_deformation_and_shortest_rotation(self):
         playback = GrabPlayback([self.hand_path], self.object_path)

@@ -8,6 +8,9 @@ import numpy as np
 
 from .contact_coupler import NewtonDEMEOwnerMap
 
+# Preserve the original import path for existing callers.
+from mophi.utils.geometry.mesh_contact_patches import partition_mesh_contact_patches
+
 
 @dataclass(frozen=True)
 class PrincipalFrameMesh:
