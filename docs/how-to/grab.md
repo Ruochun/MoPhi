@@ -3,8 +3,10 @@
 This workflow reconstructs a recorded hand/cup scene, lets **DEME** move the cup
 through contact with the prescribed hand, and uses **Newton** to render both
 recorded and simulated motion. The comparison exposes the gap between fitted
-motion data and a physically reproducible grasp. The current example **does not
+motion data and a physically reproducible grasp. Earlier runs **did not
 successfully lift the cup**; an unsuccessful grasp is a valid experimental result.
+Both cup and hand now default to ten spread-seed patches each; the full grasp
+must be evaluated again with these partitions.
 
 There are three user-facing entry points:
 
@@ -166,11 +168,20 @@ and as a diagnostic reference. Hand position/deformation is prescribed; the hand
 does not respond to contact forces. Owner translational velocity is supplied,
 but finger articulation/wrist rotation velocity is not supplied per node.
 The collision proxy has 6,000 triangles; the original cup geometry is retained
-for visualization and homogeneous-volume mass/inertia preparation. Default
-connected patches: 721 cup and 828 hand. Patch grouping changes the contact law's
-response and is not a proof of converged physics.
+for visualization and homogeneous-volume mass/inertia preparation. Both cup and
+hand use ten connected regions each from MoPhi's
+`partition_mesh_seeded_patches`: seeds spread by face-adjacency distance, then
+faces grow into their nearest seed region. Hand patch IDs are computed once on
+the initial hand shape and retained during deformation. This does not guarantee
+that separate finger contact areas receive separate patches; the full grasp
+requires validation. Mesh geometry and mass properties are unchanged. Patch
+grouping changes the contact response and is not a proof of converged physics.
 
 Scene parameters are in [`scene_config.py`](../../demo/newton_dem/grab/scene_config.py).
+`CUP_PATCH_MODE = "spread"` and `CUP_PATCH_COUNT = 10` select the default cup
+partition. `HAND_PATCH_MODE = "spread"` and `HAND_PATCH_COUNT = 10` configure
+the hand in the same way; edit either count there to experiment. Radius and
+normal-angle options apply only to the existing `connected` mode, not the count-based utility.
 CLI overrides include `--hand`, `--object`, `--start-frame`, `--stop-frame`,
 `--playback-speed`, `--dt`, `--friction`, `--floor-friction`, `--collision-faces`,
 `--cup-patch-radius`, `--hand-patch-radius`, and `--output-dir`. Grasp duration
@@ -189,7 +200,8 @@ optional cup-rest diagnostic. Custom output directories gain a `grab/` child.
 | `*.obj` | Generated DEME mesh input |
 
 `completed: true` means the simulation finished. **It does not mean the grasp
-succeeded.** The current example fails the lift/reference-position checks.
+succeeded.** Earlier radius/normal-partition runs failed the lift/reference-position
+checks; the full grasp with ten spread patches has not yet been validated.
 `--check` converts failed acceptance into a nonzero exit after saving results;
 leave it off when reproducing the comparison. Lift checks require sustained
 clearance and contact support, not merely upward motion.
@@ -231,18 +243,24 @@ PYTHONPATH=python python demo/newton_dem/grab/render_grab_comparison.py \
 positional argument. Interactive mode supports single-panel `recorded` or
 `simulation` viewing; comparison movies are rendered headlessly. `--patches`
 saves `patches.png` in local metric coordinates and requires the run's partition
-archive; it is an inspection image, not a change to contact geometry.
+archive from a completed grasp run. It also renders the selected movie; it is
+not a standalone preparation or patch-only command. The patch image uses the
+fixed local-coordinate `PATCH_VIEW` in the viewer; `--view` selects the movie
+camera only.
 
 ## Findings and interpretation
 
 - The original whole-cup patch allowed unwanted pre-contact yaw despite correct
   average weight support. Isolated cup tests traced vertical-axis torque to
   eccentric tangential friction; halving the timestep did not fix it.
-- Connected patches suppressed this symptom. With the current partition,
+- Earlier radius/normal patches suppressed this symptom. With that partition,
   resting maximum rotation was about 0.226°, and pre-contact grasp yaw at 0.9 s
   was about -0.102° instead of +10.86°.
-- The current cup still slides approximately 13.2 mm without lifting and ends
-  approximately 135 mm from the recorded CoM. Small command-transfer errors
+- The ten-spread-patch cup passed all checks in a one-second cup-rest run:
+  peak yaw was 0.0355 degrees, with up to four active table contacts. This
+  validates resting stability for that test, not full grasp success.
+- In the earlier radius/normal-partition grasp run, the cup slid approximately
+  13.2 mm without lifting and ended approximately 135 mm from the recorded CoM. Small command-transfer errors
   establish geometric playback accuracy, not physical grasp validity.
 - The reference movie prescribes cup motion, so its cup lifts even if fitted
   finger surfaces leave a gap. The apparent thumb–handle gap has not yet been
@@ -271,7 +289,7 @@ These are diagnostic tools, not steps required for the grasp movie:
 
 ```bash
 PYTHONPATH=python python demo/newton_dem/grab/demo_grab_contact.py \
-    --case cup_rest --duration 0.3 --no-render --check
+    --case cup_rest --duration 1 --no-render --check
 PYTHONPATH=python python tests/grab/inspect_contact.py \
     output/demo_grab_contact/cup_rest
 PYTHONPATH=python python -m unittest discover -s tests -p 'test_grab*.py' -v

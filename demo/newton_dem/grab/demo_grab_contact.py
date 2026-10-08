@@ -18,7 +18,7 @@ from mophi.couplers.newton_deme import (
     prepare_mesh_principal_frame,
     write_wavefront_mesh,
 )
-from mophi.utils.geometry.mesh_contact_patches import partition_mesh_contact_patches
+from mophi.utils.geometry.mesh_contact_patches import partition_mesh_contact_patches, partition_mesh_seeded_patches
 from mophi.utils.grab.motion import load_motion, load_object_motion, sample_interval
 from mophi.utils.package_provider import load_package_provider
 
@@ -84,9 +84,11 @@ def main():
     parser.add_argument("--compact-rest-domain", action="store_true", default=COMPACT_REST_DOMAIN)
     parser.add_argument("--floor-friction", type=float, default=FLOOR_FRICTION)
     parser.add_argument(
-        "--cup-patches", choices=("single", "sectors", "triangles", "connected"), default=CUP_PATCH_MODE
+        "--cup-patches", choices=("single", "sectors", "triangles", "connected", "spread"), default=CUP_PATCH_MODE
     )
-    parser.add_argument("--hand-patches", choices=("single", "triangles", "connected"), default=HAND_PATCH_MODE)
+    parser.add_argument(
+        "--hand-patches", choices=("single", "triangles", "connected", "spread"), default=HAND_PATCH_MODE
+    )
     parser.add_argument("--cup-patch-radius", type=float, default=CUP_PATCH_RADIUS)
     parser.add_argument("--hand-patch-radius", type=float, default=HAND_PATCH_RADIUS)
     parser.add_argument("--patch-normal-angle", type=float, default=PATCH_MAX_NORMAL_ANGLE)
@@ -232,7 +234,11 @@ def main():
     solver.SetMaterialPropertyPair("mu", material, floor_material, args.floor_friction)
     write_wavefront_mesh(output / "cup_principal.obj", collision_vertices, collision_faces)
     cup_mesh = solver.AddWavefrontMeshObject(str(output / "cup_principal.obj"), material, False)
-    if args.cup_patches == "connected":
+    if args.cup_patches == "spread":
+        cup_mesh.SetPatchIDs(
+            partition_mesh_seeded_patches(collision_vertices, collision_faces, CUP_PATCH_COUNT).tolist()
+        )
+    elif args.cup_patches == "connected":
         cup_mesh.SetPatchIDs(
             partition_mesh_contact_patches(
                 collision_vertices, collision_faces, args.cup_patch_radius, args.patch_normal_angle
@@ -274,7 +280,11 @@ def main():
         solver.DisableContactBetweenFamilies(MOVING_FAMILY, FLOOR_FAMILY)
         write_wavefront_mesh(output / "surface.obj", surface_vertices, surface_faces)
         surface = solver.AddWavefrontMeshObject(str(output / "surface.obj"), material, False)
-        if args.hand_patches == "connected":
+        if args.hand_patches == "spread":
+            surface.SetPatchIDs(
+                partition_mesh_seeded_patches(surface_vertices, surface_faces, HAND_PATCH_COUNT).tolist()
+            )
+        elif args.hand_patches == "connected":
             surface.SetPatchIDs(
                 partition_mesh_contact_patches(
                     surface_vertices, surface_faces, args.hand_patch_radius, args.patch_normal_angle

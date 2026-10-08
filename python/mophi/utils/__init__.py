@@ -9,7 +9,7 @@ from .package_provider import get_package_provider, load_package_provider
 from .gcode import GCodeMove, GCodeProgram, parse_gcode
 from .vis_utils import log_orientation_and_scale_reference
 from .newton.assets import download_newton_asset
-from .geometry.mesh_contact_patches import partition_mesh_contact_patches
+from .geometry.mesh_contact_patches import partition_mesh_contact_patches, partition_mesh_seeded_patches
 from .geometry.mesh_sampling import sample_grid_between_mesh_surfaces
 from .vtk import triangulate_spheres, write_vtk_file_series, write_vtk_polydata
 
@@ -25,6 +25,7 @@ __all__ = [
     "log_orientation_and_scale_reference",
     "parse_gcode",
     "partition_mesh_contact_patches",
+    "partition_mesh_seeded_patches",
     "sample_grid_between_mesh_surfaces",
     "triangulate_spheres",
     "write_vtk_polydata",

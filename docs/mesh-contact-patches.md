@@ -1,10 +1,11 @@
 # Mesh contact patches
 
 [`python/mophi/utils/geometry/mesh_contact_patches.py`](../python/mophi/utils/geometry/mesh_contact_patches.py)
-provides `partition_mesh_contact_patches`, an initialization-time, solver-independent
-NumPy utility. It assigns one integer ID per triangle without changing mesh
-coordinates, topology, or triangle ordering. It is packaged with MoPhi and has
-no dependency on DEME or Newton in its implementation.
+provides two initialization-time, solver-independent NumPy utilities:
+`partition_mesh_contact_patches` uses radius/normal limits, and
+`partition_mesh_seeded_patches` takes a target count. Both assign one integer ID
+per triangle without changing coordinates, topology, or triangle ordering.
+Neither implementation depends on DEME or Newton.
 
 ```python
 from mophi.utils import partition_mesh_contact_patches
@@ -47,6 +48,29 @@ The original import from `mophi.couplers.newton_deme` remains available and
 refers to the same implementation. The [GRAB workflow](how-to/grab.md)
 shows the DEME integration, saved partitions, diagnostics and visualization.
 
+## Specifying the patch count
+
+```python
+from mophi.utils import partition_mesh_seeded_patches
+
+ids = partition_mesh_seeded_patches(vertices, faces, patch_count=10)
+deme_mesh.SetPatchIDs(ids.tolist())
+```
+
+This alternative shares geometry validation and manifold-edge adjacency with
+`partition_mesh_contact_patches`. It selects the first seed farthest from the
+area-weighted centroid, then spreads further seeds by shortest-path distance
+between adjacent face centroids. Multi-source Dijkstra growth assigns each face
+to its nearest seed, returning exactly the requested number of nonempty,
+connected regions with contiguous int32 IDs. Ties are deterministic for fixed
+input ordering. Inputs are unchanged; no solver dependencies are introduced.
+
+The count must be an integer between the number of edge-connected components
+and the number of faces; invalid counts raise `ValueError`. This mode imposes
+no radius or normal-angle bound and guarantees neither convexity, equal area,
+nor an evenly divided support footprint. It runs once during preparation;
+retain its IDs during deformation. Contact stability still requires validation.
+
 ## Tests
 
 ```bash
@@ -55,3 +79,5 @@ PYTHONPATH=python python -m unittest discover -s tests -p test_grab_contact_patc
 
 Tests cover determinism, connected regions and radius bounds, separated/opposing
 faces, oversized seeds, unchanged inputs, and rejection of invalid geometry.
+Count-based tests additionally check exact counts (including ten), connectivity,
+determinism, disconnected components, and invalid counts.
