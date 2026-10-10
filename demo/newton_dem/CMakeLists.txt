@@ -9,13 +9,25 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_custom_target(demo_grab_contact
     COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
-        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/demo_grab_contact.py"
+        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/grabbing_cup/demo_grab_contact.py"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Running the recorded-hand DEME cup grasp with Newton rendering"
     VERBATIM
 )
 
-install(FILES grab/demo_grab_contact.py grab/render_grab_comparison.py grab/scene_config.py DESTINATION demo/newton_dem/grab)
+add_custom_target(demo_grab_cylinder
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/grabbing_cylinder/demo_grab_cylinder.py"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Running the recorded-hand DEME cylinder grasp with Newton rendering"
+    VERBATIM
+)
+
+install(FILES grab/grasp_simulation.py grab/grasp_viewer.py DESTINATION demo/newton_dem/grab)
+install(FILES grab/grabbing_cup/demo_grab_contact.py grab/grabbing_cup/render_grab_comparison.py
+    grab/grabbing_cup/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_cup)
+install(FILES grab/grabbing_cylinder/demo_grab_cylinder.py grab/grabbing_cylinder/render_cylinder_comparison.py
+    grab/grabbing_cylinder/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_cylinder)
 
 add_custom_target(demo_robotic_3d_printing
     COMMAND ${Python3_EXECUTABLE}

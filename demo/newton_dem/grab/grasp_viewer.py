@@ -20,12 +20,8 @@ import warp as wp
 
 import mophi
 from mophi.utils.grab.motion import GrabPlayback, playback_times
-import scene_config as config
 
 # ── Configuration ────────────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_RUN = ROOT / "output/demo_grab_contact/grab"
-DEFAULT_OUTPUT = ROOT / "output/render_grab_comparison"
 DEFAULT_VIEW = "handle"
 DEFAULT_MODE = "compare"
 PATCH_COLOR_SEED = 23
@@ -46,6 +42,8 @@ PROGRESS_INTERVAL = 30
 
 def load_render_poses(run, summary, playback, config):
     """Read exact movie-cadence poses, or explicitly interpolate legacy diagnostics."""
+    # Prefer exact states sampled by the simulation at movie cadence, including
+    # its world offset and principal-frame render mesh. No DEME solver runs here.
     path = run / "render_poses.npz"
     if path.exists():
         with np.load(path, allow_pickle=False) as archive:
@@ -54,6 +52,9 @@ def load_render_poses(run, summary, playback, config):
     # their usability, but identify this approximation in the manifest.
     with np.load(run / "trajectory.npz", allow_pickle=False) as archive:
         trajectory = dict(archive)
+    # Legacy runs need a reconstructed frame schedule and interpolated owner pose.
+    # Translation is linear, orientation uses SLERP, and the source mesh is moved
+    # into the saved CoM/principal frame before applying those owner transforms.
     start = summary["start_frame"] / float(playback.hands[0]["source_fps"])
     stop = summary["stop_frame"] / float(playback.hands[0]["source_fps"])
     duration = summary["settle_time_s"] + (stop - start) / summary["playback_speed"]
@@ -84,12 +85,14 @@ def load_render_poses(run, summary, playback, config):
     }, "legacy diagnostic poses interpolated linearly / quaternion SLERP; contact transients may be missed"
 
 
-def recorded_poses(playback, start_frame, stop_frame, speed):
+def recorded_poses(playback, start_frame, stop_frame, speed, config):
     """Use the grasp scene's source interval and settling hold without a simulation."""
     fps = float(playback.hands[0]["source_fps"])
     start, stop = start_frame / fps, stop_frame / fps
     if not playback.start_time <= start < stop <= playback.end_time:
         mophi.fatal("Source frame interval is outside the prepared recordings")
+    # Match the simulation's settling hold and slowed source clock. The shared
+    # translation puts the initial object above the table and also moves the hand.
     times = playback_times(0, config.SETTLE_TIME + (stop - start) / speed, config.RENDER_FPS, 1)
     initial = playback.sample(start)["object"].astype(float)
     offset = np.array([-initial[:, 0].mean(), -initial[:, 1].mean(), config.REST_GAP - initial[:, 2].min()])
@@ -102,8 +105,10 @@ def recorded_poses(playback, start_frame, stop_frame, speed):
     )
 
 
-def render_patches(archive, output):
+def render_patches(archive, output, object_label="object"):
     """Optional static view of the actual collision partition, in local coordinates."""
+    # Plot the saved collision partition, not the full visual mesh. Colors are
+    # deterministic per patch; local metric axes preserve the object/hand scale.
     with np.load(archive, allow_pickle=False) as data:
         names = [name for name in ("cup", "surface") if name + "_vertices" in data]
         fig = plt.figure(figsize=PATCH_FIGURE_SIZE)
@@ -127,7 +132,7 @@ def render_patches(archive, output):
                 xlabel="Local X (m)",
                 ylabel="Local Y (m)",
                 zlabel="Local Z (m)",
-                title=f"{name}: {len(unique)} patches / {len(faces)} triangles",
+                title=f"{object_label if name == 'cup' else 'hand'}: {len(unique)} patches / {len(faces)} triangles",
             )
             ax.set_box_aspect((1, 1, 1))
             ax.view_init(*PATCH_VIEW)
@@ -136,10 +141,13 @@ def render_patches(archive, output):
         plt.close(fig)
 
 
-def main():
+def main(config):
+    # ── Select viewing mode and scene defaults ───────────────────────────────
+    # The scene entry point supplies assets/output paths. Recorded-only viewing
+    # needs no physics results; simulation and comparison replay a completed run.
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_directory", nargs="?", type=Path, default=DEFAULT_RUN)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("run_directory", nargs="?", type=Path, default=config.OUTPUT_DIRECTORY / "grab")
+    parser.add_argument("--output-dir", type=Path, default=config.VIEWER_OUTPUT_DIRECTORY)
     parser.add_argument("--mode", choices=("compare", "recorded", "simulation"), default=DEFAULT_MODE)
     parser.add_argument("--hand", type=Path, default=config.HAND_PATH, help="Prepared hand for recorded-only viewing")
     parser.add_argument(
@@ -159,11 +167,15 @@ def main():
     args = parser.parse_args()
     if args.interactive and args.mode == "compare":
         mophi.fatal("Interactive viewing uses --mode recorded or --mode simulation")
+
+    # ── Load geometry and establish a common timeline ────────────────────────
+    # For replay, use the source assets named in the run summary so both panels
+    # share the hand recording that actually drove that simulation.
     if args.mode == "recorded":
         if not np.isfinite(args.playback_speed) or args.playback_speed <= 0:
             mophi.fatal("--playback-speed must be finite and positive")
         playback = GrabPlayback([args.hand], args.object)
-        poses = recorded_poses(playback, args.start_frame, args.stop_frame, args.playback_speed)
+        poses = recorded_poses(playback, args.start_frame, args.stop_frame, args.playback_speed, config)
         sampling = "recorded motion only; no simulation required"
     else:
         summary = json.loads((args.run_directory / "summary.json").read_text())
@@ -171,6 +183,10 @@ def main():
             mophi.fatal("Comparison/replay requires a completed grasp run")
         playback = GrabPlayback([summary["source_hand"]], summary["source_object"])
         poses, sampling = load_render_poses(args.run_directory, summary, playback, config)
+
+    # ── Camera and optional patch inspection ─────────────────────────────────
+    # Both comparison panels use this same camera. The Matplotlib patch image has
+    # its own fixed local-coordinate view and does not alter movie geometry.
     cameras = {
         "original": (config.CAMERA_POSITION, config.CAMERA_TARGET),
         "handle": (HANDLE_CAMERA_POSITION, HANDLE_CAMERA_TARGET),
@@ -186,7 +202,11 @@ def main():
         mophi.fatal("Preview frame is outside saved motion")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.patches:
-        render_patches(args.run_directory / "patches.npz", args.output_dir)
+        render_patches(args.run_directory / "patches.npz", args.output_dir, config.OBJECT_LABEL)
+
+    # ── Renderer and reusable mesh buffers ───────────────────────────────────
+    # An empty Newton model provides rendering infrastructure. Topology is fixed;
+    # each frame updates vertex positions, and the floor box is purely visual.
     wp.init()
     model = newton.ModelBuilder(up_axis=newton.Axis.Z).finalize()
     vis = mophi.OpenGLVisualizer(
@@ -210,6 +230,10 @@ def main():
     buffers = {}
     writers = {}
     images = []
+
+    # ── Output selection ─────────────────────────────────────────────────────
+    # A preview renders one frame without opening movie writers. Comparison writes
+    # each panel separately as well as the labeled side-by-side movie.
     frames = range(len(poses["time_s"])) if args.preview_frame is None else [args.preview_frame]
     try:
         movie_names = {
@@ -224,6 +248,9 @@ def main():
         while iteration < len(frames) and vis.is_running():
             frame_start = time.perf_counter()
             index = frames[iteration]
+            # Sample the same prescribed hand for every panel. Only the object
+            # differs: recorded world vertices on the left, or the original mesh
+            # transformed by the saved DEME CoM/orientation on the right.
             sample = playback.sample(float(poses["source_time_s"][index]))
             cups = []
             if args.mode != "simulation":
@@ -234,6 +261,9 @@ def main():
                     + poses["cup_com_world"][index]
                 )
             images = []
+            # Render panels sequentially through one viewer and copy each image
+            # before the next panel replaces its buffers. Shared references and
+            # camera placement make the two images directly comparable.
             for cup in cups:
                 vis.begin_frame(float(poses["time_s"][index]))
                 if iteration == 0 and not images:
@@ -257,12 +287,18 @@ def main():
                     vis.log_mesh(name, buffers[name], indices[name], color=config.MESH_COLORS[name])
                 vis.end_frame()
                 images.append(vis.get_frame().numpy().copy())
+
+            # ── Compose and write this movie frame ───────────────────────────
+            # Label the composite; individual panel movies retain the raw renders.
             pair = Image.fromarray(np.concatenate(images, axis=1))
             draw = ImageDraw.Draw(pair)
             labels = {
-                "compare": ("RECORDED GRAB HAND + CUP", "DEME: RECORDED HAND + DYNAMIC CUP"),
-                "recorded": ("RECORDED GRAB HAND + CUP",),
-                "simulation": ("DEME: RECORDED HAND + DYNAMIC CUP",),
+                "compare": (
+                    f"RECORDED GRAB HAND + {config.OBJECT_LABEL.upper()}",
+                    f"DEME: RECORDED HAND + DYNAMIC {config.OBJECT_LABEL.upper()}",
+                ),
+                "recorded": (f"RECORDED GRAB HAND + {config.OBJECT_LABEL.upper()}",),
+                "simulation": (f"DEME: RECORDED HAND + DYNAMIC {config.OBJECT_LABEL.upper()}",),
             }[args.mode]
             for column, label in enumerate(labels):
                 x = column * config.WINDOW_WIDTH
@@ -277,6 +313,8 @@ def main():
                     writers["recorded_vs_deme"].append_data(np.asarray(pair))
             if iteration % PROGRESS_INTERVAL == 0:
                 print(f"Rendered {iteration + 1}/{len(frames)}", flush=True)
+            # Interactive pause holds the source frame. Wall-clock pacing applies
+            # only to interactive playback; movie export renders as fast as possible.
             if not (args.interactive and vis.is_paused()):
                 iteration += 1
             if args.interactive:
@@ -285,10 +323,17 @@ def main():
             mophi.fatal("Viewer closed before rendering a frame")
         imageio.imwrite(args.output_dir / "last_frame.png", images[0])
         pair.save(args.output_dir / "comparison_last_frame.png")
+    # Always finalize video containers and close graphics resources, including
+    # when the window closes early or rendering raises an exception.
     finally:
         for writer in writers.values():
             writer.close()
         vis.close()
+
+    # ── Replay provenance ────────────────────────────────────────────────────
+    # Store the planned time mapping and camera alongside the outputs. The manifest
+    # identifies exact versus legacy-interpolated poses and counts frames advanced
+    # by the viewer; preview or early closure may use only part of the schedule.
     np.savez(
         args.output_dir / "frame_timing.npz",
         simulation_time_s=poses["time_s"],
@@ -310,7 +355,3 @@ def main():
     }
     (args.output_dir / "render_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(args.output_dir)
-
-
-if __name__ == "__main__":
-    main()

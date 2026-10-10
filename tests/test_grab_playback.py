@@ -55,17 +55,18 @@ class GrabPlaybackTests(unittest.TestCase):
     def test_unified_viewer_recording_needs_no_simulation(self):
         directory = Path(__file__).resolve().parents[1] / "demo/newton_dem/grab"
         sys.path.insert(0, str(directory))
-        spec = importlib.util.spec_from_file_location("grab_viewer", directory / "render_grab_comparison.py")
+        spec = importlib.util.spec_from_file_location("grab_viewer", directory / "grasp_viewer.py")
         viewer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(viewer)
         playback = GrabPlayback([self.hand_path], self.object_path)
-        poses = viewer.recorded_poses(playback, 12, 24, 0.5)
+        from grabbing_cup import scene_config as config
+
+        poses = viewer.recorded_poses(playback, 12, 24, 0.5, config)
         self.assertEqual(poses["source_time_s"][0], 0.1)
         self.assertEqual(poses["source_time_s"][-1], 0.2)
-        np.testing.assert_array_equal(poses["source_time_s"][poses["time_s"] < viewer.config.SETTLE_TIME], 0.1)
+        np.testing.assert_array_equal(poses["source_time_s"][poses["time_s"] < config.SETTLE_TIME], 0.1)
         self.assertEqual(viewer.DEFAULT_MODE, "compare")
-        self.assertEqual(viewer.DEFAULT_RUN, viewer.config.OUTPUT_DIRECTORY / "grab")
-        self.assertEqual(viewer.config.CASE, "grab")
+        self.assertEqual(config.CASE, "grab")
 
     def test_midpoint_deformation_and_shortest_rotation(self):
         playback = GrabPlayback([self.hand_path], self.object_path)

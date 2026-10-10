@@ -1,11 +1,13 @@
-"""Shared configuration for the GRAB cup-grasp simulation and viewer."""
+"""Shared configuration for the GRAB cylinder-grasp simulation and viewer."""
 
 from pathlib import Path
 
+# CUP_* names identify the manipulated object in the shared output/configuration schema.
 # ── Configuration ────────────────────────────────────────────────────────────
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-OBJECT_PATH = REPOSITORY_ROOT / "data/grab/s2/mug_drink_2_object.npz"
-HAND_PATH = REPOSITORY_ROOT / "data/grab/s2/mug_drink_2_right.npz"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+OBJECT_PATH = REPOSITORY_ROOT / "data/grab/s2/cylindermedium_lift_frames_000360_000510_object.npz"
+HAND_PATH = REPOSITORY_ROOT / "data/grab/s2/cylindermedium_lift_frames_000360_000510_right.npz"
+OBJECT_LABEL = "cylinder"
 CASE = "grab"
 CUP_PATCH_MODE = "spread"
 CUP_PATCH_COUNT = 10  # Used by the spread mode.
@@ -19,8 +21,8 @@ CUP_PATCH_SECTORS = 8  # Used only by the optional sectors mode.
 REST_MAX_ANGULAR_DRIFT_DEG = 1.0
 REST_MAX_ANGULAR_SPEED = 0.02
 CONTACT_OUTPUT_FORCE_THRESHOLD = 1e-20
-GRAB_START_FRAME = 240
-GRAB_STOP_FRAME = 380
+GRAB_START_FRAME = 360
+GRAB_STOP_FRAME = 490
 PLAYBACK_SPEED = 0.5
 GRAB_DIAGNOSTIC_INTERVAL = 0.05
 MIN_GRAB_LIFT = 0.01
@@ -36,7 +38,8 @@ RENDER_FPS = 60.0
 PROGRESS_INTERVAL = 0.1
 SETTLE_TIME = 0.25
 CUP_MASS = 0.25
-COLLISION_FACE_COUNT = 6000
+# A compact proxy keeps universal mesh contact affordable; error gates check fidelity.
+COLLISION_FACE_COUNT = 600
 GEOMETRY_CHECK_SAMPLES = 2000
 GEOMETRY_CHECK_SEED = 0
 MAX_PROXY_SURFACE_ERROR = 0.0015
@@ -76,6 +79,8 @@ AXIS_LENGTH = 0.08
 SCALE_BAR_CENTER = (0.0, 0.3, 0.01)
 SCALE_MARKER_RADIUS = 0.007
 MESH_COLORS = {"cup": (0.65, 0.7, 0.75), "surface": (0.91, 0.55, 0.19), "floor": (0.35, 0.4, 0.45)}
-OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output/demo_grab_contact"
-MAX_ALLOWED_PENETRATION = 0.004
+VIEWER_OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output/render_cylinder_comparison"
+OUTPUT_DIRECTORY = REPOSITORY_ROOT / "output/demo_grab_cylinder"
+# Acceptance tolerance for the intentionally soft contact material.
+MAX_ALLOWED_PENETRATION = 0.020
 MAX_WEIGHT_BALANCE_RELATIVE_ERROR = 0.15

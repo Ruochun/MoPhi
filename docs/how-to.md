@@ -38,10 +38,13 @@ both setup options.
   fighting, and the Newton/XLB swimming concept.
 - [Flexible-hand demos](how-to/flexible-hand-demos.md) — Newton and DEME articulated
   hand workloads.
-- [GRAB recorded-versus-physics cup grasp](how-to/grab.md) — the complete workflow:
+- [GRAB recorded-versus-physics cup and cylinder grasps](how-to/grab.md) — the complete workflow:
   prepare NPZ files with `scripts/grab/convert_grab_hand_motion.py`, simulate with
-  `demo/newton_dem/grab/demo_grab_contact.py`, and produce the comparison with
-  `demo/newton_dem/grab/render_grab_comparison.py`. Covers licensed assets,
+  `demo/newton_dem/grab/grabbing_cup/demo_grab_contact.py`, and produce the comparison with
+  `demo/newton_dem/grab/grabbing_cup/render_grab_comparison.py`. The same guide
+  covers the cylinder scene: `grabbing_cylinder/demo_grab_cylinder.py` and
+  `grabbing_cylinder/render_cylinder_comparison.py` under `demo/newton_dem/grab/`,
+  including prerequisites, NPZ conversion, and run commands. Covers licensed assets,
   MoPhi/DEME/Newton prerequisites, recorded-only viewing, cameras, and diagnostics.
 
 ## Supporting references

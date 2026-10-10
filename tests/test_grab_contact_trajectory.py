@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 import sys
 
 import numpy as np
@@ -10,10 +11,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "demo/newton_dem/grab"))
 
 SPEC = importlib.util.spec_from_file_location(
-    "grab_contact_demo", Path(__file__).resolve().parents[1] / "demo/newton_dem/grab/demo_grab_contact.py"
+    "grab_contact_demo", Path(__file__).resolve().parents[1] / "demo/newton_dem/grab/grasp_simulation.py"
 )
 DEMO = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEMO)
+from grabbing_cup import scene_config as CONFIG
 
 
 class GrabTrajectoryTests(unittest.TestCase):
@@ -44,13 +46,25 @@ class GrabTrajectoryTests(unittest.TestCase):
         data[:, 0] = [0.8, 0.95, 1.0]
         data[:, 20] = 0.02
         grasp = np.zeros((3, 13))
-        checks = DEMO.assess_grab_run(data, grasp)
+        checks = DEMO.assess_grab_run(data, grasp, CONFIG)
         self.assertTrue(checks["cup_lifted"])
         self.assertFalse(checks["lift_supported_by_contact"])
-        data[:, 16] = DEMO.CUP_MASS * DEMO.GRAVITY
-        self.assertTrue(DEMO.assess_grab_run(data, grasp)["lift_supported_by_contact"])
+        data[:, 16] = CONFIG.CUP_MASS * CONFIG.GRAVITY
+        self.assertTrue(DEMO.assess_grab_run(data, grasp, CONFIG)["lift_supported_by_contact"])
         data[1, 20] = 0
-        self.assertFalse(DEMO.assess_grab_run(data, grasp)["cup_lifted"])
+        self.assertFalse(DEMO.assess_grab_run(data, grasp, CONFIG)["cup_lifted"])
+
+    def test_scene_configuration_controls_support_threshold(self):
+        data = np.zeros((3, 21))
+        data[:, 0] = [0.8, 0.95, 1.0]
+        data[:, 20] = 0.02
+        data[:, 16] = CONFIG.CUP_MASS * CONFIG.GRAVITY
+        grasp = np.zeros((3, 13))
+        heavier = SimpleNamespace(**{name: getattr(CONFIG, name) for name in dir(CONFIG) if name.isupper()})
+        heavier.CUP_MASS = CONFIG.CUP_MASS * 4
+        self.assertTrue(DEMO.assess_grab_run(data, grasp, CONFIG)["lift_supported_by_contact"])
+        self.assertFalse(DEMO.assess_grab_run(data, grasp, heavier)["lift_supported_by_contact"])
+        self.assertTrue(DEMO.assess_grab_run(data, grasp, CONFIG)["lift_supported_by_contact"])
 
     def test_settling_zeroes_velocity_and_extrapolation_rejected(self):
         _, _, v = DEMO.sample_grab_hand(self.hand, 1.0, 0.0, np.zeros(3))
