@@ -53,22 +53,20 @@ solver APIs directly (`fea_element->Initialize()`, `fea_solver->Solve()`, etc.).
 When one solver is pure C++ (FERIS) and the other is a pure Python package
 (Newton), the coupling cannot be done entirely in C++. MoPhi's solution is a
 **thin Python-facing wrapper struct** (`PyFERISNewtonCoupler`) defined in
-`python/bindings/mophi_bindings.cpp`. This wrapper:
+`src/couplers/feris_newton/PyFERISNewtonCoupler.{h,cpp}` and bound in
+`python/bindings/feris_newton_bindings.cpp`. This wrapper:
 
 1. Owns the FERIS solver objects in a C++ pimpl member.
 2. Stores the Newton model, solver, states, control, and contacts as
    `py::object` members (reference-counted Python objects).
 3. Exposes a unified `initialize() / step() / finalize()` interface to Python.
-4. Inside `step()`, drives the full coupling cycle:
-   - Advances FERIS via `coupler.step()`.
-   - Reads `coupler.get_feris_node_positions()` → forwards to Newton (TODO: update
-     Newton geometry / anchor points).
-   - Advances Newton (clear forces → collide → step → swap states).
-   - Reads Newton forces → applies via `coupler.set_feris_node_forces()` (TODO).
+4. Inside `step()`, advances FERIS and then Newton (clear forces → collide →
+   step → swap states). Geometry and force transfers between them remain TODOs.
 
-The two data-exchange methods (`get_feris_node_positions`,
-`set_feris_node_forces`) document the coupling points and will be wired to the
-real FERIS API calls once the solver is fully configured.
+The C++ hooks `GetFERISNodePositions()` and `SetFERISNodeForces()` are unfinished
+and are not exposed as Python methods. This is a groundwork implementation,
+not a completed two-way contact coupling. Its existing combined `step()` API
+also predates the per-solver stepping convention required for new couplers.
 
 ---
 
@@ -81,12 +79,12 @@ DEME) can still be installed at configure time for local developer
 convenience, but wheel builds use `pyproject.toml` dependency metadata
 instead. Control which ones are fetched with the following options:
 
-Python developer builds and packaging builds intentionally have different
-output locations. A normal CMake build writes the ABI-tagged `mophi_core`
-extension into `python/mophi/` for `PYTHONPATH=python` usage; use a separate
-`build-py<version>/` directory for each CPython minor version. A PEP 517 wheel
-build sets `MOPHI_PYTHON_PACKAGING_BUILD=ON`, keeps its extension in the build
-tree, and packages it into an ABI-specific wheel. The configured
+All builds keep their ABI-tagged `mophi_core` extension inside their own build
+directory. A developer default build also publishes a copy into `python/mophi/`
+for `PYTHONPATH=python` usage, including on incremental builds without relinking.
+Use separate build directories per CPython minor version and configuration.
+A PEP 517 wheel build sets `MOPHI_PYTHON_PACKAGING_BUILD=ON`, skips source-tree
+publication, and packages its extension into an ABI-specific wheel. The
 `cibuildwheel` matrix repeats that packaging build for CPython 3.11–3.14.
 See [the Python build workflows](how-to/python-builds.md) for commands,
 verification, and ABI troubleshooting.
@@ -197,6 +195,7 @@ backends.
 | `MOPHI_PACKAGE_DEME_IMPORT_MODULE` | `deme` | Python module exporting that API |
 | `MOPHI_BUILD_FERIS_NEWTON` | OFF | Build the FERIS+Newton co-simulation coupler |
 | `MOPHI_BUILD_NEWTON_XLB_DEM` | OFF | Build the Newton+XLB+DEME three-way coupler |
+| `MOPHI_BUILD_NEWTON_DEM` | OFF | Enable Newton/DEME Python demo targets and installation (no compiled coupler) |
 | `MOPHI_BUILD_PYTHON_BINDINGS` | ON | Build `mophi_core` Python extension |
 | `MOPHI_PYTHON_PACKAGING_BUILD` | OFF | Internal packaging mode used by scikit-build-core (Python bindings ON, Newton+XLB+DEME ON, FERIS OFF, demos OFF, build-tree extension output, no configure-time pip installs) |
 
@@ -227,7 +226,7 @@ exports from `mophi.utils` remain available.
 | XLB post-processing | `python/mophi/utils/xlb/helpers.py` | NumPy velocity-array seed/streamline operations, exposed through `mophi.xlb_*`; no solver stepping |
 | G-code | `python/mophi/utils/gcode/parser.py` | [G-code](gcode.md); `mophi.utils.gcode` retains its exports |
 | VTK output | `python/mophi/utils/vtk/writer.py` | [VTK](vtk-output.md); `mophi.utils.vtk` retains its exports |
-| Demo execution | `scripts/demos/run_important_demos.py` | [Serial runner](how-to/newton-xlb-deme.md) |
+| Demo execution | `scripts/demos/run_important_demos.py` | [Serial runner](how-to/getting-started.md#demo-regression-runner) |
 
 Direct module imports follow these paths, e.g.
 `from mophi.utils.grab.motion import GrabPlayback`. GRAB preparation now runs as

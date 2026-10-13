@@ -2,16 +2,10 @@
 mophi — multi-physics co-simulation framework
 
 This package exposes the C++ core (mophi_core) under a clean Python namespace.
-Co-simulation solvers are available only when the corresponding external
-projects have been fetched and the solver was built (MOPHI_BUILD_* options).
-
-Example usage (requires -DMOPHI_BUILD_FERIS_NEWTON=ON at CMake configure time)::
-
-    import mophi
-    coupler = mophi.FERISNewtonCoupler()
-    coupler.initialize()
-    coupler.step()
-    coupler.finalize()
+Compiled coupler classes require their MOPHI_BUILD_* option. Pure-Python
+couplers under mophi.couplers require their solver packages at runtime.
+All imports of mophi currently require the ABI-compatible mophi_core extension.
+See docs/how-to/python-builds.md for source-tree and installed-package workflows.
 """
 
 from importlib import import_module as _import_module

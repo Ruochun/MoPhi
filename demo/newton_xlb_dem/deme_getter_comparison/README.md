@@ -1,5 +1,13 @@
 # DEME contact getter comparison
 
+## Prerequisites
+
+Before running this demo, complete [Newton + XLB + DEME — Setup](../../../docs/couplers/newton-xlb-deme.md#setup).
+This comparison requires the compiled Newton stepper plus Newton, DEME, and an
+NVIDIA CUDA GPU with OpenGL support for visualization. Then use the run command below.
+
+## Overview
+
 `demo_deme_contact_getter_comparison.py` is a small Newton--DEME A/B test for
 DEME's contact-acceleration and reduced-wrench getters. Two identical pairs of
 free Newton boxes collide in isolated lanes. DEME owns both lanes' mesh contact;

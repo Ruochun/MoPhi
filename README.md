@@ -41,7 +41,10 @@ for the repository map and code-organization notes.
 
 Start with the quick-start workflow in
 [docs/how-to/getting-started.md](docs/how-to/getting-started.md), which covers cloning,
-configuring, building, and running a first demo.
+installing dependencies with `python scripts/setup/install_dependencies.py`,
+configuring, building, and running a first demo. The
+[demo build matrix](docs/how-to.md#demo-build-requirements) lists the coupler
+options needed by each workflow.
 
 For Python development and distribution, see
 [docs/how-to/python-builds.md](docs/how-to/python-builds.md).
@@ -62,7 +65,7 @@ Newton-backed demos use validated, self-repairing asset downloads described in
 [docs/newton-assets.md](docs/newton-assets.md).
 
 The reusable GPU-native Newton–DEME contact-wrench exchange is described in
-[docs/newton-deme-coupling.md](docs/newton-deme-coupling.md).
+[docs/couplers/newton-deme.md](docs/couplers/newton-deme.md).
 
 The reusable Newton–XLB, Newton–DEME particle, and XLB–DEME GPU exchange
 boundaries are described in
@@ -78,12 +81,12 @@ dependency set for Newton + XLB + DEME without FERIS.
 ### FERIS + Newton (Python-based GPU physics)
 
 The FERIS + Newton workflow, including build and demo commands, lives in
-[docs/how-to/feris-newton.md](docs/how-to/feris-newton.md).
+[docs/couplers/feris-newton.md](docs/couplers/feris-newton.md).
 
 ### Newton + XLB + DEME (three-way coupling)
 
 The Newton + XLB + DEME build, demo, and dependency guidance lives in
-[docs/how-to/newton-xlb-deme.md](docs/how-to/newton-xlb-deme.md).
+[docs/couplers/newton-xlb-deme.md](docs/couplers/newton-xlb-deme.md).
 
 ---
 

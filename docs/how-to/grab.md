@@ -34,6 +34,10 @@ uses the same prerequisites and converter.
 
 ## 1. Prerequisites
 
+The shared coupling requirements are in [Newton + DEME — Setup](../couplers/newton-deme.md#setup).
+The commands below provide the equivalent base build plus GRAB-specific dependencies;
+follow them and the asset preparation steps in this guide.
+
 Run the commands from the repository root with Python dependencies installed
 for the same interpreter used to build MoPhi. No named environment is required.
 The examples use `PYTHONPATH=python` for source-tree development. With an
@@ -50,22 +54,26 @@ source-checkout path. See [Python build workflows](python-builds.md).
   plots). Headless rendering still requires graphics support.
 
 ```bash
-python -m pip install numpy scipy torch smplx trimesh fast-simplification rtree \
-    deme pyglet imgui-bundle pillow imageio imageio-ffmpeg matplotlib
+python scripts/setup/install_dependencies.py --extra grab
 
 git submodule update --init --recursive
 cmake -S . -B build-grab \
     -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
     -DMOPHI_BUILD_PYTHON_BINDINGS=ON -DMOPHI_FETCH_NEWTON=ON \
-    -DMOPHI_BUILD_FERIS_NEWTON=OFF -DMOPHI_BUILD_NEWTON_XLB_DEM=OFF
+    -DMOPHI_BUILD_FERIS_NEWTON=OFF -DMOPHI_BUILD_NEWTON_XLB_DEM=OFF \
+    -DMOPHI_BUILD_NEWTON_DEM=ON
 cmake --build build-grab -j
 PYTHONPATH=python python -c 'import mophi, deme, newton; print(mophi.mophi_core.__file__)'
 ```
 
-No compiled MoPhi solver coupler is needed for this demo.
+No compiled MoPhi solver coupler is needed for this demo. The base `mophi_core`
+extension is required. `MOPHI_BUILD_NEWTON_DEM=ON` enables CMake run targets and
+demo installation; direct source execution does not depend on that flag.
+The [dependency installer](python-dependencies.md) includes a convenience
+superset of solvers; XLB is not used by GRAB.
 `MOPHI_FETCH_NEWTON=ON` installs the repository-configured Newton/Warp dependencies
 into the selected Python interpreter. If installing them manually, use the
-compatible package set in [Newton setup](newton-xlb-deme.md); the GRAB workflow
+compatible package set in [Newton setup](../couplers/newton-xlb-deme.md); the GRAB workflow
 does not require XLB or the three-way compiled coupler.
 
 ## 2. Obtain and extract licensed assets
@@ -194,7 +202,7 @@ requires validation. Mesh geometry and mass properties are unchanged. Patch
 grouping changes the contact response and is not a proof of converged physics.
 
 Scene parameters are in [`scene_config.py`](../../demo/newton_dem/grab/grabbing_cup/scene_config.py).
-`CUP_PATCH_MODE = "spread"` and `CUP_PATCH_COUNT = 10` select the default cup
+`OBJECT_PATCH_MODE = "spread"` and `OBJECT_PATCH_COUNT = 10` select the default cup
 partition. `HAND_PATCH_MODE = "spread"` and `HAND_PATCH_COUNT = 10` configure
 the hand in the same way; edit either count there to experiment. Radius and
 normal-angle options apply only to the existing `connected` mode, not the count-based utility.
@@ -259,7 +267,9 @@ PYTHONPATH=python python demo/newton_dem/grab/grabbing_cup/render_grab_compariso
 positional argument. Interactive mode supports single-panel `recorded` or
 `simulation` viewing; comparison movies are rendered headlessly. `--patches`
 saves `patches.png` in local metric coordinates and requires the run's partition
-archive from a completed grasp run. It also renders the selected movie; it is
+archive (`patches.npz`). Recorded-only viewing with `--patches` needs that
+archive but does not need a completed trajectory; simulation/comparison viewing
+also needs the saved simulation results. It also renders the selected movie; it is
 not a standalone preparation or patch-only command. The patch image uses the
 fixed local-coordinate `PATCH_VIEW` in the viewer; `--view` selects the movie
 camera only.
@@ -339,7 +349,7 @@ hand motion, not a penetration-free or converged contact solution. Inspect both
 the comparison movie and `summary.json` when reproducing it.
 
 For compatibility with existing diagnostics, saved field names such as
-`cup_com_world`, `cup_lifted`, and `CUP_MASS`, plus the optional `cup_rest` case,
+`cup_com_world` and `cup_lifted`, plus the optional `cup_rest` case,
 refer to the manipulated object in either scene. `--view handle` remains the
 shared oblique camera preset name even though the cylinder has no handle.
 
@@ -398,6 +408,23 @@ acceptance. General patch partitioning remains documented under
 
 The earlier standalone playback/inspection scripts and separate GRAB guides
 have been consolidated here. Drop/push/plate calibration modes are removed from
-the main demo; their historical findings remain above and their implementation
-is available in Git history. Existing generated output directories are retained
+the main demo; their implementation is available in Git history. Existing generated output directories are retained
 as historical experiments, not required inputs to this workflow.
+
+## Geometry and diagnostic interpretation
+
+| Component | DEME contact | Rendering / mass properties |
+|-----------|--------------|-----------------------------|
+| Cup or cylinder | Simplified triangle mesh with fixed patch IDs | Original NPZ object mesh; uniform-density volume properties scaled to `OBJECT_MASS` |
+| Recorded hand | Deforming triangle mesh with fixed patch IDs | The same extracted hand surface; prescribed motion |
+| Table | Infinite analytical plane | A finite box for display only |
+
+The scene configurations use object-neutral `OBJECT_*` names. Saved `cup_*`
+fields and existing `--cup-*` options retain their historical names for
+compatibility with prior recordings and inspection tools.
+
+Hand penetration is sampled at hand vertices against the collision mesh at the
+configured diagnostic interval. The reported maximum is over those samples,
+not a continuous surface or every-substep bound. Thin intersections between
+vertices or between diagnostic times can be missed. Inspect the comparison
+movie alongside the diagnostics when assessing a grasp.

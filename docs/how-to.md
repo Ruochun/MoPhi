@@ -11,12 +11,17 @@ own prerequisites, commands, behavior notes, and limitations.
   pointers to solver-specific dependency sets.
 - [Python build workflows](how-to/python-builds.md) — source-tree builds, wheel builds,
   ABI troubleshooting, manylinux repair, and offline wheelhouses.
-- [FERIS + Newton](how-to/feris-newton.md) — build, run, and data exchange for the
-  FERIS/Newton coupler.
-- [Newton + XLB + DEME setup](how-to/newton-xlb-deme.md) — dependency installation,
-  three-way coupler setup, provider configuration, and the serial demo runner.
 - [Newton asset cache handling](newton-assets.md) — validated downloads,
   automatic refresh, offline limitations, and cache recovery.
+
+## Coupler guides
+
+- [FERIS + Newton](couplers/feris-newton.md) — prerequisites, build/run commands,
+  and FEA contact data exchange.
+- [Newton + DEME](couplers/newton-deme.md) — Python coupling APIs, GPU exchange,
+  mesh preparation, and limitations.
+- [Newton + XLB + DEME](couplers/newton-xlb-deme.md) — compiled coupler setup,
+  basic usage, and solver provider configuration.
 
 ## Demo workflows
 
@@ -47,10 +52,37 @@ both setup options.
   including prerequisites, NPZ conversion, and run commands. Covers licensed assets,
   MoPhi/DEME/Newton prerequisites, recorded-only viewing, cameras, and diagnostics.
 
+## Demo build requirements
+
+All scripts importing `mophi` require an ABI-compatible `mophi_core` extension
+(`MOPHI_BUILD_PYTHON_BINDINGS=ON`, or an installed wheel). “None” below means
+no compiled **coupler** is needed. Install the [common dependencies](how-to/python-dependencies.md)
+first. CUDA workloads need an NVIDIA GPU; visual viewers also need working
+OpenGL drivers. Scenario guides list assets and additional dependencies.
+
+| Demo | Runtime solvers | Required compiled coupler option | CMake demo selection |
+|------|-----------------|----------------------------------|---------------------|
+| FERIS/Newton | FERIS, Newton | `MOPHI_BUILD_FERIS_NEWTON=ON` | Same option |
+| ANYmal baseline | Newton | None | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` (group integration only) |
+| ANYmal multiphysics | Newton, XLB, DEME | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Same option |
+| Claw excavation / coarse cubes | Newton, DEME / Newton | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Same option |
+| Humanoid environment / fighting | Newton / Newton, DEME | None | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` (group integration only) |
+| Humanoid swimming | Newton, XLB | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Same option |
+| Flexible hands (both), DEME getter comparison | Newton; DEME for DEM variants | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Same option |
+| GRAB cup/cylinder | DEME; Newton rendering | None | `MOPHI_BUILD_NEWTON_DEM=ON` |
+| DFC discharge | DEME; Newton scene/rendering | None | `MOPHI_BUILD_NEWTON_DEM=ON` |
+| Robotic 3D printing | Newton, DEME | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Also `MOPHI_BUILD_NEWTON_DEM=ON` |
+
+CMake demo targets and installation additionally require `MOPHI_BUILD_DEMOS=ON`.
+Direct `PYTHONPATH=python python demo/...` execution does not need demo selection
+flags. Some existing Newton-only demos still instantiate the compiled three-way
+class for stepping; their required build option reflects that implementation,
+even though XLB/DEME may not participate in their physics. Baselines without that
+class remain grouped with the three-way CMake demos for installation.
+
 ## Supporting references
 
 - [Visualization](visualization.md)
-- [Newton–DEME coupling](newton-deme-coupling.md)
 - [Pairwise GPU exchange](pairwise-gpu-exchange.md)
 - [XLB runtime and lattice mapping](xlb-runtime.md)
 - [G-code](gcode.md)

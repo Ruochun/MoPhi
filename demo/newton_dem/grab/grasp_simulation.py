@@ -67,7 +67,7 @@ def assess_grab_run(data, grasp, config):
     checks["cup_lifted"] = bool(np.min(data[lift_window, 20]) > config.MIN_GRAB_LIFT)
     checks["lift_supported_by_contact"] = bool(
         checks["cup_lifted"]
-        and np.mean(data[lift_window, 16]) > config.CUP_MASS * config.GRAVITY * config.GRAB_SUPPORT_FORCE_FRACTION
+        and np.mean(data[lift_window, 16]) > config.OBJECT_MASS * config.GRAVITY * config.GRAB_SUPPORT_FORCE_FRACTION
     )
     checks["cup_near_recorded_position"] = bool(
         np.linalg.norm(data[-1, 1:4] - grasp[-1, 1:4]) < config.MAX_GRAB_REFERENCE_ERROR
@@ -100,15 +100,15 @@ def main(config):
     parser.add_argument(
         "--cup-patches",
         choices=("single", "sectors", "triangles", "connected", "spread"),
-        default=config.CUP_PATCH_MODE,
+        default=config.OBJECT_PATCH_MODE,
     )
     parser.add_argument(
         "--hand-patches", choices=("single", "triangles", "connected", "spread"), default=config.HAND_PATCH_MODE
     )
-    parser.add_argument("--cup-patch-radius", type=float, default=config.CUP_PATCH_RADIUS)
+    parser.add_argument("--cup-patch-radius", type=float, default=config.OBJECT_PATCH_RADIUS)
     parser.add_argument("--hand-patch-radius", type=float, default=config.HAND_PATCH_RADIUS)
     parser.add_argument("--patch-normal-angle", type=float, default=config.PATCH_MAX_NORMAL_ANGLE)
-    parser.add_argument("--patch-sectors", type=int, default=config.CUP_PATCH_SECTORS)
+    parser.add_argument("--patch-sectors", type=int, default=config.OBJECT_PATCH_SECTORS)
     parser.add_argument("--collision-faces", type=int, default=config.COLLISION_FACE_COUNT)
     parser.add_argument("--headless", action="store_true", default=config.HEADLESS)
     parser.add_argument("--no-render", action="store_true", default=not config.RENDER)
@@ -188,8 +188,8 @@ def main(config):
     # DEME expects diagonal inertia about the CoM. Keep the full source mesh in
     # that principal frame for mass properties/rendering; simplify only contact
     # geometry and check its surface/volume error against the original.
-    cup = prepare_mesh_principal_frame(obj["object_vertices_local"], obj["object_faces"], config.CUP_MASS)
-    original = trimesh.Trimesh(cup.vertices, cup.triangle_indices, process=False)
+    object_frame = prepare_mesh_principal_frame(obj["object_vertices_local"], obj["object_faces"], config.OBJECT_MASS)
+    original = trimesh.Trimesh(object_frame.vertices, object_frame.triangle_indices, process=False)
     collision = original
     proxy_error = 0.0
     proxy_volume_error = 0.0
@@ -221,12 +221,12 @@ def main(config):
         mophi.fatal("Grasp initialization requires an object sample at --start-frame")
     recorded_rotation = Rotation.from_quat(obj["object_quaternion_xyzw"][row])
     recorded_translation = obj["object_translation_world"][row]
-    cup_rotation = recorded_rotation * Rotation.from_matrix(cup.principal_to_input)
+    object_rotation = recorded_rotation * Rotation.from_matrix(object_frame.principal_to_input)
     recorded_world = recorded_rotation.apply(obj["object_vertices_local"]) + recorded_translation
     grab_offset = np.array(
         [-recorded_world[:, 0].mean(), -recorded_world[:, 1].mean(), config.REST_GAP - recorded_world[:, 2].min()]
     )
-    cup_initial = recorded_rotation.apply(cup.center_of_mass) + recorded_translation + grab_offset
+    object_initial = recorded_rotation.apply(object_frame.center_of_mass) + recorded_translation + grab_offset
     if args.case == "grab":
         domain = np.asarray([config.DOMAIN_X, config.DOMAIN_Y, config.DOMAIN_Z])
         motion_min = world_nodes.min(axis=(0, 1)) + grab_offset
@@ -280,33 +280,35 @@ def main(config):
     # Patch IDs group triangles for contact evaluation; they do not create separate
     # rigid bodies. All triangles retain one owner, mass, and principal inertia.
     write_wavefront_mesh(output / "cup_principal.obj", collision_vertices, collision_faces)
-    cup_mesh = solver.AddWavefrontMeshObject(str(output / "cup_principal.obj"), material, False)
+    object_mesh = solver.AddWavefrontMeshObject(str(output / "cup_principal.obj"), material, False)
     if args.cup_patches == "spread":
-        cup_mesh.SetPatchIDs(
-            partition_mesh_seeded_patches(collision_vertices, collision_faces, config.CUP_PATCH_COUNT).tolist()
+        object_mesh.SetPatchIDs(
+            partition_mesh_seeded_patches(collision_vertices, collision_faces, config.OBJECT_PATCH_COUNT).tolist()
         )
     elif args.cup_patches == "connected":
-        cup_mesh.SetPatchIDs(
+        object_mesh.SetPatchIDs(
             partition_mesh_contact_patches(
                 collision_vertices, collision_faces, args.cup_patch_radius, args.patch_normal_angle
             ).tolist()
         )
     elif args.cup_patches == "triangles":
-        cup_mesh.SetEachTriangleAsPatch()
+        object_mesh.SetEachTriangleAsPatch()
     elif args.cup_patches == "sectors":
-        # Partition around the source cup's vertical axis without changing triangles.
-        centers = Rotation.from_matrix(cup.principal_to_input).apply(collision_vertices[collision_faces].mean(axis=1))
+        # Partition around the source object's vertical axis without changing triangles.
+        centers = Rotation.from_matrix(object_frame.principal_to_input).apply(
+            collision_vertices[collision_faces].mean(axis=1)
+        )
         angles = np.mod(np.arctan2(centers[:, 1], centers[:, 0]), 2 * np.pi)
-        cup_mesh.SetPatchIDs(np.floor(angles / (2 * np.pi) * args.patch_sectors).astype(int).tolist())
+        object_mesh.SetPatchIDs(np.floor(angles / (2 * np.pi) * args.patch_sectors).astype(int).tolist())
     else:
-        cup_mesh.SetPatchIDs([0] * len(collision_faces))
-    cup_mesh.SetMass(cup.mass)
-    cup_mesh.SetMOI(cup.principal_moi.tolist())
-    cup_mesh.SetInitPos(cup_initial.tolist())
-    cup_mesh.SetInitQuat(cup_rotation.as_quat().tolist())
-    cup_mesh.SetFamily(config.CUP_FAMILY)
-    cup_tracker = solver.Track(cup_mesh)
-    geometry = {"cup": (cup.vertices, cup.triangle_indices)}
+        object_mesh.SetPatchIDs([0] * len(collision_faces))
+    object_mesh.SetMass(object_frame.mass)
+    object_mesh.SetMOI(object_frame.principal_moi.tolist())
+    object_mesh.SetInitPos(object_initial.tolist())
+    object_mesh.SetInitQuat(object_rotation.as_quat().tolist())
+    object_mesh.SetFamily(config.OBJECT_FAMILY)
+    object_tracker = solver.Track(object_mesh)
+    geometry = {"cup": (object_frame.vertices, object_frame.triangle_indices)}
     surface_tracker = None
     surface_initial = np.zeros(3)
     surface_vertices = None
@@ -366,7 +368,7 @@ def main(config):
     patches = dict(
         cup_vertices=collision_vertices,
         cup_faces=collision_faces,
-        cup_patch_ids=np.asarray(cup_mesh.GetPatchIDs(), dtype=np.int32),
+        cup_patch_ids=np.asarray(object_mesh.GetPatchIDs(), dtype=np.int32),
     )
     if surface is not None:
         patches.update(
@@ -376,7 +378,7 @@ def main(config):
         )
     np.savez_compressed(output / "patches.npz", **patches)
     print(
-        f"Contact patches: object={cup_mesh.GetNumPatches()}, hand={surface.GetNumPatches() if surface else 0}",
+        f"Contact patches: object={object_mesh.GetNumPatches()}, hand={surface.GetNumPatches() if surface else 0}",
         flush=True,
     )
     print("Initializing DEME (kernel compilation can take several minutes).", flush=True)
@@ -416,7 +418,7 @@ def main(config):
     render_steps = set(
         np.minimum(steps, np.rint(np.arange(0, args.duration, 1 / config.RENDER_FPS) / args.dt).astype(int))
     ) | {steps}
-    cup_id = cup_tracker.GetOwnerID()
+    object_id = object_tracker.GetOwnerID()
     completed = False
     next_progress = 0.0
     try:
@@ -442,19 +444,19 @@ def main(config):
             # Read owner state only at diagnostic/movie samples. Transform the full
             # object mesh for display and the proxy for the table-clearance measure.
             if record or render:
-                position = np.asarray(cup_tracker.Pos())
-                quaternion = np.asarray(cup_tracker.OriQ())
-                velocity = np.asarray(cup_tracker.Vel())
-                angular_velocity = np.asarray(cup_tracker.AngVelGlobal())
+                position = np.asarray(object_tracker.Pos())
+                quaternion = np.asarray(object_tracker.OriQ())
+                velocity = np.asarray(object_tracker.Vel())
+                angular_velocity = np.asarray(object_tracker.AngVelGlobal())
                 if not np.isfinite(np.r_[position, quaternion, velocity, angular_velocity]).all():
                     mophi.fatal(f"Nonfinite DEME object state at {t}")
                 rotation = Rotation.from_quat(quaternion)
-                world_cup = rotation.apply(cup.vertices) + position
+                world_object = rotation.apply(object_frame.vertices) + position
                 minimum_z = (rotation.apply(collision_vertices) + position)[:, 2].min()
                 if render and args.case == "grab":
                     render_samples.append(np.r_[t, source_time, position, quaternion])
                 if record:
-                    force, torque = solver.GetOwnerContactWrench(cup_id)
+                    force, torque = solver.GetOwnerContactWrench(object_id)
                     samples.append(
                         np.r_[t, position, quaternion, velocity, angular_velocity, force[0], torque[0], minimum_z]
                     )
@@ -465,7 +467,7 @@ def main(config):
                         owners_a = np.asarray(info.GetAOwner(), dtype=np.int64)
                         count = len(owners_a)
                         if count:
-                            if np.any(owners_a != cup_id):
+                            if np.any(owners_a != object_id):
                                 mophi.fatal("Cup-rest diagnostic expects owner A to be the cup")
                             contact_samples.append(
                                 np.column_stack(
@@ -490,13 +492,15 @@ def main(config):
                         # back from DEME. These diagnostics do not modify the motion.
                         a, b, w = sample_interval(obj["timestamps_s"], source_time)
                         centers = (
-                            Rotation.from_quat(obj["object_quaternion_xyzw"][[a, b]]).apply(cup.center_of_mass)
+                            Rotation.from_quat(obj["object_quaternion_xyzw"][[a, b]]).apply(object_frame.center_of_mass)
                             + obj["object_translation_world"][[a, b]]
                             + grab_offset
                         )
                         reference = (1 - w) * centers[0] + w * centers[1]
-                        hand_in_cup = rotation.inv().apply(current_nodes + owner_position - position)
-                        penetration = max(0.0, float(trimesh.proximity.signed_distance(collision, hand_in_cup).max()))
+                        hand_in_object = rotation.inv().apply(current_nodes + owner_position - position)
+                        penetration = max(
+                            0.0, float(trimesh.proximity.signed_distance(collision, hand_in_object).max())
+                        )
                         geometry_error = np.max(
                             np.abs(np.asarray(surface_tracker.GetMeshNodesGlobal()) - (current_nodes + owner_position))
                         )
@@ -529,7 +533,7 @@ def main(config):
                         )
                     for name, (vertices, _) in geometry.items():
                         world = (
-                            world_cup
+                            world_object
                             if name == "cup"
                             else current_nodes + owner_position if name == "surface" else vertices
                         )
@@ -564,8 +568,8 @@ def main(config):
             cup_quaternion_xyzw=poses[:, 5:9],
             world_translation=grab_offset,
             fps=config.RENDER_FPS,
-            cup_vertices_principal=cup.vertices,
-            cup_faces=cup.triangle_indices,
+            cup_vertices_principal=object_frame.vertices,
+            cup_faces=object_frame.triangle_indices,
         )
     np.savez_compressed(
         output / "trajectory.npz",
@@ -577,10 +581,10 @@ def main(config):
         cup_contact_force_world=data[:, 14:17],
         cup_contact_torque_world=data[:, 17:20],
         cup_min_z=data[:, 20],
-        mass_kg=cup.mass,
-        principal_moi_kg_m2=cup.principal_moi,
-        source_mesh_com=cup.center_of_mass,
-        principal_to_source=cup.principal_to_input,
+        mass_kg=object_frame.mass,
+        principal_moi_kg_m2=object_frame.principal_moi,
+        source_mesh_com=object_frame.center_of_mass,
+        principal_to_source=object_frame.principal_to_input,
     )
     if args.case == "cup_rest":
         contacts = np.concatenate(contact_samples) if contact_samples else np.empty((0, 17))
@@ -609,7 +613,7 @@ def main(config):
         completed=completed,
         time_accounting=bool(abs(solver.GetSimTime() - step * physics_dt) < physics_dt * 1e-3),
         floor_penetration_bounded=bool(data[:, 20].min() >= -config.MAX_ALLOWED_PENETRATION),
-        contact_occurred=bool(np.max(np.linalg.norm(data[:, 14:17], axis=1)) > config.CUP_MASS * config.GRAVITY / 2),
+        contact_occurred=bool(np.max(np.linalg.norm(data[:, 14:17], axis=1)) > config.OBJECT_MASS * config.GRAVITY / 2),
     )
     if args.case == "cup_rest":
         rotations = Rotation.from_quat(data[:, 4:8])
@@ -618,7 +622,7 @@ def main(config):
             angular_drift_bounded=bool(angle.max() < config.REST_MAX_ANGULAR_DRIFT_DEG),
             angular_speed_settled=bool(np.linalg.norm(data[-1, 11:14]) < config.REST_MAX_ANGULAR_SPEED),
             support_balances_weight=bool(
-                abs(mean_contact_force[2] / (config.CUP_MASS * config.GRAVITY) - 1)
+                abs(mean_contact_force[2] / (config.OBJECT_MASS * config.GRAVITY) - 1)
                 < config.MAX_WEIGHT_BALANCE_RELATIVE_ERROR
             ),
         )
@@ -646,7 +650,7 @@ def main(config):
         "dt_s": physics_dt,
         "duration_s": float(data[-1, 0]),
         "solver_time_s": solver.GetSimTime(),
-        "cup_mass_kg": cup.mass,
+        "cup_mass_kg": object_frame.mass,
         "source_object": str(args.object.resolve()),
         "source_hand": str(args.hand.resolve()) if args.case == "grab" else None,
         "mass_model": "uniform density inside the source closed mesh",
@@ -654,14 +658,14 @@ def main(config):
         "bin_size_m": args.bin_size,
         "domain_bounds_m": domain_bounds,
         "cup_patch_mode": args.cup_patches,
-        "cup_patch_count": cup_mesh.GetNumPatches(),
+        "cup_patch_count": object_mesh.GetNumPatches(),
         "hand_patch_mode": args.hand_patches if args.case == "grab" else None,
         "surface_patch_count": surface.GetNumPatches() if surface is not None else 0,
         "cup_patch_radius_m": args.cup_patch_radius,
         "hand_patch_radius_m": args.hand_patch_radius,
         "patch_normal_angle_deg": args.patch_normal_angle,
         "recorded_initial_frame": args.start_frame,
-        "cup_visual_triangles": len(cup.triangle_indices),
+        "cup_visual_triangles": len(object_frame.triangle_indices),
         "proxy_sampled_surface_error_m": proxy_error,
         "proxy_relative_volume_error": float(proxy_volume_error),
         "friction": args.friction,

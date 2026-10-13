@@ -50,6 +50,8 @@ option(MOPHI_BUILD_PYTHON_BINDINGS "Build Python bindings via pybind11" ON)
 # Options: demos
 # ─────────────────────────────────────────────────────────────────────────────
 option(MOPHI_BUILD_DEMOS "Build demonstration programs" ON)
+# Pure-Python Newton/DEME demos: controls run targets and installation only.
+option(MOPHI_BUILD_NEWTON_DEM "Enable Newton + DEME Python demo targets and installation" OFF)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Options: Python packaging

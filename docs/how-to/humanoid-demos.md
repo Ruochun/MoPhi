@@ -1,5 +1,23 @@
 # Humanoid demos
 
+## Prerequisites
+
+Before running swimming, complete [Newton + XLB + DEME — Setup](../couplers/newton-xlb-deme.md#setup).
+For fighting, complete [Newton + DEME — Setup](../couplers/newton-deme.md#setup).
+For the Newton-only environment demo, [base-extension setup](python-builds.md#base-extension-only) is sufficient.
+Then return to the relevant run command below.
+
+The environment and fighting demos need no compiled coupler; fighting adds
+DEME to Newton. Swimming needs XLB and `MOPHI_BUILD_NEWTON_XLB_DEM=ON`.
+Newton downloads robot/policy assets on first use.
+
+Install the [common Python dependencies](python-dependencies.md), build the
+base extension for the active Python with the required options above, and use
+an NVIDIA CUDA GPU with OpenGL support for visual demos. Commands below run
+from the repository root with `PYTHONPATH=python`; omit that setting for an
+installed MoPhi package. See [build workflows](python-builds.md) and the
+[complete demo matrix](../how-to.md#demo-build-requirements).
+
 ## Run
 
 ```bash

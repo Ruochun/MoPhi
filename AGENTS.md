@@ -330,8 +330,8 @@ Use these rules for all demo simulation loops.
 ### Document new user-facing scripts
 
 - Whenever a new user-facing runnable script is added, including a demo, add
-  its prerequisites, purpose, and run command to `docs/how-to.md` in the same
-  change.
+  its prerequisites, purpose, and run command to the appropriate topic guide
+  under `docs/how-to/`, linked from `docs/how-to.md`, in the same change.
 
 ### Store generated demo output under the repository output directory
 
@@ -445,7 +445,7 @@ Options follow two naming groups:
 | Group | Prefix | Purpose |
 |-------|--------|---------|
 | Fetch externals | `MOPHI_FETCH_<NAME>` | Download / update a specific external solver |
-| Build solvers | `MOPHI_BUILD_<NAME>` | Compile a specific co-simulation coupler |
+| Build coupling features | `MOPHI_BUILD_<NAME>` | Compile a coupler or select Python demo integration; document which |
 | Build extras | `MOPHI_BUILD_PYTHON_BINDINGS`, `MOPHI_BUILD_DEMOS` | Optional build outputs |
 
 ### Section banners
@@ -539,7 +539,12 @@ When `LIB_NAME` is given it also carries `IMPORTED_LOCATION` for the static libr
 
 ## Adding a new co-simulation solver
 
-Follow these steps exactly; use `PyFERISNewtonCoupler` as the reference implementation.
+First classify the implementation: compiled C++, hybrid C++/Python, or pure Python.
+Use the compiled steps below only for code requiring a C++ ABI. For pure-Python
+couplers use `python/mophi/couplers/<coupling_type>/`, with initialize/finalize,
+per-solver stepping and explicit transfers; no C++ shim is required. Demo-only
+scenes do not require a new coupler class. Pimpl and move rules apply to C++.
+Use `PyFERISNewtonCoupler` as the hybrid reference.
 
 ### 1. Register and fetch the external solvers
 
@@ -592,14 +597,16 @@ Create a new directory `src/couplers/<name>/` and add these files:
 - Use `MOPHI_INFO(...)`, `MOPHI_WARNING(...)`, `MOPHI_ERROR(...)` for all output — do **not** use `std::cout` directly
 - Destructor calls `Finalize()` when `impl_->initialized` is `true`
 
-If the new solver requires a Python-side component (like Newton), use a **Python-only coupler** pattern instead of the C++ coupler pattern above — see the next section.
+If native solver ownership requires C++ while another participant uses Python,
+use the hybrid pattern below. If all required APIs are callable from Python,
+prefer a pure-Python coupler.
 
 After writing source files, **run `.format_all`** before committing.
 
-### 2b. Python-only co-simulation coupler (one solver has no C++ ABI)
+### 2b. Hybrid C++/Python co-simulation coupler (one solver has no C++ ABI)
 
-When one of the two solvers is a pure Python package (no C++ ABI), there is no
-need for a separate C++ coupler class.  Instead, write a single
+When direct ownership of a native solver requires C++ and the other solver
+is accessed through Python, write a single
 `PyMyCoupler.h` + `PyMyCoupler.cpp` pair directly in `src/couplers/<name>/`:
 
 `src/couplers/<name>/PyMyCoupler.h` — declares the struct with pimpl:
@@ -632,7 +639,7 @@ Create `src/couplers/<name>/CMakeLists.txt`:
 
 - **C++ coupler**: build a `STATIC` library from `MyCoupler.cpp`, link it `PUBLIC`
   against the required externals, and add it to `mophi_couplers INTERFACE`.
-- **Python-only coupler** (see `feris_newton/CMakeLists.txt`): build an `INTERFACE`
+- **Hybrid C++/Python coupler** (see `feris_newton/CMakeLists.txt`): build an `INTERFACE`
   library (no object files — just carries the link and include requirements), add it
   to `mophi_couplers INTERFACE`.  The `.cpp` implementation is compiled into
   `mophi_core` by `python/CMakeLists.txt`.
@@ -655,7 +662,7 @@ In `python/bindings/mophi_bindings.cpp`, include the coupler header:
 ```cpp
 #ifdef MOPHI_HAS_MY_COUPLER
     #include "MyCoupler.h"       // C++ coupler  — OR —
-    #include "PyMyCoupler.h"     // Python-only coupler
+    #include "PyMyCoupler.h"     // Hybrid C++/Python coupler
 #endif
 
 // Inside PYBIND11_MODULE:
@@ -664,14 +671,14 @@ In `python/bindings/mophi_bindings.cpp`, include the coupler header:
     py::class_<mophi::MyCoupler>(m, "MyCoupler", "…docstring…")
         .def(py::init<>())
         .def("initialize", &mophi::MyCoupler::Initialize, /* py::arg ... */)
-        .def("step",       &mophi::MyCoupler::Step)
+        .def("step_solver_a", &mophi::MyCoupler::StepSolverA)
         .def("finalize",   &mophi::MyCoupler::Finalize);
 
-    // Python-only coupler (PyMyCoupler lives in global namespace):
+    // Hybrid C++/Python coupler (PyMyCoupler lives in global namespace):
     py::class_<PyMyCoupler>(m, "MyCoupler", "…docstring…")
         .def(py::init<>())
         .def("initialize", &PyMyCoupler::Initialize, /* py::arg ... */)
-        .def("step",       &PyMyCoupler::Step)
+        .def("step_solver_a", &PyMyCoupler::StepSolverA)
         .def("finalize",   &PyMyCoupler::Finalize);
 #endif
 ```
@@ -679,7 +686,7 @@ In `python/bindings/mophi_bindings.cpp`, include the coupler header:
 In `python/CMakeLists.txt`:
 
 - **C++ coupler**: add `target_include_directories` + `target_compile_definitions`.
-- **Python-only coupler**: add the `.cpp` source and compile definition (the include
+- **Hybrid C++/Python coupler**: add the `.cpp` source and compile definition (the include
   directory is already propagated via the INTERFACE CMake target):
 
 ```cmake
@@ -688,7 +695,7 @@ if(MOPHI_BUILD_MY_COUPLER)
     target_include_directories(mophi_core PRIVATE "${CMAKE_SOURCE_DIR}/src/couplers/<name>")
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_MY_COUPLER)
 
-    # Python-only coupler (no explicit include_directories — INTERFACE target propagates them):
+    # Hybrid C++/Python coupler (no explicit include_directories — INTERFACE target propagates them):
     target_sources(mophi_core PRIVATE "${CMAKE_SOURCE_DIR}/src/couplers/<name>/PyMyCoupler.cpp")
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_MY_COUPLER)
 endif()
@@ -741,6 +748,9 @@ README.
 
 ## Quick reference: checklist for a new coupler
 
+Apply native build/binding entries only to compiled or hybrid implementations;
+for pure-Python implementations use the package directory and maintenance rules below.
+
 - [ ] `mophi_register_external()` entry in `external/ExternalProjects.cmake`
 - [ ] `if(MOPHI_FETCH_*) mophi_fetch_external() endif()` in `external/CMakeLists.txt`
 - [ ] `option(MOPHI_FETCH_*)` and `option(MOPHI_BUILD_*)` in root `CMakeLists.txt`
@@ -748,13 +758,64 @@ README.
 - [ ] Create `src/couplers/<name>/` directory
 - [ ] `<NewCoupler>.h` — `#pragma once`, pimpl, `Initialize`/`Finalize` lifecycle methods, per-solver step methods, delete copy / default move *(C++ coupler)*
 - [ ] `<NewCoupler>.cpp` — `Impl` owns solver instances; lifecycle and per-solver step methods implemented *(C++ coupler)*
-- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl (e.g. `struct SolverAImpl`) + `pybind11::object` members; per-solver step methods declared *(Python-only coupler)*
-- [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including per-solver step methods *(Python-only coupler)*
-- [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards; **STATIC** lib for C++ coupler or **INTERFACE** lib for Python-only coupler
+- [ ] `PyNewCoupler.h` — declared (not inline) with pimpl (e.g. `struct SolverAImpl`) + `pybind11::object` members; per-solver step methods declared *(Hybrid C++/Python coupler)*
+- [ ] `PyNewCoupler.cpp` — defines pimpl, implements all methods including per-solver step methods *(Hybrid C++/Python coupler)*
+- [ ] `src/couplers/<name>/CMakeLists.txt` — `mophi_require_externals()`, FATAL_ERROR guards; **STATIC** lib for C++ coupler or **INTERFACE** lib for Hybrid C++/Python coupler
 - [ ] `if(MOPHI_BUILD_*) add_subdirectory(<name>) endif()` in `src/couplers/CMakeLists.txt`
 - [ ] `#ifdef MOPHI_HAS_*` binding block in `python/bindings/mophi_bindings.cpp`
-- [ ] `target_compile_definitions` + `target_include_directories` (C++ coupler) **or** `target_sources` + `target_compile_definitions` (Python-only coupler) in `python/CMakeLists.txt`
+- [ ] `target_compile_definitions` + `target_include_directories` (C++ coupler) **or** `target_sources` + `target_compile_definitions` (Hybrid C++/Python coupler) in `python/CMakeLists.txt`
 - [ ] `try/except ImportError` in `python/mophi/__init__.py`
 - [ ] Demo executable under `demo/<name>/`
 - [ ] `README.md` updated
 - [ ] `bash .format_all` run and all source files committed formatted
+
+
+## Dependency, demo, and distribution maintenance
+
+- Keep coupler guides at `docs/couplers/<coupling-name>.md`. Cover purpose,
+  prerequisites/build flags, basic usage, exchange semantics, and limitations.
+  General setup and scenario workflows belong under `docs/how-to/` and link to
+  the coupler guides for coupling details. List both in `docs/how-to.md`; avoid
+  duplicate coupler setup guides at different directory levels.
+
+- Keep runtime requirements and demo extras in `pyproject.toml`. The common
+  install command is `python scripts/setup/install_dependencies.py`, which reads
+  that metadata without building MoPhi. Add extras there instead of maintaining
+  another pinned pip list in a guide; synchronize provider/version checks when
+  changing solver requirements.
+- Every demo guide must identify runtime solvers, required compiled coupler flags
+  (or explicitly none), the base `mophi_core` requirement, assets, hardware,
+  and optional Python extras. Update the demo build matrix in `docs/how-to.md`.
+  Determine prerequisites from actual imports and instantiated classes.
+  In each demo's prerequisites, directly link the required coupler guide's Setup
+  section and tell readers to complete it before running the demo. A build-flag
+  mention or generic build-matrix link alone is insufficient. For guides covering
+  multiple demos, map each variant to its setup; link base-extension setup when
+  no compiled coupler is needed. Apply this to demo-local READMEs as well.
+- Keep source development commands (`PYTHONPATH=python`) as the default examples;
+  explain that installed-package users omit that setting. Use generic environment
+  names and repository-relative paths, not a developer's local environment.
+- A Python coupling demo must not acquire an unrelated compiled build requirement
+  merely from directory placement. Use a dedicated root CMake option for its
+  run targets/install rules where useful. Document whether each option compiles
+  code, selects demo installation, or installs dependencies. It does not gate
+  source-tree Python imports. Existing demos that instantiate a compiled class
+  must retain that prerequisite until migrated.
+- CMake demo selection also requires `MOPHI_BUILD_DEMOS`. The current wheel profile
+  is fixed; do not promise subset wheels without implementing matching Python
+  exports and dependency metadata. Distinguish build-time tools from runtime
+  packages, and validate affected CMake target/install combinations.
+- Keep scenario parameters in scene configuration and reusable behavior in shared
+  modules. Use object-neutral names in shared grasp code; preserve or explicitly
+  migrate existing result schemas and command-line interfaces. Maintain the single
+  GRAB guide for both scenes, including geometry representations and diagnostic
+  sampling limitations.
+- On moves/refactors update imports, build/install rules, tests, documentation,
+  and links together. Check source execution and affected installation paths.
+
+- Keep compiled extension link outputs private to each build directory. Developer
+  default builds must republish the selected extension into `python/mophi/` even
+  when no relink occurs; switching configurations must not depend on timestamps
+  of a shared output. Keep wheel builds isolated from this publication step.
+  `Python3_EXECUTABLE` must select the same interpreter used by bindings,
+  dependency checks, and demos; do not retain a conflicting `Python_EXECUTABLE`.

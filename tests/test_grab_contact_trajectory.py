@@ -49,7 +49,7 @@ class GrabTrajectoryTests(unittest.TestCase):
         checks = DEMO.assess_grab_run(data, grasp, CONFIG)
         self.assertTrue(checks["cup_lifted"])
         self.assertFalse(checks["lift_supported_by_contact"])
-        data[:, 16] = CONFIG.CUP_MASS * CONFIG.GRAVITY
+        data[:, 16] = CONFIG.OBJECT_MASS * CONFIG.GRAVITY
         self.assertTrue(DEMO.assess_grab_run(data, grasp, CONFIG)["lift_supported_by_contact"])
         data[1, 20] = 0
         self.assertFalse(DEMO.assess_grab_run(data, grasp, CONFIG)["cup_lifted"])
@@ -58,10 +58,10 @@ class GrabTrajectoryTests(unittest.TestCase):
         data = np.zeros((3, 21))
         data[:, 0] = [0.8, 0.95, 1.0]
         data[:, 20] = 0.02
-        data[:, 16] = CONFIG.CUP_MASS * CONFIG.GRAVITY
+        data[:, 16] = CONFIG.OBJECT_MASS * CONFIG.GRAVITY
         grasp = np.zeros((3, 13))
         heavier = SimpleNamespace(**{name: getattr(CONFIG, name) for name in dir(CONFIG) if name.isupper()})
-        heavier.CUP_MASS = CONFIG.CUP_MASS * 4
+        heavier.OBJECT_MASS = CONFIG.OBJECT_MASS * 4
         self.assertTrue(DEMO.assess_grab_run(data, grasp, CONFIG)["lift_supported_by_contact"])
         self.assertFalse(DEMO.assess_grab_run(data, grasp, heavier)["lift_supported_by_contact"])
         self.assertTrue(DEMO.assess_grab_run(data, grasp, CONFIG)["lift_supported_by_contact"])

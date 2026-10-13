@@ -3,6 +3,17 @@
 This document describes the reusable Python coupling code under
 `python/mophi/couplers/newton_deme/`.
 
+## Setup
+
+These pure-Python coupling utilities require Newton/Warp and DEME at runtime,
+plus the base `mophi_core` extension required by `import mophi`. They do not
+require a compiled three-way coupler. Install the
+[common dependencies](../how-to/python-dependencies.md) and follow the
+[base-extension setup](../how-to/python-builds.md#base-extension-only). Some existing demos still use the
+compiled three-way class for Newton stepping; consult the
+[demo build matrix](../how-to.md#demo-build-requirements).
+`MOPHI_BUILD_NEWTON_DEM` selects demo targets/install rules, not these Python imports.
+
 ## Purpose and boundary
 
 `NewtonDEMEContactCoupler` transfers mapped Newton rigid-body motion to DEME
@@ -139,7 +150,7 @@ To preserve a preexisting mesh pose `(R, p)`, initialize the owner at
 This is necessary because DEME integrates about the owner CoM in its principal
 inertia frame. It is independent of the arbitrary reference origin allowed for
 a prescribed, non-dynamic surface. The
-[GRAB cup-contact demo](how-to/grab.md) exercises this path without a
+[GRAB cup-contact demo](../how-to/grab.md) exercises this path without a
 Newton dynamics solver. Test its frame and inertia invariants with:
 
 ```bash
@@ -187,7 +198,7 @@ The end-to-end GPU path is exercised by the robot-fighting demo and by
 ## Connected mesh contact patches
 
 `partition_mesh_contact_patches` in
-[`mesh_contact_patches.py`](../python/mophi/utils/geometry/mesh_contact_patches.py) is an
+[`mesh_contact_patches.py`](../../python/mophi/utils/geometry/mesh_contact_patches.py) is an
 initialization-time geometry operation. It assigns contiguous int32 patch IDs
 without changing vertices, faces, triangle ordering, or physical properties:
 
@@ -212,12 +223,12 @@ updating vertices, preserving contact-history identity. Radius and normal bounds
 apply only to that reference shape. The demo owns the chosen radius, reference
 pose, material model, and convergence checks. This helper neither calibrates
 DEME's area-dependent contact law nor guarantees accurate grasp physics.
-The [GRAB workflow](how-to/grab.md) shows an application.
+The [GRAB workflow](../how-to/grab.md) shows an application.
 
 ```bash
 PYTHONPATH=python python -m unittest discover -s tests -p test_grab_contact_patches.py -v
 ```
 
-The partitioner is solver-independent; see [mesh contact patches](mesh-contact-patches.md)
+The partitioner is solver-independent; see [mesh contact patches](../mesh-contact-patches.md)
 for its public API and algorithm. The `mophi.couplers.newton_deme` import is
 retained for compatibility.

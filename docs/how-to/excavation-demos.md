@@ -1,5 +1,21 @@
 # Excavation comparison demos
 
+## Prerequisites
+
+Before running either demo, complete [Newton + XLB + DEME — Setup](../couplers/newton-xlb-deme.md#setup), then return to the run commands below.
+Both demos use its compiled Newton stepper even when XLB is inactive.
+
+Both scripts instantiate the compiled stepping class and need
+`MOPHI_BUILD_NEWTON_XLB_DEM=ON`, including the Newton-only cube comparison.
+The excavation scene also needs DEME. Robot assets are loaded through Newton.
+
+Install the [common Python dependencies](python-dependencies.md), build the
+base extension for the active Python with the required options above, and use
+an NVIDIA CUDA GPU with OpenGL support for visual demos. Commands below run
+from the repository root with `PYTHONPATH=python`; omit that setting for an
+installed MoPhi package. See [build workflows](python-builds.md) and the
+[complete demo matrix](../how-to.md#demo-build-requirements).
+
 ## Run
 
 ```bash

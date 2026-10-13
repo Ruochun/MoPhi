@@ -1,35 +1,24 @@
-# Newton + XLB + DEME setup
+# Newton + XLB + DEME
+
+## Setup
+
+Run these commands from the repository root in the environment used for the
+demo. Use a build directory named for the active Python version; `build-py312`
+below assumes Python 3.12.
 
 ```bash
-# Install the required Python packages first
-pip install --upgrade newton==1.0.0 warp-lang==1.12.1 mujoco==3.6.0 "xlb[cuda]" "deme" \
-    torch GitPython PyYAML pycollada mujoco_warp==3.6.0 pyglet imageio imageio-ffmpeg
+# Install the common runtime set from package metadata
+python scripts/setup/install_dependencies.py
 
 # Configure and build the coupler
 cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON
 cmake --build build-py312
+
+# Verify the loaded extension and required class with the same interpreter.
+PYTHONPATH=python python -c 'import mophi; print(mophi.mophi_core.__file__); print(mophi.NewtonXLBDEMCoupler)'
 ```
-
-## Demo regression runner
-
-For a convenient end-to-end check, the repository includes a runner for the
-actively developed demos linked from the [how-to index](../how-to.md). It uses the current Python interpreter,
-adds the source-tree `python/` directory to `PYTHONPATH`, and waits for each
-demo to finish before starting the next. Install and build the prerequisites
-from this guide first; interactive viewers must be closed for the runner to
-advance.
-
-```bash
-python3 scripts/demos/run_important_demos.py
-```
-
-The FERIS/Newton demo is excluded by default while that module remains less
-developed. Add it explicitly with `--include-feris`. By default the runner
-stops at the first failure; use `--keep-going` to exercise the remaining demos
-and receive a combined failure summary. Use `--list` to inspect the selected
-commands without running them.
 
 ## Coupler overview
 
@@ -75,21 +64,13 @@ for step in range(steps):
 coupler.finalize()
 ```
 
-XLB is part of the supported distributed install path for the Newton + XLB +
-DEME workflow. The packaged wheel declares `xlb[cuda]` as a runtime
-dependency. For source-tree developer builds, you can install it manually or
-use the developer-convenience CMake fetch option:
+## Provider configuration
 
-```bash
-pip install "xlb[cuda]"
-```
-
-Likewise, the packaged wheel declares `deme[cuda12]` as a runtime dependency. For
-source-tree developer builds, you can install it manually:
-
-```bash
-pip install "deme"
-```
+The packaged wheel declares XLB and DEME as runtime dependencies. For source
+builds, the [common dependency installer](../how-to/python-dependencies.md)
+reads the same package requirements, including solver extras. Alternatively,
+`MOPHI_FETCH_XLB=ON` and `MOPHI_FETCH_DEME=ON` install their configured providers
+during CMake configuration.
 
 The DEME distribution and import module are intentionally configurable. The
 default `deme` distribution is installed with the `cuda12` extra and exposes
@@ -121,7 +102,7 @@ For example, a DEME-compatible provider with a different module name can be
 selected with:
 
 ```bash
-MOPHI_PACKAGE_DEME_IMPORT_MODULE=another_module python demo/...
+PYTHONPATH=python MOPHI_PACKAGE_DEME_IMPORT_MODULE=another_module python demo/...
 ```
 
 Python code resolves a provider uniformly:
@@ -135,3 +116,7 @@ DEME = load_package_provider("deme")
 Changing the dependency installed with a packaged wheel remains a one-line
 change to the corresponding dependency entry in `pyproject.toml`; update the
 matching default in `DEFAULT_PACKAGE_PROVIDERS` at the same time.
+
+For scenario commands, see the [demo workflows](../how-to.md#demo-workflows).
+The [demo regression runner](../how-to/getting-started.md#demo-regression-runner)
+can run the important demos sequentially.

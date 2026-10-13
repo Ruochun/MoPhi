@@ -16,12 +16,10 @@
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_newton.py
 #   python demo/newton_xlb_dem/flexible_hand_manipulation/demo_flexible_hand_deme.py
 #
-# Prerequisites:
-#   • MOPHI_BUILD_NEWTON_XLB_DEM=ON   — builds NewtonXLBDEMCoupler and the
-#                                        mophi_core Python extension module.
-#   • pip install --upgrade newton warp-lang mujoco==3.6.0
-#                                      — or -DMOPHI_FETCH_NEWTON=ON
-#   • pip install "xlb[cuda]"          — or -DMOPHI_FETCH_XLB=ON
+# Build prerequisites differ by script: see docs/how-to.md's demo matrix.
+# This directory groups baseline and coupled examples for target/installation
+# selection; some baselines do not instantiate the compiled three-way class.
+# Install the common runtime set with scripts/setup/install_dependencies.py.
 # ─────────────────────────────────────────────────────────────────────────────
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

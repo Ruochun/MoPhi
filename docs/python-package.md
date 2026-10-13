@@ -12,9 +12,9 @@ in `python/mophi/visualizers/`, and Python-only couplers live in a solver-specif
 subpackage under `python/mophi/couplers/`. Edit these files directly; they are
 not generated or mirrored from `src/`.
 
-Keeping one source copy prevents a CMake configure from modifying the Git
-working tree, eliminates synchronization failures, and makes source-tree and
-wheel imports use the same Python files.
+Keeping one source copy avoids generated copies of tracked Python files and
+makes source-tree and wheel imports use the same Python sources. Developer
+builds add an ignored compiled extension beside those sources.
 
 The package entry point, `python/mophi/__init__.py`, re-exports the supported
 public API. Add new public symbols there or in the appropriate subpackage
@@ -22,15 +22,21 @@ public API. Add new public symbols there or in the appropriate subpackage
 
 ## Compiled extension
 
-`mophi_core` is compiled from `python/bindings/*.cpp`. Developer builds place
-the interpreter-specific `mophi_core*.so` beside `python/mophi/__init__.py`, so
-`PYTHONPATH=python` can load the source package. Packaging builds keep the
-extension in the build tree and install it together with the canonical Python
-package.
+`mophi_core` is compiled from `python/bindings/*.cpp` plus enabled coupler
+sources. Every build keeps its extension under `<build-directory>/python/mophi/`.
+Developer default builds publish a copy beside `python/mophi/__init__.py`, so
+`PYTHONPATH=python` can load the source package. Publication runs even when no
+relink is needed, restoring the selected build's feature set after another
+configuration has overwritten the source-tree copy. The explicit
+`mophi_python_source` target performs the same publication. Packaging builds
+skip publication and install their own extension with the Python package.
 
-The extension is a build artifact and must not be committed. A separate build
-directory is required for each supported CPython minor version because extension
-modules are ABI-specific.
+The extension is ignored by Git and must not be committed; building does not
+modify tracked Python sources. Use a separate build directory for each CPython
+minor version and configuration. Configurations for the same Python version
+still share the published source-tree filename, so the last publication selects
+the active feature set. See [build workflows](how-to/python-builds.md) for switching
+configurations and diagnosing missing compiled classes.
 
 ## Adding Python code
 
@@ -52,6 +58,6 @@ The solver-independent sampler for grid points bracketed by open triangle
 surfaces is documented in [`mesh-sampling.md`](mesh-sampling.md).
 
 The GPU-native Newton–DEME contact exchange is documented in
-[`newton-deme-coupling.md`](newton-deme-coupling.md).
+[`couplers/newton-deme.md`](couplers/newton-deme.md).
 The additional pairwise device-transfer helpers are documented in
 [`pairwise-gpu-exchange.md`](pairwise-gpu-exchange.md).

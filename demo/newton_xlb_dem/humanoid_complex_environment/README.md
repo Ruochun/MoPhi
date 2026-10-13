@@ -1,5 +1,17 @@
 # Humanoid complex-environment demo
 
+## Prerequisites
+
+Complete the setup for the scene you plan to run:
+
+- Environment: [base extension](../../../docs/how-to/python-builds.md#base-extension-only).
+- Fighting: [Newton + DEME — Setup](../../../docs/couplers/newton-deme.md#setup).
+- Swimming: [Newton + XLB + DEME — Setup](../../../docs/couplers/newton-xlb-deme.md#setup).
+
+Then follow the [humanoid demo workflow](../../../docs/how-to/humanoid-demos.md#run).
+
+## Overview
+
 This folder starts from Newton 1.0.0's public
 [`example_robot_policy.py`][newton-policy]
 Unitree G1 walking baseline. It provides an interactive keyboard-controlled

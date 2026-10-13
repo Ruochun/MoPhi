@@ -38,6 +38,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 
+[project.optional-dependencies]
+grab = ["numpy", "scipy", "smplx", "trimesh", "fast-simplification", "rtree", "imgui-bundle", "pillow", "matplotlib"]
+
 [project.urls]
 Homepage = "https://github.com/Ruochun/MoPhi"
 Repository = "https://github.com/Ruochun/MoPhi"

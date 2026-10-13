@@ -4,16 +4,19 @@
 # Builds the mophi_core Python extension module using pybind11.
 # pybind11 is fetched automatically via FetchContent if not found on the system.
 #
-# The compiled module is placed next to the Python package directory so that
-# `import mophi` works directly from the build tree.
+# Each build keeps its own compiled module. Developer builds publish a copy
+# beside the source package for `PYTHONPATH=python` execution.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Locate or fetch pybind11 ──────────────────────────────────────────────────
 # Modern FindPython mode keeps the interpreter, headers, and extension ABI from
 # the same Python installation when several CPython versions are present.
 set(PYBIND11_FINDPYTHON ON)
-if(Python3_EXECUTABLE AND NOT Python_EXECUTABLE)
-    set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "Python interpreter used for MoPhi bindings")
+if(Python3_EXECUTABLE AND (NOT MOPHI_PYTHON_PACKAGING_BUILD OR NOT Python_EXECUTABLE))
+    # Packaging keeps the interpreter supplied by scikit-build-core.
+    # Python3_EXECUTABLE is the public interpreter selector used by solver checks
+    # and demos. Never let an older FindPython cache select a different ABI.
+    set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "Python interpreter used for MoPhi bindings" FORCE)
 endif()
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(pybind11 3.0 CONFIG QUIET)
@@ -73,18 +76,29 @@ if(MOPHI_BUILD_NEWTON_XLB_DEM)
     target_compile_definitions(mophi_core PRIVATE MOPHI_HAS_NEWTON_XLB_DEM_COUPLER)
 endif()
 
-if(MOPHI_PYTHON_PACKAGING_BUILD)
-    set(_mophi_python_module_output_dir "${CMAKE_CURRENT_BINARY_DIR}/mophi")
-else()
-    set(_mophi_python_module_output_dir "${CMAKE_CURRENT_SOURCE_DIR}/mophi")
-endif()
-
-# Developer builds place the compiled .so next to the source-tree package so
-# `PYTHONPATH=python` works immediately.  Packaging builds keep artefacts in the
-# build tree and rely on the install step for the final wheel layout.
+# Keep link outputs private to each build: another configuration must not make
+# this target appear up-to-date merely by overwriting a shared source-tree .so.
 set_target_properties(mophi_core PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${_mophi_python_module_output_dir}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/mophi"
 )
+
+if(NOT MOPHI_PYTHON_PACKAGING_BUILD)
+    # Publish after linking, including an explicit --target mophi_core build.
+    add_custom_command(TARGET mophi_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:mophi_core>" "${CMAKE_CURRENT_SOURCE_DIR}/mophi/$<TARGET_FILE_NAME:mophi_core>"
+        VERBATIM
+    )
+    # Also publish on an incremental default build with no relink. A different
+    # build directory may have selected another feature set since the last build.
+    add_custom_target(mophi_python_source ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:mophi_core>" "${CMAKE_CURRENT_SOURCE_DIR}/mophi/$<TARGET_FILE_NAME:mophi_core>"
+        DEPENDS mophi_core
+        COMMENT "Publishing this build's MoPhi extension to the source package"
+        VERBATIM
+    )
+endif()
 
 # ── Installation ──────────────────────────────────────────────────────────────
 # Install the Python package tree and the extension module together.

@@ -1,5 +1,25 @@
 # Robotic 3D printing demos
 
+## Prerequisites
+
+Before running robotic printing, complete [Newton + XLB + DEME — Setup](../couplers/newton-xlb-deme.md#setup).
+For DFC discharge alone, complete [Newton + DEME — Setup](../couplers/newton-deme.md#setup).
+Then return to the scene commands below. If using the CMake convenience targets,
+also enable `MOPHI_BUILD_NEWTON_DEM=ON` and `MOPHI_BUILD_DEMOS=ON` in that build directory.
+
+Robotic printing needs `MOPHI_BUILD_NEWTON_XLB_DEM=ON` because its Newton
+stepper uses that compiled class. DFC discharge needs no compiled coupler.
+Both use Newton and DEME; bundled G-code, meshes, and force models must be
+available. Enable `MOPHI_BUILD_NEWTON_DEM=ON` for CMake targets/installation;
+the robotic printing target additionally requires the three-way option.
+
+Install the [common Python dependencies](python-dependencies.md), build the
+base extension for the active Python with the required options above, and use
+an NVIDIA CUDA GPU with OpenGL support for visual demos. Commands below run
+from the repository root with `PYTHONPATH=python`; omit that setting for an
+installed MoPhi package. See [build workflows](python-builds.md) and the
+[complete demo matrix](../how-to.md#demo-build-requirements).
+
 ## Run
 
 ```bash
@@ -70,7 +90,8 @@ performed with movie recording disabled does not replace an older MP4 already
 present in the output directory, so use the final console summary and
 `run_metadata.json` to confirm the frame counts for the current run.
 
-Run the motion stage after building the Newton-enabled Python bindings:
+Run the DFC stage after building the base Python extension. For the convenience
+target, configure with `MOPHI_BUILD_NEWTON_DEM=ON` and `MOPHI_BUILD_DEMOS=ON`:
 
 ```bash
 PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_dfc_3d_printing.py
@@ -142,6 +163,7 @@ Build and run it directly or through its CMake target:
 cmake -B build-py312 \
       -DPython3_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
       -DMOPHI_BUILD_NEWTON_XLB_DEM=ON \
+      -DMOPHI_BUILD_NEWTON_DEM=ON \
       -DMOPHI_BUILD_DEMOS=ON
 cmake --build build-py312
 PYTHONPATH=python python3 demo/newton_dem/robotic_3d_printing/demo_robotic_3d_printing.py
@@ -152,5 +174,5 @@ cmake --build build-py312 --target demo_robotic_3d_printing
 
 Prerequisites are the Newton, Warp, MuJoCo, `deme[cuda12]`, imageio, and
 imageio-ffmpeg packages listed in
-[`newton-xlb-deme.md`](newton-xlb-deme.md). Newton and both DEME workers must
+[`newton-xlb-deme.md`](../couplers/newton-xlb-deme.md). Newton and both DEME workers must
 use the same logical CUDA device for the direct pointer exchange.

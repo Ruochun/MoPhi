@@ -29,16 +29,23 @@ install(FILES grab/grabbing_cup/demo_grab_contact.py grab/grabbing_cup/render_gr
 install(FILES grab/grabbing_cylinder/demo_grab_cylinder.py grab/grabbing_cylinder/render_cylinder_comparison.py
     grab/grabbing_cylinder/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_cylinder)
 
-add_custom_target(demo_robotic_3d_printing
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/robotic_3d_printing/demo_robotic_3d_printing.py"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Running Newton/DEME robotic 3D-printing co-simulation"
-    VERBATIM
-)
+# This scenario still uses the compiled three-way class for Newton stepping.
+if(MOPHI_BUILD_NEWTON_XLB_DEM)
+    add_custom_target(demo_robotic_3d_printing
+        COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+            ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/robotic_3d_printing/demo_robotic_3d_printing.py"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Running Newton/DEME robotic 3D-printing co-simulation"
+        VERBATIM
+    )
+    install(FILES robotic_3d_printing/demo_robotic_3d_printing.py
+        DESTINATION demo/newton_dem/robotic_3d_printing)
+endif()
 
 add_custom_target(demo_dfc_3d_printing
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+        ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/robotic_3d_printing/demo_dfc_3d_printing.py"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Running confined DFC particle-settling stage"
@@ -47,7 +54,6 @@ add_custom_target(demo_dfc_3d_printing
 
 install(
     FILES
-        robotic_3d_printing/demo_robotic_3d_printing.py
         robotic_3d_printing/demo_dfc_3d_printing.py
     DESTINATION demo/newton_dem/robotic_3d_printing
 )

@@ -1,5 +1,12 @@
 # Flexible-hand manipulation demos
 
+## Prerequisites
+
+Before running either demo, complete [Newton + XLB + DEME — Setup](../../../docs/couplers/newton-xlb-deme.md#setup).
+Both demos use its compiled Newton stepper. See the [full demo prerequisites and workflow](../../../docs/how-to/flexible-hand-demos.md#prerequisites).
+
+## Overview
+
 This folder hosts articulated-hand manipulation demos that compare a Newton-only
 contact workload with a smaller Newton-DEME contact prototype.
 

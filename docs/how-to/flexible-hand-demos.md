@@ -1,5 +1,21 @@
 # Flexible-hand demos
 
+## Prerequisites
+
+Before running either hand demo or the contact-getter comparison, complete
+[Newton + XLB + DEME — Setup](../couplers/newton-xlb-deme.md#setup), then return to the run commands below.
+
+Both scripts need `MOPHI_BUILD_NEWTON_XLB_DEM=ON` for their compiled Newton
+stepper. The clump variant additionally uses DEME. Newton supplies the Allegro
+assets. The DEME contact-getter comparison has the same compiled prerequisite.
+
+Install the [common Python dependencies](python-dependencies.md), build the
+base extension for the active Python with the required options above, and use
+an NVIDIA CUDA GPU with OpenGL support for visual demos. Commands below run
+from the repository root with `PYTHONPATH=python`; omit that setting for an
+installed MoPhi package. See [build workflows](python-builds.md) and the
+[complete demo matrix](../how-to.md#demo-build-requirements).
+
 ## Run
 
 ```bash

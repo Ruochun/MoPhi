@@ -252,11 +252,11 @@ def main(config):
             # differs: recorded world vertices on the left, or the original mesh
             # transformed by the saved DEME CoM/orientation on the right.
             sample = playback.sample(float(poses["source_time_s"][index]))
-            cups = []
+            object_meshes = []
             if args.mode != "simulation":
-                cups.append(sample["object"] + poses["world_translation"])
+                object_meshes.append(sample["object"] + poses["world_translation"])
             if args.mode != "recorded":
-                cups.append(
+                object_meshes.append(
                     Rotation.from_quat(poses["cup_quaternion_xyzw"][index]).apply(poses["cup_vertices_principal"])
                     + poses["cup_com_world"][index]
                 )
@@ -264,7 +264,7 @@ def main(config):
             # Render panels sequentially through one viewer and copy each image
             # before the next panel replaces its buffers. Shared references and
             # camera placement make the two images directly comparable.
-            for cup in cups:
+            for object_vertices in object_meshes:
                 vis.begin_frame(float(poses["time_s"][index]))
                 if iteration == 0 and not images:
                     mophi.log_orientation_and_scale_reference(
@@ -275,7 +275,7 @@ def main(config):
                         marker_radius=config.SCALE_MARKER_RADIUS,
                     )
                 geometry = {
-                    "cup": cup,
+                    "cup": object_vertices,
                     "surface": sample[str(playback.hands[0]["hand_side"])] + poses["world_translation"],
                     "floor": floor.vertices,
                 }
