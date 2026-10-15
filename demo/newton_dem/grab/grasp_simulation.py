@@ -93,7 +93,14 @@ def main(config):
         default=config.DURATION,
         help="Cup-rest duration; grab derives it from source interval and playback speed",
     )
-    parser.add_argument("--friction", type=float, default=config.CONTACT_FRICTION)
+    parser.add_argument(
+        "--mu",
+        "--friction",
+        dest="friction",
+        type=float,
+        default=config.CONTACT_FRICTION,
+        help="Hand/object friction coefficient; --friction is an alias. Table friction is set separately.",
+    )
     parser.add_argument("--bin-size", type=float, default=config.BIN_SIZE)
     parser.add_argument("--compact-rest-domain", action="store_true", default=config.COMPACT_REST_DOMAIN)
     parser.add_argument("--floor-friction", type=float, default=config.FLOOR_FRICTION)
@@ -113,7 +120,11 @@ def main(config):
     parser.add_argument("--headless", action="store_true", default=config.HEADLESS)
     parser.add_argument("--no-render", action="store_true", default=not config.RENDER)
     parser.add_argument("--save-movie", action="store_true", default=config.SAVE_MOVIE)
-    parser.add_argument("--output-dir", type=Path, default=config.OUTPUT_DIRECTORY)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Override output root; nondefault mu otherwise uses a mu_<value> subdirectory",
+    )
     parser.add_argument("--check", action="store_true", help="Fail if the selected scene acceptance checks fail")
     args = parser.parse_args()
     if not np.isfinite(args.bin_size) or args.bin_size <= 0:
@@ -144,6 +155,12 @@ def main(config):
     # ── Recorded motion and the two time axes ────────────────────────────────
     # Source timestamps belong to GRAB; simulation time starts at zero and includes
     # a settling hold. The isolated object-rest case never loads a hand trajectory.
+    # Keep friction experiments separate from the default scene's results. An
+    # explicit output root still takes precedence, including with the legacy alias.
+    if args.output_dir is None:
+        args.output_dir = config.OUTPUT_DIRECTORY
+        if args.friction != config.CONTACT_FRICTION:
+            args.output_dir /= f"mu_{args.friction}"
     output = args.output_dir / args.case
     output.mkdir(parents=True, exist_ok=True)
     obj = load_object_motion(args.object)
@@ -652,6 +669,7 @@ def main(config):
         "solver_time_s": solver.GetSimTime(),
         "cup_mass_kg": object_frame.mass,
         "source_object": str(args.object.resolve()),
+        "object_motion_format_version": int(obj["format_version"]),
         "source_hand": str(args.hand.resolve()) if args.case == "grab" else None,
         "mass_model": "uniform density inside the source closed mesh",
         "cup_collision_triangles": len(collision_faces),

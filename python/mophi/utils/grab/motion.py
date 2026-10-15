@@ -110,8 +110,12 @@ def load_object_motion(path: Path) -> dict:
             raise ValueError(f"{path}: missing fields: {', '.join(sorted(missing))}")
         data = {key: archive[key] for key in required}
     validate_metadata(data, path, ("format_version", "source_sequence", "source_fps", "object_name"))
-    if data["format_version"].shape != () or int(data["format_version"]) != 1:
-        raise ValueError(f"{path}: unsupported format_version")
+    if data["format_version"].shape != () or int(data["format_version"]) != 2:
+        raise ValueError(
+            f"{path}: object format_version 2 required; older exports used the wrong GRAB rotation. "
+            "Regenerate with scripts/grab/convert_grab_hand_motion.py --object-only "
+            "using the original sequence and frame interval, then rerun the simulation."
+        )
     for name, dtype in {
         "source_frame_indices": np.int32,
         "timestamps_s": np.float64,

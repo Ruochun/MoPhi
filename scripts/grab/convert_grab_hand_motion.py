@@ -36,7 +36,7 @@ def convert_object(grab_root: Path, sequence: Path, output_root: Path, start=0, 
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         path,
-        format_version=np.int32(1),
+        format_version=np.int32(2),
         source_sequence=str(relative_sequence),
         source_frame_indices=frames,
         source_fps=np.float64(fps),
@@ -45,7 +45,9 @@ def convert_object(grab_root: Path, sequence: Path, output_root: Path, start=0, 
         object_vertices_local=np.asarray(mesh.vertices, dtype=np.float32),
         object_faces=np.asarray(mesh.faces, dtype=np.int32),
         object_translation_world=np.asarray(params["transl"][frames], dtype=np.float32),
-        object_quaternion_xyzw=Rotation.from_rotvec(params["global_orient"][frames]).as_quat().astype(np.float32),
+        # GRAB ObjectModel uses row vectors V @ R; Rotation.apply uses V @ R.T.
+        # Store the inverse as an active local-to-world rotation for all consumers.
+        object_quaternion_xyzw=Rotation.from_rotvec(params["global_orient"][frames]).inv().as_quat().astype(np.float32),
     )
     return path
 

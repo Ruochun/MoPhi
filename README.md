@@ -14,7 +14,7 @@ parsing, mesh-region sampling, scientific output, and local conversion of
 licensed recorded hand motion into simulation-ready geometry. Recorded hand and
 object trajectories can be inspected together using Newton's mesh renderer,
 then used in controlled DEME contact checks and experimental recorded-hand
-grasps of freely moving cups and cylinders, with inspectable contact patches and
+grasps of freely moving cups, cylinders, cubes, and spheres, with inspectable contact patches and
 force/rotation diagnostics.
 
 ---
@@ -54,7 +54,7 @@ and `cibuildwheel` matrix builds, including ABI troubleshooting and verification
 For the solver-independent G-code parser used by printing workflows, see
 [docs/gcode.md](docs/gcode.md).
 
-For the complete GRAB workflow—asset preparation, cup/cylinder grasp simulation, and
+For the complete GRAB workflow—asset preparation, cup/cylinder/cube/sphere grasp simulation, and
 recorded-versus-simulated comparison movies—see
 [docs/how-to/grab.md](docs/how-to/grab.md).
 

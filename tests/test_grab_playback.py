@@ -46,6 +46,7 @@ class GrabPlaybackTests(unittest.TestCase):
             .as_quat()
             .astype(np.float32),
         )
+        self.obj["format_version"] = np.int32(2)
         self.write()
 
     def write(self):
@@ -99,6 +100,12 @@ class GrabPlaybackTests(unittest.TestCase):
         self.obj["object_faces"][0, 0] = 3
         self.write()
         with self.assertRaisesRegex(ValueError, "face indices"):
+            load_object_motion(self.object_path)
+
+    def test_old_object_rotation_format_rejected(self):
+        self.obj["format_version"] = np.int32(1)
+        self.write()
+        with self.assertRaisesRegex(ValueError, "Regenerate"):
             load_object_motion(self.object_path)
 
     def test_single_frame_clip(self):

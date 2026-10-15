@@ -23,11 +23,31 @@ add_custom_target(demo_grab_cylinder
     VERBATIM
 )
 
+add_custom_target(demo_grab_cube
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/grabbing_cube/demo_grab_cube.py"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Running the recorded-hand DEME cube grasp with Newton rendering"
+    VERBATIM
+)
+
+add_custom_target(demo_grab_sphere
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${CMAKE_SOURCE_DIR}/python"
+        ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/grab/grabbing_sphere/demo_grab_sphere.py"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Running the recorded-hand DEME sphere grasp with Newton rendering"
+    VERBATIM
+)
+
 install(FILES grab/grasp_simulation.py grab/grasp_viewer.py DESTINATION demo/newton_dem/grab)
 install(FILES grab/grabbing_cup/demo_grab_contact.py grab/grabbing_cup/render_grab_comparison.py
     grab/grabbing_cup/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_cup)
 install(FILES grab/grabbing_cylinder/demo_grab_cylinder.py grab/grabbing_cylinder/render_cylinder_comparison.py
     grab/grabbing_cylinder/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_cylinder)
+install(FILES grab/grabbing_cube/demo_grab_cube.py grab/grabbing_cube/render_cube_comparison.py
+    grab/grabbing_cube/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_cube)
+install(FILES grab/grabbing_sphere/demo_grab_sphere.py grab/grabbing_sphere/render_sphere_comparison.py
+    grab/grabbing_sphere/scene_config.py DESTINATION demo/newton_dem/grab/grabbing_sphere)
 
 # This scenario still uses the compiled three-way class for Newton stepping.
 if(MOPHI_BUILD_NEWTON_XLB_DEM)

@@ -808,7 +808,7 @@ for pure-Python implementations use the package directory and maintenance rules 
 - Keep scenario parameters in scene configuration and reusable behavior in shared
   modules. Use object-neutral names in shared grasp code; preserve or explicitly
   migrate existing result schemas and command-line interfaces. Maintain the single
-  GRAB guide for both scenes, including geometry representations and diagnostic
+  GRAB guide for all GRAB scenes, including geometry representations and diagnostic
   sampling limitations.
 - On moves/refactors update imports, build/install rules, tests, documentation,
   and links together. Check source execution and affected installation paths.

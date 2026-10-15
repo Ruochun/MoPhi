@@ -43,13 +43,17 @@ both setup options.
   fighting, and the Newton/XLB swimming concept.
 - [Flexible-hand demos](how-to/flexible-hand-demos.md) — Newton and DEME articulated
   hand workloads.
-- [GRAB recorded-versus-physics cup and cylinder grasps](how-to/grab.md) — the complete workflow:
+- [GRAB recorded-versus-physics cup, cylinder, cube, and sphere grasps](how-to/grab.md) — the complete workflow:
   prepare NPZ files with `scripts/grab/convert_grab_hand_motion.py`, simulate with
   `demo/newton_dem/grab/grabbing_cup/demo_grab_contact.py`, and produce the comparison with
   `demo/newton_dem/grab/grabbing_cup/render_grab_comparison.py`. The same guide
   covers the cylinder scene: `grabbing_cylinder/demo_grab_cylinder.py` and
   `grabbing_cylinder/render_cylinder_comparison.py` under `demo/newton_dem/grab/`,
-  including prerequisites, NPZ conversion, and run commands. Covers licensed assets,
+  and the [cube workflow](how-to/grab.md#cube-lift-demo) with
+  `grabbing_cube/demo_grab_cube.py` and `grabbing_cube/render_cube_comparison.py`,
+  plus the [sphere workflow](how-to/grab.md#sphere-lift-demo) with
+  `grabbing_sphere/demo_grab_sphere.py` and `grabbing_sphere/render_sphere_comparison.py`.
+  Includes prerequisites, NPZ conversion, and run commands. Covers licensed assets,
   MoPhi/DEME/Newton prerequisites, recorded-only viewing, cameras, and diagnostics.
 
 ## Demo build requirements
@@ -69,7 +73,7 @@ OpenGL drivers. Scenario guides list assets and additional dependencies.
 | Humanoid environment / fighting | Newton / Newton, DEME | None | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` (group integration only) |
 | Humanoid swimming | Newton, XLB | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Same option |
 | Flexible hands (both), DEME getter comparison | Newton; DEME for DEM variants | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Same option |
-| GRAB cup/cylinder | DEME; Newton rendering | None | `MOPHI_BUILD_NEWTON_DEM=ON` |
+| GRAB cup/cylinder/cube/sphere | DEME; Newton rendering | None | `MOPHI_BUILD_NEWTON_DEM=ON` |
 | DFC discharge | DEME; Newton scene/rendering | None | `MOPHI_BUILD_NEWTON_DEM=ON` |
 | Robotic 3D printing | Newton, DEME | `MOPHI_BUILD_NEWTON_XLB_DEM=ON` | Also `MOPHI_BUILD_NEWTON_DEM=ON` |
 

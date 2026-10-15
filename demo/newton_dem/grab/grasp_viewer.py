@@ -44,6 +44,11 @@ def load_render_poses(run, summary, playback, config):
     """Read exact movie-cadence poses, or explicitly interpolate legacy diagnostics."""
     # Prefer exact states sampled by the simulation at movie cadence, including
     # its world offset and principal-frame render mesh. No DEME solver runs here.
+    if summary.get("object_motion_format_version") != 2:
+        raise ValueError(
+            "This run predates the GRAB object-rotation correction. "
+            "Regenerate the object NPZ and rerun the simulation before rendering a comparison."
+        )
     path = run / "render_poses.npz"
     if path.exists():
         with np.load(path, allow_pickle=False) as archive:
